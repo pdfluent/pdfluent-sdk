@@ -72,6 +72,31 @@ def tracked() -> list[str]:
     return [f for f in out.stdout.split("\0") if f]
 
 
+def ledenregel(lid: str) -> "re.Pattern":
+    """De `members`-regel van één crate.
+
+    Eén bron, net als `wordt_gepubliceerd` hierboven, en om dezelfde reden. De
+    zaai (`scripts/release/seed_history_filter.py`) moet deze regel over de HELE
+    historie toepassen, want een gepubliceerde workspace die een crate noemt die
+    er niet is, parseert niet -- en tot 06-09-2026 deed de zaai dat niet, terwijl
+    dit bestand het al jaren wel deed. Twee mechanismen, één vraag, twee
+    antwoorden: precies wat een gedeelde functie onmogelijk maakt.
+    """
+    return re.compile(rf'^\s*"{re.escape(lid)}",\s*\n', re.M)
+
+
+def zonder_interne_leden(tekst: str, leden) -> str:
+    """Het hoofdmanifest zonder de leden die niet meereizen.
+
+    Weigert hier niets: dit is de bewerking, niet het oordeel. `assemble` eist dat
+    elk gedeclareerd lid ook echt in de lijst staat, en de zaai kan dat niet eisen
+    omdat een manifest van vóór de crate hem niet noemt.
+    """
+    for lid in leden:
+        tekst = ledenregel(lid).sub("", tekst)
+    return tekst
+
+
 def wordt_gepubliceerd(pad: str, m: dict) -> bool:
     """Of dit pad in de publieke boom terechtkomt.
 
@@ -100,14 +125,12 @@ def assemble(dest: Path, m: dict) -> int:
     cargo = dest / "Cargo.toml"
     tekst = cargo.read_text()
     for lid in m["internal"]["workspace_members"]:
-        weg = re.compile(rf'^\s*"{re.escape(lid)}",\s*\n', re.M)
-        if not weg.search(tekst):
+        if not ledenregel(lid).search(tekst):
             print(f"[simulate] FATAL: workspace member {lid!r} is declared internal but "
                   f"is not in the members list; the manifest and Cargo.toml disagree",
                   file=sys.stderr)
             return -1
-        tekst = weg.sub("", tekst)
-    cargo.write_text(tekst)
+    cargo.write_text(zonder_interne_leden(tekst, m["internal"]["workspace_members"]))
     return n
 
 

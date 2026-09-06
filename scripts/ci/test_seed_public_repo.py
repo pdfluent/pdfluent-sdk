@@ -503,6 +503,112 @@ def main() -> int:
                        out[-400:])
 
     # ---------------------------------------------------------------------
+    # THE WORKSPACE THAT DOES NOT PARSE (#222). `crates/xfa-golden-tests` is on
+    # the internal list AND a line in the root manifest's `members`. Drop the
+    # directory, leave the line, and the published repository fails on the first
+    # command a reader types -- measured on the seeded mirror 06-09-2026, and it
+    # was the only thing standing between that tree and a clean-clone build.
+    # `simulate_public_tree` has always edited the members list on the way out;
+    # the seeding did not, and its clean-clone job builds the tree WITH the edit,
+    # so nothing was looking at the artefact that would actually be published.
+    # ---------------------------------------------------------------------
+
+    def workspace_source(tmp: pathlib.Path) -> pathlib.Path:
+        """A source whose root manifest names the internal crate as a member."""
+        src = source_repo(tmp)
+        (src / "Cargo.toml").write_text(
+            '[workspace]\nmembers = [\n    "crates/pdfluent",\n'
+            '    "crates/xfa-golden-tests",\n]\n', encoding="utf-8")
+        git("add", "-A", cwd=src)
+        git("commit", "-q", "-m", "a workspace naming an internal member", cwd=src)
+        # And a LATER version that no longer names it, so the case covers the
+        # history and not only the tip -- a manifest that predates the crate must
+        # be left alone rather than reported as broken.
+        (src / "Cargo.toml").write_text(
+            '[workspace]\nmembers = [\n    "crates/pdfluent",\n'
+            '    "crates/xfa-golden-tests",\n    "crates/pdf-node",\n]\n',
+            encoding="utf-8")
+        # A file that is not the root manifest and carries the same line, so the
+        # "every path this blob ever had is Cargo.toml" narrowing has something
+        # to be wrong about.
+        (src / "docs").mkdir(exist_ok=True)
+        (src / "docs" / "notes.md").write_text('    "crates/xfa-golden-tests",\n',
+                                               encoding="utf-8")
+        git("add", "-A", cwd=src)
+        git("commit", "-q", "-m", "and one more member", cwd=src)
+        return src
+
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        termen = terms_file(tmp)
+        src = workspace_source(tmp)
+        u, dest = seed_into(tmp, src, termen)
+        out = u.stdout + u.stderr
+        ok_all &= case("a source whose workspace names an internal crate seeds",
+                       u.returncode == 0 and "done" in out, out[-500:])
+        # The property, read off the published repository: no version of the root
+        # manifest names a member whose directory is not there.
+        rev = subprocess.run(["git", "-C", str(dest), "rev-list", "--all"],
+                             capture_output=True, text=True,
+                             env=sealed_env(cwd=dest)).stdout.split()
+        gezien = kwaad = 0
+        for sha in rev:
+            t = subprocess.run(["git", "-C", str(dest), "show", f"{sha}:Cargo.toml"],
+                               capture_output=True, text=True,
+                               env=sealed_env(cwd=dest))
+            if t.returncode != 0:
+                continue
+            gezien += 1
+            if "crates/xfa-golden-tests" in t.stdout:
+                kwaad += 1
+        ok_all &= case("no version of the published root manifest names the crate "
+                       "that does not travel",
+                       gezien >= 2 and kwaad == 0,
+                       f"{gezien} manifest version(s) seen, {kwaad} still naming it")
+        # Not "the line is gone": a rewrite that emptied the manifest would satisfy
+        # that too. The members that DO travel have to still be there.
+        tip = subprocess.run(["git", "-C", str(dest), "show", "master:Cargo.toml"],
+                             capture_output=True, text=True,
+                             env=sealed_env(cwd=dest)).stdout
+        ok_all &= case("and the members that do travel are untouched",
+                       '"crates/pdfluent",' in tip and '"crates/pdf-node",' in tip,
+                       repr(tip))
+        ok_all &= case("and the seeding says how many manifests it edited",
+                       "a root manifest naming an internal workspace member" in out,
+                       out[-500:])
+        # The narrowing, which nothing else here would notice. `docs/notes.md`
+        # carries the same line as ordinary prose about the workspace; a rewrite
+        # that matched on content instead of on path would silently edit it, and
+        # the seeding's whole claim is that a file that stays is what it was.
+        prose = subprocess.run(["git", "-C", str(dest), "show", "master:docs/notes.md"],
+                               capture_output=True, text=True,
+                               env=sealed_env(cwd=dest)).stdout
+        ok_all &= case("and a file that merely mentions the member is not edited",
+                       prose == '    "crates/xfa-golden-tests",\n', repr(prose))
+
+    # A history whose manifest never named an internal member must still be green:
+    # the edit is a repair, and a repair that only works on broken input is one
+    # nobody dares run.
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        termen = terms_file(tmp)
+        src = source_repo(tmp)
+        (src / "Cargo.toml").write_text(
+            '[workspace]\nmembers = [\n    "crates/pdfluent",\n]\n',
+            encoding="utf-8")
+        git("add", "-A", cwd=src)
+        git("commit", "-q", "-m", "a workspace with nothing internal in it", cwd=src)
+        u, dest = seed_into(tmp, src, termen)
+        out = u.stdout + u.stderr
+        tip = subprocess.run(["git", "-C", str(dest), "show", "master:Cargo.toml"],
+                             capture_output=True, text=True,
+                             env=sealed_env(cwd=dest)).stdout
+        ok_all &= case("a manifest with no internal member is seeded byte for byte",
+                       u.returncode == 0
+                       and tip == '[workspace]\nmembers = [\n    "crates/pdfluent",\n]\n',
+                       repr(tip))
+
+    # ---------------------------------------------------------------------
     # KEEPING THE VERIFIED MIRROR, AND PUBLISHING THAT ONE (#222). The run that
     # is checked has to be the run that is published: a second rewrite is not
     # the artefact anybody looked at, and checking after the push is the one
@@ -605,6 +711,37 @@ def main() -> int:
         ok_all &= case("a mirror changed after it was kept is refused, not pushed",
                        v.returncode != 0 and "not publishable" in vout, vout[-400:])
         ok_all &= case("and nothing reached the destination",
+                       not paths_in(dest), f"paths: {sorted(paths_in(dest))[:10]}")
+
+    # The workspace check reads the RESULT and not the edit, so it has to be
+    # exercised on a mirror where the edit did not happen. A member line put back
+    # after the verification is exactly that mirror, and it must not be published.
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        termen = terms_file(tmp)
+        src = workspace_source(tmp)
+        u, houd = kept_mirror(tmp, src, termen)
+        werk = tmp / "regress"
+        git("clone", "-q", str(houd), str(werk), cwd=tmp)
+        git("config", "user.name", "fixture", cwd=werk)
+        git("config", "user.email", "1+fixture@users.noreply.github.com", cwd=werk)
+        (werk / "Cargo.toml").write_text(
+            '[workspace]\nmembers = [\n    "crates/pdfluent",\n'
+            '    "crates/xfa-golden-tests",\n]\n', encoding="utf-8")
+        git("add", "-A", cwd=werk)
+        git("commit", "-q", "-m", "put the member back", cwd=werk)
+        git("push", "-q", "origin", "HEAD:refs/heads/master", cwd=werk)
+        dest = tmp / "dest.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(dest)],
+                       capture_output=True, env=sealed_env(cwd=tmp), check=True)
+        v = subprocess.run(["bash", str(SCRIPT), "--publish", str(houd), str(dest)],
+                           capture_output=True, text=True,
+                           env=seed_env(src, termen), timeout=600)
+        vout = v.stdout + v.stderr
+        ok_all &= case("a manifest naming a member that does not travel is refused, "
+                       "not published",
+                       v.returncode != 0 and "would not build" in vout, vout[-400:])
+        ok_all &= case("and nothing reached the destination either",
                        not paths_in(dest), f"paths: {sorted(paths_in(dest))[:10]}")
 
     # A mirror this script did not keep has no withdrawn list beside it, and a

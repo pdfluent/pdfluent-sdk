@@ -24,6 +24,9 @@
 #      noreply alias this history already carries
 #   4. every internal term named in the reviewed replacement list, in file content
 #      and in commit messages alike
+#   5. every workspace member in the root `Cargo.toml` whose directory does not
+#      travel, because a workspace that names a crate it does not carry does not
+#      parse -- see seed_history_filter.py, "A WORKSPACE MEMBER THAT IS NOT THERE"
 #
 # (2) is why this file was rewritten on 05-09-2026. Until then it applied no path
 # filter at all: `git push --mirror` of the complete history, with the messages
@@ -54,11 +57,13 @@
 #
 # WHAT IT MUST NOT REMOVE
 #
-# Of the files that stay, not one byte may differ. That was checked by comparing
-# every ref's tree before and after; a path filter makes trees differ on purpose,
-# so the check is restated rather than dropped -- `seed_history_filter.py trees`
-# lists the blob standing at every publishable path, before and after, and the two
-# must be identical.
+# Of the files that stay, not one byte may differ -- except where a reviewed
+# replacement or the workspace-member edit says otherwise, and then it must be
+# exactly that byte. That was checked by comparing every ref's tree before and
+# after; a path filter makes trees differ on purpose, so the check is restated
+# rather than dropped -- `seed_history_filter.py trees` lists the blob standing at
+# every publishable path, before and after, with `--map` naming the blob the
+# rewrite is EXPECTED to leave there, and the two must be identical.
 #
 # IT DOES NOT PUSH BY DEFAULT
 #
@@ -396,7 +401,9 @@ echo "[seed] verified: every publishable path holds the blob it held, or its"
 echo "  reviewed replacement, and nothing else"
 
 # THE CHECK THAT CANNOT BE UNDONE IF IT IS WRONG: no internal path, no withdrawn
-# object under any name, no personal address, no internal term.
+# object under any name, no personal address, no internal term -- and, because
+# what a reader meets first is `cargo build`, no root manifest naming a workspace
+# member the manifest keeps in-house.
 if ! python3 "$FILTER" verify "$SPIEGEL" --withdrawn "$INGETROKKEN"; then
     echo "[seed] FAILED: the rewritten history is not publishable. Nothing was" >&2
     echo "  pushed. Fix the manifest or the tree, then run this again." >&2

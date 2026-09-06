@@ -50,6 +50,9 @@ WHAT IS VERIFIED, AND WHY THESE THREE
                and seeding would publish every one of them for the first time
     terms      `geen_interne_zaken` finds nothing in the surviving messages or the
                surviving file content
+    workspace  no version of the root `Cargo.toml` names a member whose directory
+               the manifest keeps in-house -- a published workspace that names a
+               crate it does not carry does not parse, let alone build
 
 The terms scan is the reason this reads blobs and not only names: a customer name
 inside a published file is exactly as public as one in a published file NAME, and
@@ -85,6 +88,37 @@ touched, and the seeding refuses on the terms exactly as it did before. An
 absent list is the old behaviour, not a silent pass -- the refusal is what asks
 for eyes, and the list is what a person writes after using them.
 
+A WORKSPACE MEMBER THAT IS NOT THERE IS NOT A BUILDABLE REPOSITORY
+==================================================================
+`crates/xfa-golden-tests` is on `[internal].paths`, and it is also a line in the
+root `Cargo.toml` `members` list. Drop the directory and leave the line and the
+published repository does not build -- it does not even parse:
+
+    error: failed to load manifest for workspace member `crates/xfa-golden-tests`
+    referenced by workspace at `Cargo.toml`
+
+`simulate_public_tree.assemble` has always known this and edits the members list
+on the way out. The seeding did not, because its central promise is that a file
+that stays is byte for byte what it was -- so it published the manifest unchanged
+and #222's own acceptance criterion ("somebody who clones the repository can
+build the SDK") failed on the first command a reader would type. Measured
+06-09-2026 on the seeded mirror: that one line was the ONLY thing between the
+published tree and a clean-clone build; with it removed the workspace builds and
+the smoke tests pass in an empty environment.
+
+The clean-clone job did not catch it because it builds the tree
+`simulate_public_tree` assembles -- the tree WITH the edit -- and the seeding
+publishes the tree without it. Two mechanisms, one question, different answers:
+the shape this file exists to remove.
+
+So the edit is made here too, from the same manifest key
+(`[internal].workspace_members`) and not from a second list, over every version
+of the root manifest in the history. A blob is only touched when EVERY path it
+ever had is the root `Cargo.toml`, the same test the fork exemption makes, and a
+version that predates the crate is left alone. `verify` then asserts the property
+rather than the edit: no root manifest the published history reaches may name a
+member the manifest calls internal.
+
 Subcommands:
     plan <mirror> --paths <f> --withdrawn <f>
                         the paths that must not travel (NUL-separated) and the
@@ -102,7 +136,7 @@ Subcommands:
     alias <mirror>      the noreply alias non-alias identities are rewritten to
     allowed <mirror>    every address in this history that may stay as it is
     verify <mirror> --withdrawn <file>
-                        the four checks above over the REWRITTEN mirror
+                        the five checks above over the REWRITTEN mirror
 
 Exit codes:
     0  the mirror carries only what the manifest allows
@@ -111,6 +145,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import functools
 import importlib.util
 import os
 import pathlib
@@ -129,8 +164,14 @@ CI = REPO / "scripts" / "ci"
 MAX_BLOB = 1 << 20
 
 
+@functools.lru_cache(maxsize=None)
 def _module(naam: str):
-    """Import a guard by path, so there is one copy of each rule and not two."""
+    """Import a guard by path, so there is one copy of each rule and not two.
+
+    Cached: the borrowed helpers are called per blob and per member, and
+    re-executing a module on every call turned a table lookup back into the
+    hours this file exists to avoid.
+    """
     pad = CI / f"{naam}.py"
     spec = importlib.util.spec_from_file_location(naam, pad)
     mod = importlib.util.module_from_spec(spec)
@@ -480,24 +521,41 @@ def cmd_replacements(a) -> int:
             paden_van_oid.setdefault(oid, set()).add(pad)
     geforkt = _fork_uitzondering(paden_van_oid)
 
+    _, m = manifest()
+    leden = list(m["internal"]["workspace_members"])
+
     regels_uit: list[str] = []
     onopgelost: list[str] = []
-    gelezen = 0
+    gelezen = manifesten = 0
     for oid, tekst in _tekstblobs(a.mirror, sorted(paden_van_oid)):
         gelezen += 1
         paden_hier = paden_van_oid.get(oid) or set()
-        if paden_hier and paden_hier <= gi.EIGEN_BESTANDEN:
-            continue
-        fork = geforkt(oid)
-        van_toepassing = [(naam, rx) for naam, rx in rules
-                          if not (fork and naam == "commercieel")]
-        if not any(rx.search(tekst) for _, rx in van_toepassing):
-            continue
-        nieuw = toepassen(tekst, paren)
-        rest = [naam for naam, rx in van_toepassing if rx.search(nieuw)]
-        if rest:
-            waar, _ = gi._toonbaar(rest[0], sorted(paden_hier)[0], "")
-            onopgelost.append(f"[{rest[0]}] -- {waar}")
+        nieuw = tekst
+
+        # 1. The reviewed replacements.
+        if not (paden_hier and paden_hier <= gi.EIGEN_BESTANDEN):
+            fork = geforkt(oid)
+            van_toepassing = [(naam, rx) for naam, rx in rules
+                              if not (fork and naam == "commercieel")]
+            if any(rx.search(tekst) for _, rx in van_toepassing):
+                nieuw = toepassen(tekst, paren)
+                rest = [naam for naam, rx in van_toepassing if rx.search(nieuw)]
+                if rest:
+                    waar, _ = gi._toonbaar(rest[0], sorted(paden_hier)[0], "")
+                    onopgelost.append(f"[{rest[0]}] -- {waar}")
+                    continue
+
+        # 2. The workspace members whose directories do not travel. Applied to
+        #    the REPLACED text and not to the original: a manifest can need both,
+        #    and two independent rewrites of one blob would keep whichever was
+        #    written last.
+        if paden_hier and paden_hier <= WORTELMANIFEST:
+            zonder = zonder_interne_leden(nieuw, leden)
+            if zonder != nieuw:
+                manifesten += 1
+                nieuw = zonder
+
+        if nieuw == tekst:
             continue
         r = subprocess.run(["git", "-C", str(a.mirror), "hash-object", "-w",
                             "--stdin"], input=nieuw.encode("utf-8"),
@@ -509,7 +567,8 @@ def cmd_replacements(a) -> int:
     a.sed.chmod(0o600)
 
     print(f"[seed-replace] {len(paren)} reviewed replacement(s), {gelezen} readable "
-          f"blob(s), {len(regels_uit)} rewritten")
+          f"blob(s), {len(regels_uit)} rewritten, {manifesten} of them a root "
+          f"manifest naming an internal workspace member")
     if onopgelost:
         print(f"[seed-replace] {len(onopgelost)} blob(s) still carry an internal term "
               "after the list was applied:", file=sys.stderr)
@@ -580,6 +639,37 @@ def _fork_uitzondering(paden_van_oid: dict[str, set[str]]):
         return bool(paden) and all(in_fork(p) for p in paden)
 
     return geforkt
+
+
+# The root manifest, by the one name it has. A blob is only edited when EVERY
+# path it ever had is this one -- a blob that also lived somewhere else is not
+# only a workspace manifest, and editing it there would be editing a file nobody
+# asked about.
+WORTELMANIFEST = {"Cargo.toml"}
+
+
+def _ledenregel(lid: str) -> re.Pattern:
+    """The members line for one crate, from the tree exporter and not restated.
+
+    The whole reason this edit is here at all is that the exporter made it and
+    the seeding did not; a second copy of the expression would be the same defect
+    one function later. `simulate_public_tree` owns it, this borrows it, and a
+    change to either is a change to both.
+    """
+    stp, _ = manifest()
+    return stp.ledenregel(lid)
+
+
+def zonder_interne_leden(tekst: str, leden: list[str]) -> str:
+    """The root manifest with every internal workspace member taken out.
+
+    No refusal when a member is absent, unlike `simulate_public_tree.assemble`:
+    this runs over the WHOLE history, and a manifest from before the crate
+    existed does not name it. What must hold is the property, and `verify` is
+    where that is asserted.
+    """
+    stp, _ = manifest()
+    return stp.zonder_interne_leden(tekst, leden)
 
 
 def cmd_verify(a) -> int:
@@ -677,8 +767,38 @@ def cmd_verify(a) -> int:
         fouten.append(f"{len(inhoud)} internal term(s) in file content that would be "
                       f"published, first {inhoud[0]}")
 
+    # 5. Buildability, which is the one property here a reader meets first. Every
+    #    version of the root manifest the published history reaches, checked for
+    #    a member whose directory the manifest keeps in-house. Asserted rather
+    #    than assumed: the edit that removes them is in another function, and a
+    #    check that reads the edit instead of the result proves nothing.
+    leden = list(m["internal"]["workspace_members"])
+    manifest_oids = sorted(paden.get("Cargo.toml") or set())
+    kapot: list[str] = []
+    gelezen_manifesten = 0
+    for oid, tekst in _tekstblobs(mirror, manifest_oids):
+        gelezen_manifesten += 1
+        namen = [lid for lid in leden if _ledenregel(lid).search(tekst)]
+        if namen:
+            kapot.append(namen[0])
+    # A history with no root manifest is not a workspace and has nothing to
+    # break -- a repository that is not a cargo workspace is a legitimate source.
+    # A history that HAS one and could not read a single version of it is the
+    # other thing, and reporting green over that is what these checks refuse
+    # everywhere else. (`trees` is what catches a rewrite that dropped the file:
+    # a publishable path that stopped holding its blob fails there, not here.)
+    if manifest_oids and not gelezen_manifesten:
+        fouten.append(f"the published history reaches {len(manifest_oids)} root "
+                      "Cargo.toml object(s) and not one could be read, so the "
+                      "workspace was never checked; that is not a pass")
+    if kapot:
+        fouten.append(f"{len(kapot)} version(s) of the root manifest name a "
+                      f"workspace member whose directory does not travel, e.g. "
+                      f"{kapot[0]} -- a clone of this would not build")
+
     print(f"[seed-verify] {len(paden)} path(s), {gelezen} readable text blob(s), "
-          f"{len(set(adressen))} distinct identity/identities")
+          f"{len(set(adressen))} distinct identity/identities, "
+          f"{len(manifest_oids)} version(s) of the root manifest")
 
     if fouten:
         print("[seed-verify] the rewritten history is not publishable:", file=sys.stderr)
@@ -686,7 +806,7 @@ def cmd_verify(a) -> int:
             print(f"  {f}", file=sys.stderr)
         return 1
     print("[seed-verify] OK: no internal path, no withdrawn object, no personal "
-          "address, no internal term")
+          "address, no internal term, no workspace member that does not travel")
     return 0
 
 
