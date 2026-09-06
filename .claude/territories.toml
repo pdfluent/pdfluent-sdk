@@ -221,6 +221,16 @@ paden = [
   # the literal. The other two stay here; nothing has edited them since.
   "scripts/ci/test_no_withdrawn_object.py",
   "scripts/ci/test_sweep_exemption.py",
+  # BACK FROM t3, 06-09-2026, on the return condition t3's own entry names:
+  # "back to their owners the moment #226 lands; whoever next edits them takes
+  # them back by moving the literals". #226 landed as f9ae3a1d.
+  ".github/workflows/ci.yml",
+  # Two new files for #255 rather than a claim on anything t2 wrote: the
+  # fork-README guard and its test, carved out of scripts/ci/** the same way the
+  # two fork-register guards above are, because the fork register and the READMEs
+  # they read are t1's.
+  "scripts/ci/a_forked_readme_sends_you_upstream.py",
+  "scripts/ci/test_a_forked_readme_sends_you_upstream.py",
 ]
 # LENT TO t3, 06-09-2026, for #226, and only these two files of the suite.
 #
@@ -237,18 +247,6 @@ paden = [
 uitgezonderd = [
   "crates/visual-regression/fixtures/pdfa-converted.pdf",
   "crates/visual-regression/baseline/pdfa-converted-p1.png",
-  # ---- LENT TO t3, 06-09-2026, for #348 (LC7, #219) -------------------------
-  # The READMEs of the forked crates, and nothing else in them. What crates.io
-  # and GitHub show a reader is the README, so that is where the fork line has
-  # to be; the crate sources stay untouched. Back with the push that lands them.
-  "crates/pdf-syntax/README.md",
-  "crates/pdf-interpret/README.md",
-  "crates/pdf-render/README.md",
-  "crates/pdf-font/README.md",
-  "crates/hayro-ccitt/README.md",
-  "crates/hayro-jbig2/README.md",
-  "crates/hayro-jpeg2000/README.md",
-  "crates/lopdf/README.md",
   # And one test file, because the skip lint was red on it before this branch
   # touched anything: a directory walk that returned in silence.
   "crates/visual-regression/tests/superseded_pipeline_stays_gone.rs",
@@ -558,7 +556,11 @@ paden = [
   #
   # Back to their owners the moment #226 lands; whoever next edits them takes
   # them back by moving the literals, and needs no permission to.
-  ".github/workflows/ci.yml",
+  #
+  # TAKEN BACK 06-09-2026 (#255): #226 landed as f9ae3a1d, so the expiry above
+  # has fired and `.github/workflows/ci.yml` is in t1's block again -- moved
+  # rather than copied, because two literal owners for one path is the collision
+  # rule 1 exists to prevent.
   "scripts/ci/pdfa_conformance_gate.py",
   # ON LOAN from t1, 06-09-2026, for #226. The two files the watermark removal
   # changes, and nothing else of that suite -- see t1's block for why they
@@ -782,18 +784,6 @@ paden = [
   "scripts/ci/test_een_treffer_publiceert_de_term_niet.py",
   "docs/FORK_DIVERGENCE.md",
   "docs/API_CONTRACT.md",
-  # From t1: the READMEs of the forked crates. LC7 is about what a reader sees
-  # first, and what crates.io and GitHub show is the README -- so the fork line
-  # has to sit there and nowhere else. The crate sources are untouched.
-  "crates/pdf-syntax/README.md",
-  "crates/pdf-interpret/README.md",
-  "crates/pdf-render/README.md",
-  "crates/pdf-font/README.md",
-  "crates/hayro-ccitt/README.md",
-  "crates/hayro-jbig2/README.md",
-  "crates/hayro-jpeg2000/README.md",
-  "crates/lopdf/README.md",
-  "crates/cff-parser/README.md",
   # And one test file of t1's, because the skip lint was red on it before this
   # branch touched anything: a directory walk that returned in silence.
   "crates/visual-regression/tests/superseded_pipeline_stays_gone.rs",
