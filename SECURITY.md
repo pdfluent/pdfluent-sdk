@@ -9,11 +9,12 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in PDFluent, please report it responsibly.
-
 **Email:** security@pdfluent.com
 
-**Do NOT** open a public GitHub issue for security vulnerabilities.
+That address is a role address and it is the whole of the reporting route.
+**Do not open a public GitHub issue for a vulnerability**: an issue publishes the
+flaw to everyone who has not yet updated, including the people who will not read
+it until the fix exists.
 
 ### What to include
 
@@ -22,23 +23,42 @@ If you discover a security vulnerability in PDFluent, please report it responsib
 - Impact assessment (what an attacker could achieve)
 - Affected crate(s) and version(s)
 
-### Response timeline
+### What you can expect back
 
-| Step | Timeframe |
-|------|-----------|
-| Acknowledgment | Within 48 hours |
-| Initial assessment | Within 5 business days |
-| Fix development | Depends on severity (see below) |
-| Public disclosure | After fix is released |
+| Step | Aim |
+|------|-----|
+| Acknowledgment | 2 working days |
+| First assessment, with a severity | 5 working days |
+| Fix | as fast as the severity below argues for |
+| Public disclosure | after the fix is released, crediting you unless you ask otherwise |
 
-### Severity classification
+These are aims and not a service level. PDFluent is maintained by a small team
+and a report that arrives on a Friday evening is read on Monday; a report that
+turns out to need a change in a font or a decompression path can take longer
+than the row below suggests. If you have heard nothing after five working days,
+send the message again — the likeliest explanation is that it never arrived.
 
-| Severity | Description | Fix target |
-|----------|-------------|------------|
-| **Critical** | Arbitrary code execution, sandbox escape | 24 hours |
-| **High** | Denial of service (OOM, infinite loop), information disclosure | 7 days |
-| **Medium** | Crash on crafted input (parser panic), resource exhaustion | 14 days |
-| **Low** | Minor information leak, non-exploitable edge case | Next release |
+### How urgently a fix is attempted
+
+| Severity | Description | Aim |
+|----------|-------------|-----|
+| **Critical** | Arbitrary code execution, sandbox escape | days |
+| **High** | Denial of service (OOM, infinite loop), information disclosure | 1–2 weeks |
+| **Medium** | Crash on crafted input (parser panic), resource exhaustion | a few weeks |
+| **Low** | Minor information leak, non-exploitable edge case | next release |
+
+### There is no bug bounty
+
+No payment, no reward, and no prize is offered for a report, and none has ever
+been paid. This is stated because the alternative is worse than saying nothing:
+a policy that stays quiet about it collects reports written in the expectation
+of money, and the disappointment lands on the person who did the work. What is
+offered is credit in the release notes and in the advisory, unless you prefer
+not to be named.
+
+Nor is there an authorisation to test somebody else's deployment. Test against
+your own copy of the library — a report obtained by attacking a running service
+that is not yours is not a report we can act on.
 
 ## Security measures in place
 
@@ -77,23 +97,15 @@ If you discover a security vulnerability in PDFluent, please report it responsib
 - `fuzz_g3_content_stream` — Content-stream tokenizer
 - `fuzz_xfa_template` — XFA DOM data-XML parsing
 
-`.gitlab-ci.yml` defines three fuzz jobs in the `fuzz_manual` stage:
+Three runs are scheduled over them: a build of all 20 targets whenever `fuzz/`
+or `crates/` changes, so a target cannot rot unnoticed; a 60-second smoke run
+nightly over the seven core targets (`fuzz_pdf_parser`, `fuzz_content_stream`,
+`fuzz_xref`, `fuzz_filters`, `fuzz_data_dom`, `fuzz_formcalc`, `fuzz_som_path`);
+and a 120-second run weekly over all 20. Any crash fails the run and its
+reproducer is kept.
 
-- **fuzz:build** — `cargo +nightly fuzz build` over all 20 targets; auto-triggered
-  when `fuzz/` or `crates/` change in an MR, manual otherwise; fails on bit-rot.
-- **fuzz:smoke** — 60-second run over the seven core targets (`fuzz_pdf_parser`,
-  `fuzz_content_stream`, `fuzz_xref`, `fuzz_filters`, `fuzz_data_dom`,
-  `fuzz_formcalc`, `fuzz_som_path`); nightly schedule (cron `30 2 * * *` UTC)
-  and manual dispatch.
-- **fuzz:deep** — 120-second run over all 20 targets; weekly schedule
-  (cron `30 3 * * 0` UTC Sunday) and manual dispatch.
-
-Schedules are configured in GitLab: Settings → CI/CD → Schedules.
-Both fuzz:smoke and fuzz:deep upload crash reproducers as artifacts (30-day
-retention) and fail on any crash. Trigger manually from the pipeline view
-(play button on the job). Run a target locally with
-`cargo +nightly fuzz run <target>`; see `fuzz/README.md` for the crash-triage
-process.
+Run a target yourself with `cargo +nightly fuzz run <target>`; `fuzz/README.md`
+describes what to do with a crash it finds.
 
 ### Dependency management
 

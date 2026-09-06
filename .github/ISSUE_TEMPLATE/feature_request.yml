@@ -1,0 +1,50 @@
+# What a request has to say before it can be weighed (#233).
+#
+# The two fields that decide everything are the document and the workaround. A
+# PDF feature request without a file that shows it cannot be tested, and one
+# with no account of what the sender does today cannot be ranked against the
+# other twenty.
+name: Feature request
+description: Something the library cannot do that you need it to do.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What you are trying to do
+      description: The task, not the API you imagine for it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do today
+      description: >
+        The workaround, or "nothing — this blocks us". Both are useful answers
+        and they rank differently.
+    validations:
+      required: true
+
+  - type: textarea
+    id: document
+    attributes:
+      label: A document that shows it
+      description: >
+        Attach a PDF where the behaviour matters, if the request is about one.
+        Please do not attach anything confidential; a redacted file that still
+        reproduces is worth more than a description of one that does not travel.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: signoff
+    attributes:
+      label: If you plan to implement it yourself
+      options:
+        - label: >
+            I understand that every commit in the pull request is signed off
+            with `git commit -s`, certifying the Developer Certificate of
+            Origin, and that the sign-off check refuses one that is not — see
+            CONTRIBUTING.md.
+          required: false
