@@ -497,6 +497,8 @@ run hookwiretst python3 scripts/ci/test_the_commit_msg_hook_is_wired.py
 run jobimports python3 scripts/ci/a_job_has_what_its_scripts_import.py
 run jobdoes   python3 scripts/ci/every_job_does_something.py
 run jobdoestst python3 scripts/ci/test_every_job_does_something.py
+run pkgmanif  python3 scripts/ci/every_package_manifest_names_the_same_release.py
+run pkgmaniftst python3 scripts/ci/test_every_package_manifest_names_the_same_release.py
 run noai      python3 scripts/ci/no_ai_attribution.py
 # 170 seconds, measured 05-09-2026, and it is the most expensive Python gate
 # here. It was 76 before the replacement list (#222) added six more cases, four

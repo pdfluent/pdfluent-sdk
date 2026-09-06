@@ -421,6 +421,16 @@ jobs:
       - name: The diagnostic-catalogue guard bites
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_every_diagnostic_code_is_documented.py
+      # Three package managers describe one desktop release, each carrying the
+      # version, the URL and the checksum in its own spelling. A manifest left
+      # at the previous release does not fail here; it fails on a stranger's
+      # machine, or it installs the old build and reports the new version.
+      - name: Every package manifest names the same release
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_package_manifest_names_the_same_release.py
+      - name: The packaging guard bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_package_manifest_names_the_same_release.py
       - name: No commit carries AI attribution
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/no_ai_attribution.py

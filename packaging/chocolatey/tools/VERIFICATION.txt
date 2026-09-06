@@ -1,0 +1,31 @@
+VERIFICATION
+
+Verification is intended to assist the Chocolatey moderators and any user who
+wants to check that this package installs what it says it installs.
+
+This package downloads its installer at install time; no binary is embedded.
+
+Installer
+  URL     https://pdfluent.com/releases/1.0.0-beta.21/PDFluent_1.0.0-beta.21_x64_en-US.msi
+  Size    20119552 bytes
+  SHA256  F6262AC4EF35920F0B6D2992DD9BF4701A21751309A85B1E938533AF10364F12
+
+To check the checksum yourself:
+
+  Get-FileHash PDFluent_1.0.0-beta.21_x64_en-US.msi -Algorithm SHA256
+
+or, on a machine with the Chocolatey CLI:
+
+  checksum -t sha256 -f PDFluent_1.0.0-beta.21_x64_en-US.msi
+
+The URL is the download the publisher links from https://pdfluent.com/download/
+and is unique per version; it is not a vanity URL that is overwritten in place.
+
+The MSI carries the publisher's Authenticode signature. Its Windows Installer
+identifiers are:
+
+  ProductCode  {AEE448FB-9AC3-4519-956E-60B7A232CDA8}
+  UpgradeCode  {8AE94143-984E-5CE4-893C-ED1723406728}
+
+The software is published by Innovation Trigger B.V. under the licence at
+https://pdfluent.com/license/.
