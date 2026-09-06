@@ -4,7 +4,7 @@
 # PDFluent is available under two licences, at your option: the GNU AGPLv3, or
 # the PDFluent Commercial Licence. See the LICENSE file in this repository --
 # that file travels with the copy you received, which a URL does not.
-"""Two-way proof for one_licence_three_registers.py (#304).
+"""Two-way proof for one_licence_three_registers.py (#304, #345).
 
 Every case copies the real registers and the real manifests into a scratch
 tree, changes ONE statement in ONE register, and demands that the guard go red
@@ -16,6 +16,15 @@ three registers had before this guard existed.
 The mutations are the ones the issue is about: a value changed in one register
 only, a side flipped, a row removed, a crate added to the tree and nowhere else,
 and the publish flag moved in one file but not the other.
+
+Since #345 NOTICE is the fourth register, so the same treatment applies to it:
+a crate in the wrong list, a licence expression that differs from the boundary
+by the order of its operands, a published crate NOTICE forgets, one it names
+that is never distributed, and a name no register knows. The first of those is
+the failure the issue was opened for -- NOTICE booked `pdf-render` and
+`pdf-font` as AGPL-or-commercial while the other three registers had them as
+Apache-2.0 OR MIT forks -- and running this suite against the NOTICE text as it
+stood before that fix goes red on thirteen disagreements.
 """
 from __future__ import annotations
 
@@ -32,6 +41,7 @@ GUARD = "scripts/ci/one_licence_three_registers.py"
 CANONIEK = "docs/release/canonical_licenses.toml"
 GRENS = "docs/licensing/boundary.toml"
 BELEID = "docs/LICENSE_POLICY.toml"
+KENNISGEVING = "NOTICE"
 ONZE = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 
 def crates_in_de_werkruimte() -> int:
@@ -66,7 +76,7 @@ def boom(root: pathlib.Path) -> None:
     """The real tree, reduced to what the guard reads."""
     (root / "scripts" / "ci").mkdir(parents=True)
     shutil.copy(REPO / GUARD, root / GUARD)
-    for rel in (CANONIEK, GRENS, BELEID, "Cargo.toml"):
+    for rel in (CANONIEK, GRENS, BELEID, KENNISGEVING, "Cargo.toml"):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO / rel, root / rel)
     for cargo in sorted((REPO / "crates").glob("*/Cargo.toml")):
@@ -253,8 +263,70 @@ rood("an unpublished crate of ours declaring MIT",
      run_with(edit("crates/pdf-capi/Cargo.toml", f'license = "{ONZE}"', 'license = "MIT"')),
      "crates/pdf-capi", "side = 'ours'", "license = 'MIT'")
 
+# --- NOTICE, the register the reader is handed (#345) ---------------------
+# The regression the issue was opened for: a fork booked as one of ours.
+OSS_RENDER = """  pdf-render           Apache-2.0 OR MIT
+                       (substantially extended fork of hayro, co-authored by
+                        Laurenz Stampfl)
+
+"""
+
+
+def render_terug_naar_commercieel(root: pathlib.Path) -> None:
+    edit(KENNISGEVING, OSS_RENDER, "")(root)
+    edit(KENNISGEVING, "  pdf-ocr              — OCR integration\n",
+         "  pdf-ocr              — OCR integration\n"
+         "  pdf-render           — page rendering (substantially extended fork)\n")(root)
+
+
+rood("pdf-render moved back into the dual-licensed list",
+     run_with(render_terug_naar_commercieel), "crates/pdf-render",
+     "boundary.toml", "NOTICE", "side = 'forked' (so the open-source foundation list)",
+     "the dual-licensed list")
+
+rood("NOTICE states a fork's licence with the operands the other way round",
+     run_with(edit(KENNISGEVING, "  pdf-syntax           Apache-2.0 OR MIT",
+                   "  pdf-syntax           MIT OR Apache-2.0")),
+     "crates/pdf-syntax", "NOTICE", "declares = 'Apache-2.0 OR MIT'",
+     "'MIT OR Apache-2.0'")
+
+rood("a published crate NOTICE does not name",
+     run_with(edit(KENNISGEVING, "  xfa-license          — license enforcement runtime\n", "")),
+     "crates/xfa-license", "NOTICE", "in neither list")
+
+rood("an internal crate named in NOTICE",
+     run_with(edit(KENNISGEVING, "  pdf-ocr              — OCR integration\n",
+                   "  pdf-ocr              — OCR integration\n"
+                   "  pdf-bench            — bench harness\n")),
+     "crates/pdf-bench", "NOTICE", "side = 'internal'", "the dual-licensed list")
+
+rood("a crate that is publish = false named in NOTICE",
+     run_with(edit(KENNISGEVING, "  pdf-ocr              — OCR integration\n",
+                   "  pdf-ocr              — OCR integration\n"
+                   "  pdf-capi             — the C ABI\n")),
+     "crates/pdf-capi", "NOTICE", "publish_false = true", "the dual-licensed list")
+
+rood("NOTICE names a crate no register knows",
+     run_with(edit(KENNISGEVING, "  pdf-ocr              — OCR integration\n",
+                   "  pdf-ocr              — OCR integration\n"
+                   "  pdf-ghostwriter      — nothing at all\n")),
+     "pdf-ghostwriter", "NOTICE", "no crate of that name")
+
+
+def kop_hernoemd(root: pathlib.Path) -> None:
+    """A heading the parser no longer recognises collects nothing, and a
+    register that was not read agrees with every other one."""
+    edit(KENNISGEVING, "OPEN-SOURCE FOUNDATION", "PERMISSIVE FOUNDATION")(root)
+    edit(KENNISGEVING, "DUAL-LICENSED COMPONENTS", "CRATES OF OUR OWN")(root)
+
+
+r = run_with(kop_hernoemd)
+expect("a NOTICE the parser cannot read is FATAL, not a pass", r.returncode == 2,
+       f"exit={r.returncode} {r.stderr[-300:]}")
+expect("  and says so", "floor" in r.stderr and "NOTICE" in r.stderr, r.stderr[-300:])
+
 # --- a register that cannot be read is not a pass --------------------------
-for rel in (CANONIEK, GRENS, BELEID, "Cargo.toml"):
+for rel in (CANONIEK, GRENS, BELEID, KENNISGEVING, "Cargo.toml"):
     r = run_with(lambda root, rel=rel: (root / rel).unlink())
     expect(f"{rel} missing exits 3", r.returncode == 3, f"exit={r.returncode}")
     expect("  and announces SKIPPED (not a pass)", "SKIPPED (not a pass)" in r.stderr, r.stderr[-200:])
@@ -283,7 +355,7 @@ expect("a failure names the register that is the truth",
        "is the truth for a published crate's expression" in r.stderr, r.stderr[-400:])
 expect("  and where a change to the truth goes", "PUBLISH_PROTOCOL" in r.stderr)
 
-MINIMUM_CASES = 132  # FLOOR: set to what actually runs; a smaller suite passing is not this suite passing
+MINIMUM_CASES = 171  # FLOOR: set to what actually runs; a smaller suite passing is not this suite passing
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 if fails:
     for f in fails:
