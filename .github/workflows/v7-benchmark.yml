@@ -76,6 +76,33 @@ jobs:
       - name: The shared build directory is there and undamaged
         run: bash scripts/ci/cargo_target_health.sh
 
+      # THE RUNNER SERVICE'S PATH DOES NOT CARRY ~/.cargo/bin. Every job on this
+      # runner that compiles carries this step -- `guards` and `workspace` in
+      # ci.yml, java-bindings.yml, visual-regression.yml -- and a job written
+      # without it dies on `cargo: command not found`, exit 127, seconds in, with
+      # a log that says nothing about the toolchain. (#292, #343)
+      #
+      # `$HOME` for the runner service is not necessarily where cargo was
+      # installed, so adding the directory is not the same as making cargo
+      # runnable. Source the env file when it is there, and then CHECK.
+      - name: Cargo on PATH
+        run: |
+          set -euo pipefail
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
+          export PATH="$HOME/.cargo/bin:$PATH"
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "::error::cargo is not runnable on this runner. \$HOME is $HOME; \$HOME/.cargo/bin is $([ -d "$HOME/.cargo/bin" ] && echo present || echo absent). Every step below that builds would fail with exit 127 and say nothing about this." >&2
+            exit 1
+          fi
+          # Status-checked, not `echo $(...)`: a rustup shim with no toolchain
+          # installed resolves and does not run, and the substitution failing
+          # inside an echo leaves `set -e` nothing to see.
+          cargo --version || {
+            echo "::error::cargo is on PATH but does not run. A rustup shim without an installed toolchain does this: command -v cargo succeeds and every build fails." >&2
+            exit 1
+          }
+
       - name: Build the two examples the programme measures through
         run: |
           set -euo pipefail

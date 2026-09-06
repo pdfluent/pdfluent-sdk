@@ -97,7 +97,15 @@ MINIMUM_WORKFLOWS = 10
 # its state, which is the direction the comment above calls the more likely one.
 # It is affordable there only because that state is warm, which is the same
 # reason it must check the build directory before it starts.
-EXPECTED_BUILD_JOBS = 9
+# 9 -> 10 on 06-09-2026: v7-benchmark.yml's `measure` job (#169). Upward again,
+# and for the one reason this machine is the right place rather than the cheap
+# one: a benchmark wants the same hardware every time, and a throwaway instance
+# is a different machine on every run. That is the defect
+# benchmarks/BASELINE_HARDWARE.toml exists to name, so moving the work to an
+# instance would trade a slow gate for a meaningless number. It builds two
+# examples against the warm cache, has neither a push nor a pull_request
+# trigger, and checks the build directory before it starts.
+EXPECTED_BUILD_JOBS = 10
 
 CHECK = "scripts/ci/cargo_target_health.sh"
 
