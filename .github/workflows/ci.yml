@@ -946,6 +946,12 @@ jobs:
       - name: Both fork lists name the same crates
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/fork_lists_agree.py
+      - name: Every forked README sends you upstream, and claims no terms its manifest lacks
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_forked_readme_sends_you_upstream.py
+      - name: The fork-README guard still bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_forked_readme_sends_you_upstream.py
       - name: A fork behind on patch releases is behind
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_upstream_gap_counts_patches.py

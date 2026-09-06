@@ -19,6 +19,11 @@ The fork adds the parts of the CFF specification that `ttf-parser` does not
 need (because `ttf-parser` only sees CFF wrapped in OpenType), but a PDF
 parser does.
 
+If you do not need the PDF-specific additions, upstream
+[`cff-parser`](https://github.com/jrmuizel/cff-parser) — the crate this one is
+tracked against in `docs/UPSTREAM_FORKS.toml`, and the one you could switch to —
+is the better choice: we are only slightly ahead of it.
+
 ## What this crate gives you
 
 - Parse CFF Top DICT, name index, string index, charstring index, encoding,

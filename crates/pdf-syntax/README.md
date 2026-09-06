@@ -4,6 +4,8 @@ A low-level library for reading PDF files.
 
 This crate is a fork of [`hayro-syntax`](https://github.com/LaurenzV/hayro) by Laurenz Stampfl, used by the [PDFluent](https://pdfluent.com) commercial Rust PDF SDK. It is published under the original permissive MIT/Apache-2.0 license — see the License section below.
 
+If you do not need PDFluent's changes, upstream [`hayro-syntax`](https://github.com/LaurenzV/hayro) is the better choice: it is the original, it is actively maintained, and it does not carry our requirements.
+
 <!-- cargo-rdme start -->
 
 This crate implements the `Syntax` chapter of the PDF reference, and therefore

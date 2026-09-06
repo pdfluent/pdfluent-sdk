@@ -318,6 +318,13 @@ run timers    python3 scripts/ci/persistent_timers_use_a_calendar.py
 run installer python3 scripts/ci/test_installer_escapes_the_path.py
 run upstream  python3 scripts/ci/upstream_has_not_moved_on.py
 run forklist  python3 scripts/ci/fork_lists_agree.py
+# The other half of the README promise (#255). every_fork_names_its_upstream.py
+# (#219) holds the fork line above the fold; this one holds the recommendation
+# -- a paragraph sending a reader who does not need our changes to upstream --
+# and refuses a README claiming commercial terms over a permissive manifest, as
+# pdf-render's and pdf-font's did over their Apache-2.0 OR MIT.
+run forkrdme  python3 scripts/ci/a_forked_readme_sends_you_upstream.py
+run forkrdmet python3 scripts/ci/test_a_forked_readme_sends_you_upstream.py
 run patches   python3 scripts/ci/test_upstream_gap_counts_patches.py
 # The four fork-register guards. Two of them ran nowhere at all -- not in a job,
 # not in this gate -- so they looked like protection and were not. The wiring was

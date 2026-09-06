@@ -8,9 +8,9 @@
 
 PDF page rasterizer in pure Rust — vello-backed rendering, no PDFium, WASM-compatible.
 
-This crate is part of the [PDFluent](https://pdfluent.com) commercial Rust PDF SDK.
-
-**Free for evaluation. Production use requires a valid license.**
+It is used by the [PDFluent](https://pdfluent.com) Rust PDF SDK, on the
+upstream terms: **Apache-2.0 OR MIT**, for the whole crate, PDFluent's
+extensions included.
 
 ## What it does
 
@@ -30,21 +30,23 @@ use pdfluent::prelude::*;
 
 For low-level access, see <https://pdfluent.com/docs>.
 
-## Origin
+## License
 
-This crate was forked from [`hayro`](https://github.com/LaurenzV/hayro) by Laurenz Stampfl and has been substantially extended. The original Apache-2.0/MIT-licensed contributions remain attributed; PDFluent extensions are governed by the PDFluent Commercial License. See `THIRD_PARTY_LICENSES.txt` in the repository root.
+**Apache-2.0 OR MIT** — preserved from upstream `hayro`. Relicensing is
+prohibited, so how far this fork is extended does not move it: the extensions
+are licensed on the same terms as the code they were built on. The upstream
+attributions are in `THIRD_PARTY_LICENSES.txt` in the repository root.
 
-## Licensing
+```
+Copyright (c) Laurenz Stampfl (hayro)
+Copyright (c) 2026 Innovation Trigger BV (PDFluent fork)
+```
 
-- Free for evaluation, development, and testing
-- Production use requires a valid PDFluent commercial license
-- Redistribution requires the OEM Redistribution add-on
-
-See [LICENSE](LICENSE) for full terms, or visit <https://pdfluent.com/terms>.
+See [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT).
 
 ## Links
 
-- Main crate: <https://crates.io/crates/pdfluent>
+- PDFluent SDK: <https://pdfluent.com>
+- `cargo add pdfluent` (full SDK): <https://crates.io/crates/pdfluent>
 - Documentation: <https://pdfluent.com/docs>
-- Trial: <https://pdfluent.com/trial>
-- Pricing: <https://pdfluent.com/pricing>
+- Upstream hayro: <https://github.com/LaurenzV/hayro>
