@@ -48,32 +48,17 @@ pub enum PdfStatus {
     ErrorWatermark = 14,
     /// A compression/optimization operation failed.
     ErrorCompress = 15,
-    /// A license key is malformed or names an unknown tier.
-    ErrorInvalidLicense = 16,
-    /// A license is already set to a different tier in this process.
-    /// Restart the process to switch tiers.
-    ErrorLicenseAlreadySet = 17,
-    /// A license file could not be read from disk.
-    ErrorLicenseFile = 18,
-    /// A signed license payload has expired (its `expires_at` is in the past).
-    ErrorLicenseExpired = 19,
-    /// A signed license payload's Ed25519 signature does not verify against
-    /// the configured public key (tampered or wrong-key payload).
-    ErrorLicenseInvalidSignature = 20,
+    // 16 to 20 were the licence-activation codes. They are not reused: the
+    // numbers stay retired so a caller compiled against an older header can
+    // never read a new meaning out of an old constant. (#226)
     /// An unknown error occurred.
     /// A text-edit operation failed (stale match id, unsupported container,
     /// encoding failure, signed document refused, …). The detail is available
     /// via `pdf_last_error_message`.
     ErrorTextEdit = 21,
-    /// The licence is valid but its tier does not include the requested
-    /// capability — Office export on a tier below Business, for instance.
-    ///
-    /// Distinct from `ErrorInvalidLicense` (16) on purpose: "your key is bad"
-    /// and "your plan does not cover this" send a caller to different places,
-    /// and collapsing them into one code costs a support conversation every
-    /// time. Added 23-08-2026 with the Office exports; appended rather than
-    /// inserted so every existing number keeps its meaning.
-    ErrorCapabilityNotLicensed = 22,
+    // 22 said a tier did not cover the requested operation -- Office export
+    // below Business. Nothing withholds anything any more, so nothing can
+    // return it; the number stays retired for the reason above. (#226)
     ErrorUnknown = 99,
 }
 

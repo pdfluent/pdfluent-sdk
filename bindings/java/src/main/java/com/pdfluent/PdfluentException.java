@@ -27,7 +27,6 @@ package com.pdfluent;
  * ├── PdfluentEncryptedDocumentException — wrong or missing password
  * ├── PdfluentPageRangeException      — page index out of bounds
  * ├── PdfluentIoException             — file I/O failures
- * ├── PdfluentLicenseException        — license parse or validation errors
  * ├── PdfluentGeometryException       — invalid page geometry
  * └── PdfluentLimitException          — resource or processing limit exceeded
  * </pre>
@@ -51,16 +50,16 @@ package com.pdfluent;
  * <h2>Canonical C8 Error Codes</h2>
  * <p>Every {@code PdfluentException} carries an optional stable identifier exposed via
  * {@link #getCode()}. The string comes from the C8 error catalogue
- * ({@code docs/error_catalogue.md}) — examples include {@code E-LICENSE-INVALID},
- * {@code E-LICENSE-FEATURE-NOT-IN-TIER}, and {@code E-LICENSE-CAPABILITY-NOT-COMPILED}.
- * Codes are append-only and frozen once assigned, so callers can safely branch on them
- * without parsing localized message strings:
+ * ({@code docs/error_catalogue.md}) — examples include {@code E-PARSE-INVALID-PDF}
+ * and {@code E-WASM-PAGE-OUT-OF-RANGE}. Codes are append-only and frozen once
+ * assigned, so callers can safely branch on them without parsing localized
+ * message strings:
  * <pre>{@code
  * try {
- *     PdfluentLicensing.activateKey(key);
- * } catch (PdfluentLicenseException e) {
- *     if ("E-LICENSE-INVALID".equals(e.getCode())) {
- *         // tell the user the key is bad
+ *     doc.page(index);
+ * } catch (PdfluentPageRangeException e) {
+ *     if ("E-WASM-PAGE-OUT-OF-RANGE".equals(e.getCode())) {
+ *         // tell the user the page does not exist
  *     }
  * }
  * }</pre>

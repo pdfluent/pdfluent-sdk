@@ -242,15 +242,16 @@ await sharp(result.data, {
 }).png().toFile('page.png');
 ```
 
-## License
+## Licence
 
-**PDFluent Commercial License** — free for evaluation; a valid license is required for production use.
+PDFluent is published under the **GNU AGPLv3**, with the **PDFluent Commercial
+Licence** as the alternative for anyone who cannot accept the copyleft
+obligation. There is no licence key, no activation call and no tier: every
+feature works in every build and output is never marked.
 
-- **30-day evaluation key** (full features, no output watermark): <https://pdfluent.com/trial>
-- **Pricing:** <https://pdfluent.com/pricing>
-- **Commercial terms:** <https://pdfluent.com/terms>
-
-Without a license key the SDK is fully functional; output PDFs carry an evaluation marker in `/Producer` metadata.
+The commercial route is a signed order form, not a checkout. Write to
+sales@pdfluent.com; the terms are in `LICENSE-COMMERCIAL` and the form template
+in `docs/licensing/order-form.md`.
 
 ## Links
 

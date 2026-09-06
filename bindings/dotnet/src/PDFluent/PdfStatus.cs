@@ -109,61 +109,19 @@ namespace PDFluent
         /// </summary>
         ErrorCompress = 15,
 
-        /// <summary>
-        /// The license key string is malformed or names an unrecognised tier.
-        /// Maps to <see cref="PdfluentLicenseException"/> with C8 code
-        /// <c>E-LICENSE-INVALID</c>.
-        /// </summary>
-        ErrorInvalidLicense = 16,
+        // 16 to 20 were the licence-activation codes, and 22 said a tier did
+        // not cover the requested operation. There is no key and no tier, so
+        // nothing returns them; the numbers stay retired rather than reused so
+        // an older caller can never read a new meaning out of an old constant.
+        // (#226)
 
-        /// <summary>
-        /// The process-global license has already been set to a different tier
-        /// in this run. Restart the process to switch tiers.
-        /// Maps to <see cref="PdfluentLicenseException"/> with C8 code
-        /// <c>E-LICENSE-INVALID</c>.
-        /// </summary>
-        ErrorLicenseAlreadySet = 17,
-
-        /// <summary>
-        /// The license file could not be opened or read from disk (permission
-        /// denied, path not found, or I/O error).
-        /// Maps to <see cref="PdfluentIoException"/>.
-        /// </summary>
-        ErrorLicenseFile = 18,
-
-        /// <summary>
-        /// A signed license payload has expired (its <c>expires_at</c> is in
-        /// the past). Maps to <see cref="PdfluentLicenseException"/> with
-        /// <c>Code = "E-LICENSE-EXPIRED"</c>.
-        /// </summary>
-        ErrorLicenseExpired = 19,
-
-        /// <summary>
-        /// A signed license payload's Ed25519 signature does not verify
-        /// against the configured public key (tampered or wrong-key
-        /// payload). Maps to <see cref="PdfluentLicenseException"/> with
-        /// <c>Code = "E-LICENSE-INVALID-SIGNATURE"</c>.
-        /// </summary>
-        ErrorLicenseInvalidSignature = 20,
-
-        /// <summary>
-        /// An unclassified error occurred. Maps to <see cref="PdfluentException"/>.
-        /// </summary>
         /// <summary>A text-edit operation failed (stale match id, unsupported
         /// container, encoding failure, signed document refused, …).</summary>
         ErrorTextEdit = 21,
 
         /// <summary>
-        /// The licence is valid but its tier does not include the requested
-        /// capability — Office export below Business, for instance.
+        /// An unclassified error occurred. Maps to <see cref="PdfluentException"/>.
         /// </summary>
-        /// <remarks>
-        /// Deliberately distinct from <see cref="ErrorInvalidLicense"/>: "your
-        /// key is bad" and "your plan does not cover this" send a caller to
-        /// different places.
-        /// </remarks>
-        ErrorCapabilityNotLicensed = 22,
-
         ErrorUnknown = 99,
     }
 }

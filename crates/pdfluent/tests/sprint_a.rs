@@ -20,11 +20,7 @@ fn mini(name: &str) -> PathBuf {
 
 fn open_doc(name: &str) -> PdfDocument {
     let path = mini(name);
-    PdfDocument::open_with(
-        &path,
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open")
+    PdfDocument::open_with(&path, OpenOptions::new()).expect("open")
 }
 
 fn read_and_fix_simple_pdf() -> Vec<u8> {
@@ -131,11 +127,8 @@ fn test_incremental_save_preserves_signatures() {
         .expect("save to bytes");
 
     // Open in pdfluent
-    let mut doc = PdfDocument::from_bytes_with(
-        &modified_bytes,
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open from bytes");
+    let mut doc =
+        PdfDocument::from_bytes_with(&modified_bytes, OpenOptions::new()).expect("open from bytes");
 
     // Perform a mutation: change metadata
     doc.metadata_mut()
@@ -275,11 +268,8 @@ fn test_annotation_flattening_filtering() {
         .expect("save modified");
 
     // Open in pdfluent
-    let mut doc = PdfDocument::from_bytes_with(
-        &modified_bytes,
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open from bytes");
+    let mut doc =
+        PdfDocument::from_bytes_with(&modified_bytes, OpenOptions::new()).expect("open from bytes");
 
     // Flatten
     doc.flatten_annotations().expect("flatten");
@@ -371,11 +361,8 @@ fn test_annotation_flattening_visual_equivalence_and_no_leak() {
         .expect("save modified");
 
     // Open in pdfluent
-    let mut doc = PdfDocument::from_bytes_with(
-        &modified_bytes,
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open from bytes");
+    let mut doc =
+        PdfDocument::from_bytes_with(&modified_bytes, OpenOptions::new()).expect("open from bytes");
 
     let render_before = doc
         .render_page(1, 150, ImageFormat::Png)
@@ -463,11 +450,8 @@ fn test_annotation_flattening_removes_popup_companion_no_dangling_parent() {
         .save_to(&mut modified_bytes)
         .expect("save modified");
 
-    let mut doc = PdfDocument::from_bytes_with(
-        &modified_bytes,
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open from bytes");
+    let mut doc =
+        PdfDocument::from_bytes_with(&modified_bytes, OpenOptions::new()).expect("open from bytes");
 
     doc.flatten_annotations().expect("flatten");
     let saved_bytes = doc.to_bytes().expect("to_bytes");
@@ -543,11 +527,8 @@ fn test_annotation_flattening_is_idempotent() {
         .save_to(&mut modified_bytes)
         .expect("save modified");
 
-    let mut doc = PdfDocument::from_bytes_with(
-        &modified_bytes,
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open from bytes");
+    let mut doc =
+        PdfDocument::from_bytes_with(&modified_bytes, OpenOptions::new()).expect("open from bytes");
 
     // First flatten bakes the appearance and removes the annotation.
     doc.flatten_annotations().expect("first flatten");
@@ -690,11 +671,8 @@ fn test_annotation_flattening_clears_irt_and_objr_references() {
         .save_to(&mut modified_bytes)
         .expect("save modified");
 
-    let mut doc = PdfDocument::from_bytes_with(
-        &modified_bytes,
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open from bytes");
+    let mut doc =
+        PdfDocument::from_bytes_with(&modified_bytes, OpenOptions::new()).expect("open from bytes");
 
     let render_before = doc
         .render_page(1, 150, ImageFormat::Png)

@@ -113,8 +113,6 @@ Concretely, this covers:
 - `PageDecoration`
 - `CompressOptions`, `CompressReport`, `FontSubsetReport`, `ToImagesOptions`, `ToImagesReport`, `ImageFormat`, `ImageInsert`, `ImageInsertReport`, `InsertImageFormat`
 - `PdfAProfile`, `PdfAValidationReport`, `Violation`
-- `Capability`, `CapabilitySet`, `Tier`
-- `LicenseInfo`, `set_license_key`, `license_info`
 - `Error`, `Result`, `Error::code() -> &'static str`, `Error::docs_url() -> &'static str`
 
 The following methods were added after 1.0 GA and carry the same Stable

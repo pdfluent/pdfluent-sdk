@@ -2,7 +2,7 @@
 // Enables: import { PdfDocument } from '@pdfluent/node'
 //
 // The named list below must match the real top-level exports of index.js
-// (including the typed-error layer in scripts/build/typed-error-layer.js).
+// (including the typed-error class in scripts/build/typed-error-layer.js).
 // tests/typed_error_layer.test.js asserts this stays in sync.
 
 import { createRequire } from 'module'
@@ -14,14 +14,7 @@ const {
   openPdf,
   mergePdfs,
   validatePdfa,
-  activate,
-  setLicenseKey,
-  setLicensePublicKey,
-  setLicensePayload,
-  status,
-  licenseStatus,
   PdfluentError,
-  PdfluentLicenseError,
 } = require('./index.js')
 
 export {
@@ -30,12 +23,5 @@ export {
   openPdf,
   mergePdfs,
   validatePdfa,
-  activate,
-  setLicenseKey,
-  setLicensePublicKey,
-  setLicensePayload,
-  status,
-  licenseStatus,
   PdfluentError,
-  PdfluentLicenseError,
 }

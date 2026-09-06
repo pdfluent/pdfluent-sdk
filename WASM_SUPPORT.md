@@ -108,13 +108,6 @@ wasm callers see a uniform `Result` contract.
 |---|---|---|
 | `PdfMerger` + methods | ✅ both | |
 
-### 2.10 License provisioning
-
-| Method | Status | Notes |
-|---|---|---|
-| `license::set_license_key` | ✅ both | |
-| `license::license_info` | ✅ both | |
-
 ---
 
 ## 3. `cfg`-gate audit

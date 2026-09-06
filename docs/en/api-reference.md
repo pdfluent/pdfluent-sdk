@@ -310,12 +310,11 @@ fn sign_document() -> Result<()> {
 
 Requires feature `pdfa`.
 
-This branch exposes the PDF/A types and licensing metadata:
+This branch exposes the PDF/A types:
 
 - `PdfAProfile`
 - `PdfAValidationReport`
 - `Violation`
-- `Capability::PdfaValidate`
 
 The missing piece is the actual facade entry point: there is no public
 `PdfDocument` PDF/A validation method in the current branch. That is why this
@@ -333,52 +332,13 @@ fn profile_only() -> Result<()> {
 }
 ```
 
-## 8. Capability Gates And Tier Overview
+## 8. Feature Gates
 
-The facade has two different gating layers:
+There is one gating layer, and it is a build-time one: Cargo features. The
+current opt-in families are `signing`, `redaction`, `pdfa`, and several
+additional export, OCR, and WASM-related flags. This crate enables `signing`,
+`redaction`, and `pdfa` by default.
 
-1. Cargo feature gates. The current opt-in feature families are `signing`,
-   `redaction`, `pdfa`, and several additional export, OCR, and WASM-related
-   flags. This crate currently enables `signing`, `redaction`, and `pdfa` by
-   default.
-2. Runtime license tiers. Every gated method checks the active tier and
-   returns `Error::FeatureNotInTier` when the capability is unavailable.
-
-License sources are precedence-ordered:
-
-- `OpenOptions::with_license_key(...)` for a per-document override
-- `set_license_key("tier:<name>")` for a process-global tier
-- `PDFLUENT_LICENSE_KEY` environment variable
-
-At runtime you can inspect the active tier with `license_info()` and check
-individual capabilities with `CapabilitySet::contains(...)`.
-
-```rust,no_run
-use pdfluent::prelude::*;
-
-fn inspect_license() -> Result<()> {
-    set_license_key("tier:team")?;
-
-    let info = license_info();
-    assert!(info.capabilities.contains(Capability::PdfaValidate));
-    assert!(info.capabilities.contains(Capability::DigitalSignatureSign));
-
-    Ok(())
-}
-```
-
-Tier snapshot for the current branch:
-
-- `Trial`: all technical capabilities enabled, but saved output is marked
-- `Developer`: core read/write plus XFA parse/fill
-- `Team`: adds PDF/A, signatures, redaction, PDF/UA, and e-invoicing
-- `Business`: adds XFA flatten, OCR, HTML-to-PDF, office export, and diff
-  helpers
-- `Enterprise`: adds deployment rights such as air-gapped and OEM
-  redistribution
-
-Common gate failures:
-
-- `Error::FeatureNotInTier` when the license tier is too low
-- `Error::CapabilityNotCompiled` when the crate was built without the required
-  Cargo feature
+There is no second, runtime layer. Licence keys, tiers and capability checks
+were removed in #226: nothing reads a key, nothing is withheld, and output is
+never marked. A method that is compiled in is a method every caller may call.

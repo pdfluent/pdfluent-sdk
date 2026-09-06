@@ -20,9 +20,7 @@ const SAMPLE_PDF: &[u8] = include_bytes!("../../../tests/corpus-mini/simple.pdf"
 /// The text corpus-mini/simple.pdf actually draws.
 const NEEDLE: &str = "Test page";
 
-fn licensed() {
-    let _ = pdfluent::set_license_key("tier:business");
-}
+fn licensed() {}
 
 fn text_of(doc: &PdfDocument) -> String {
     doc.extract_text().expect("extract_text")

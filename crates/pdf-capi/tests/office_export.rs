@@ -44,15 +44,8 @@ fn assert_ooxml(data: *mut u8, len: usize, entry: &str, what: &str) {
     );
 }
 
-fn licensed() {
-    // Office export is Business and up. Without this the exports correctly
-    // refuse, which is itself covered below.
-    let _ = pdfluent::set_license_key("tier:business");
-}
-
 #[test]
 fn docx_export_returns_a_package_word_opens() {
-    licensed();
     let doc = open_sample();
     let mut data: *mut u8 = ptr::null_mut();
     let mut len: usize = 0;
@@ -67,7 +60,6 @@ fn docx_export_returns_a_package_word_opens() {
 
 #[test]
 fn xlsx_export_returns_a_package_excel_opens() {
-    licensed();
     let doc = open_sample();
     let mut data: *mut u8 = ptr::null_mut();
     let mut len: usize = 0;
@@ -82,7 +74,6 @@ fn xlsx_export_returns_a_package_excel_opens() {
 
 #[test]
 fn pptx_export_returns_a_package_powerpoint_opens() {
-    licensed();
     let doc = open_sample();
     let mut data: *mut u8 = ptr::null_mut();
     let mut len: usize = 0;

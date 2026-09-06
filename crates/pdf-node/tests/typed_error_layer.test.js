@@ -1,9 +1,8 @@
 // Regression guard for the Node build hazard.
 //
 // `napi build` regenerates index.js / index.d.ts from the Rust source and would
-// silently delete the hand-maintained typed-error layer (PdfluentError /
-// PdfluentLicenseError + license-function wrappers). `scripts/build/postbuild.cjs`
-// re-applies it after every build. If that re-application ever breaks (or someone
+// silently delete the hand-maintained typed-error layer (the PdfluentError
+// class). `scripts/build/postbuild.cjs` re-applies it after every build. If that re-application ever breaks (or someone
 // runs `napi build` without the postbuild step), these assertions fail loudly
 // instead of shipping raw `GenericFailure` errors to users.
 const fs = require('fs')
@@ -19,38 +18,32 @@ try {
 const d = mod ? describe : describe.skip
 
 d('typed-error layer survives napi build', () => {
-  test('PdfluentError / PdfluentLicenseError are exported classes', () => {
+  test('PdfluentError is an exported class', () => {
     expect(typeof mod.PdfluentError).toBe('function')
-    expect(typeof mod.PdfluentLicenseError).toBe('function')
-    expect(mod.PdfluentLicenseError.prototype instanceof mod.PdfluentError).toBe(true)
+    expect(mod.PdfluentError.prototype instanceof Error).toBe(true)
   })
 
-  test('license functions are the typed-error wrappers', () => {
-    expect(typeof mod.activate).toBe('function')
-    expect(typeof mod.setLicenseKey).toBe('function')
-    expect(typeof mod.setLicensePublicKey).toBe('function')
-    expect(typeof mod.setLicensePayload).toBe('function')
-  })
-
-  test('activate(malformed) throws a typed PdfluentLicenseError, not raw GenericFailure', () => {
-    // A malformed key is rejected regardless of any ambient license state, so
-    // this is environment-independent.
-    let caught = null
-    try {
-      mod.activate('this-is-not-a-valid-license-key')
-    } catch (e) {
-      caught = e
+  test('no licence entry point survives on the module surface', () => {
+    // The inverse of what this file asserted until #226. A `napi build` that
+    // resurrected the old layer, or a hand-edit that put a key back, would be
+    // invisible otherwise: nothing else here reads the module's export list.
+    for (const gone of [
+      'activate',
+      'setLicenseKey',
+      'setLicensePublicKey',
+      'setLicensePayload',
+      'licenseStatus',
+      'PdfluentLicenseError',
+    ]) {
+      expect(mod[gone]).toBeUndefined()
     }
-    expect(caught).toBeInstanceOf(mod.PdfluentLicenseError)
-    expect(caught).toBeInstanceOf(mod.PdfluentError)
-    expect(typeof caught.code).toBe('string')
-    expect(caught.code).not.toBe('GenericFailure')
   })
 
-  test('index.d.ts still declares the typed-error classes', () => {
+  test('index.d.ts still declares the typed-error class and no licence one', () => {
     const dts = fs.readFileSync(path.join(__dirname, '..', 'index.d.ts'), 'utf8')
     expect(dts).toMatch(/export declare class PdfluentError/)
-    expect(dts).toMatch(/export declare class PdfluentLicenseError extends PdfluentError/)
+    expect(dts).not.toMatch(/PdfluentLicenseError/)
+    expect(dts).not.toMatch(/LicenseStatus/)
   })
 })
 
@@ -72,8 +65,8 @@ describe('ESM wrapper (index.mjs) matches CJS surface (index.js)', () => {
     expect(phantom).toEqual([])
   })
 
-  test('ESM re-exports the typed-error classes', () => {
+  test('ESM re-exports the typed-error class', () => {
     expect(esmExports).toContain('PdfluentError')
-    expect(esmExports).toContain('PdfluentLicenseError')
+    expect(esmExports).not.toContain('PdfluentLicenseError')
   })
 })

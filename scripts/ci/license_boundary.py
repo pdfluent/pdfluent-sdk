@@ -80,8 +80,10 @@ PERMISSIEF = re.compile(r"\b(MIT|Apache-2\.0|BSD-[0-9]|ISC|Zlib|Unlicense|CC0)\b
 # describing the tree. Set to the population as measured (02-09-2026: 55 crate
 # rows, 14 package rows), not below it: a floor under the real count tolerates
 # exactly the shrinkage it exists to catch. Removing a package legitimately is
-# a deliberate act and lowers the number here in the same commit.
-VLOER = 55
+# a deliberate act and lowers the number here in the same commit -- 55 to 53 on
+# 06-09-2026, when xfa-license and xfa-license-gen were deleted with the key
+# checks they existed to serve (#226).
+VLOER = 53
 PAKKET_VLOER = 14
 
 # The manifests this gate knows how to read. A tracked file with one of these

@@ -81,11 +81,6 @@ namespace PDFluent
                 PdfStatus.ErrorInvalidPassword    => new PdfluentPermissionException(status, message),
                 PdfStatus.ErrorPageRange          => new PdfluentPageRangeException(status, message),
                 PdfStatus.ErrorRender             => new PdfluentRenderException(status, message),
-                PdfStatus.ErrorInvalidLicense          => new PdfluentLicenseException(status, message, "E-LICENSE-INVALID"),
-                PdfStatus.ErrorLicenseAlreadySet       => new PdfluentLicenseException(status, message, "E-LICENSE-INVALID"),
-                PdfStatus.ErrorLicenseFile             => new PdfluentIoException(status, message),
-                PdfStatus.ErrorLicenseExpired          => new PdfluentLicenseException(status, message, "E-LICENSE-EXPIRED"),
-                PdfStatus.ErrorLicenseInvalidSignature => new PdfluentLicenseException(status, message, "E-LICENSE-INVALID-SIGNATURE"),
                 _                                      => new PdfluentException(status, message),
             };
     }
@@ -255,36 +250,4 @@ namespace PDFluent
         public PdfluentLimitException(string message, Exception inner) : base(message, inner) { }
     }
 
-    // -------------------------------------------------------------------------
-    // Licensing errors  (mirrors Python LicenseError / Node PdfluentError)
-    // -------------------------------------------------------------------------
-
-    /// <summary>
-    /// Raised when a license operation fails: invalid key, unknown tier,
-    /// process-global tier already activated to a different value, or a
-    /// requested feature is not available in the active tier.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <see cref="PdfluentException.Code"/> always carries the canonical C8
-    /// catalogue code — one of <c>E-LICENSE-INVALID</c>,
-    /// <c>E-LICENSE-FEATURE-NOT-IN-TIER</c>, or
-    /// <c>E-LICENSE-CAPABILITY-NOT-COMPILED</c> — matching the Rust
-    /// <c>pdfluent::Error</c> enum and the Python/Node bindings.
-    /// </para>
-    /// </remarks>
-    public sealed class PdfluentLicenseException : PdfluentException
-    {
-        /// <summary>
-        /// Initializes a new license exception with the given C ABI status,
-        /// message, and canonical C8 error code.
-        /// </summary>
-        /// <param name="status">C ABI status code.</param>
-        /// <param name="message">Diagnostic message (from
-        /// <c>pdf_get_last_error</c>, when available).</param>
-        /// <param name="code">Canonical C8 catalogue code, e.g.
-        /// <c>E-LICENSE-INVALID</c>.</param>
-        public PdfluentLicenseException(PdfStatus status, string message, string code)
-            : base(status, message, code) { }
-    }
 }

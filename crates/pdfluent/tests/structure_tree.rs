@@ -26,11 +26,8 @@ fn read_and_fix_simple_pdf() -> Vec<u8> {
 
 #[test]
 fn untagged_document_has_no_structure_tree() {
-    let doc = PdfDocument::from_bytes_with(
-        &read_and_fix_simple_pdf(),
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open untagged");
+    let doc = PdfDocument::from_bytes_with(&read_and_fix_simple_pdf(), OpenOptions::new())
+        .expect("open untagged");
     assert!(
         doc.structure_tree().is_none(),
         "a document without /StructTreeRoot must report no structure tree"
@@ -81,11 +78,7 @@ fn tagged_document_exposes_headings_and_alt_text() {
     let mut bytes = Vec::new();
     lopdf_doc.save_to(&mut bytes).expect("save tagged");
 
-    let doc = PdfDocument::from_bytes_with(
-        &bytes,
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open tagged");
+    let doc = PdfDocument::from_bytes_with(&bytes, OpenOptions::new()).expect("open tagged");
 
     let structure = doc
         .structure_tree()

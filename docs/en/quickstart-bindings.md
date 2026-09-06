@@ -48,7 +48,7 @@ surface — prefer `pdfluent`.)
       Ok(())
   }
   ```
-- **License:** `pdfluent::set_license_key(...)` / `pdfluent::license_info()`; Trial mode without a key. See [License UX](#license-flow).
+- **Licence:** nothing to call. There is no key and no tier — see [Licensing](#license-flow).
 - **Errors:** typed `pdfluent::Error` enum + `ResourceLimitKind` — match, never string-parse.
 - **Expected output:** `Pages: N` + title + first text. **Publish-readiness:** dev-path today; crates.io at GA.
 
@@ -102,12 +102,12 @@ surface — prefer `pdfluent`.)
 
 ---
 
-## <a id="license-flow"></a>License flow (all bindings)
+## <a id="license-flow"></a>Licensing (all bindings)
 
-Trial mode runs without a key (output may be marked). Activate via the
-binding's `set_license_key` equivalent or the `PDFLUENT_LICENSE_KEY`
-environment variable; query state via `license_info`. See
-[../licensing.md](../licensing.md) and `DX_LICENSE_UX_CLOSURE.md`.
+There is no licence key, no activation call and no tier. Every binding exposes
+the same capabilities to every caller, and output is never marked. The
+commercial route is a signed order form, described in
+[../licensing.md](../licensing.md).
 
 ## <a id="error-ux"></a>Error UX (all bindings)
 

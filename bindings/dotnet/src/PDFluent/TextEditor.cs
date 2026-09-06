@@ -23,8 +23,7 @@ namespace PDFluent
     /// consuming project already uses.
     /// </para>
     /// <para>
-    /// Trial-tier edits stamp a small "PDFluent trial" notice on each modified
-    /// page; licensed tiers edit without it. Searching never modifies anything.
+    /// Searching never modifies anything.
     /// </para>
     /// </remarks>
     /// <example>

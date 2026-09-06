@@ -213,8 +213,20 @@ def main() -> int:
     expect("a scripts-only change compiles no crate here", rc == 0 and lines == [],
            f"rc={rc} {lines}")
 
-    rc, lines = run("--file", "crates/xfa-license/src/lib.rs")
-    expect("a real crate names itself", rc == 0 and "xfa-license" in lines,
+    # `crates/xfa-license/src/lib.rs` stood here until 06-09-2026. That crate was
+    # deleted with the licence key it validated (#226), so the case stopped
+    # measuring what it was written for: an unknown directory is answered with
+    # the whole workspace, and `['*']` is a legitimate answer that happens not to
+    # contain "xfa-license". The two assertions failed for the one reason a
+    # fixture-backed test cannot see -- its subject was gone.
+    #
+    # Any crate with a dependent does. pdf-manip is picked because pdfluent
+    # depends on it, neither is on the CI exclude list, and its directory name
+    # and package name are the same string -- pdf-forms publishes as
+    # `pdfluent-forms`, and the selection speaks package names, so that one
+    # would have tested the rename rather than the selection.
+    rc, lines = run("--file", "crates/pdf-manip/src/lib.rs")
+    expect("a real crate names itself", rc == 0 and "pdf-manip" in lines,
            f"rc={rc} {lines[:5]}")
     expect("and pulls in a real dependent", "pdfluent" in lines, str(lines[:8]))
     expect("without naming the crates CI excludes",

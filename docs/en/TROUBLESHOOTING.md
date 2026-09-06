@@ -31,7 +31,6 @@ fidelity is a separate beta track.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| output is watermarked/marked | running in Trial mode | Activate with your key (`set_license_key` / `PDFLUENT_LICENSE_KEY`); confirm via `license_info`. |
 | activation fails | invalid/expired/wrong-signed key | Check the typed license error code in the catalogue; no silent fallback occurs after a failed activation — the call returns an error. |
 
 ## Malformed / encrypted PDFs

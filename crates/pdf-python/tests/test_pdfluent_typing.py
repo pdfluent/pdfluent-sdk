@@ -25,7 +25,6 @@ from pdfluent import (
     Document,
     DocumentInfo,
     FormField,
-    LicenseInfo,
     Page,
     PageGeometry,
     RedactReport,
@@ -33,12 +32,9 @@ from pdfluent import (
     SignatureResult,
     TextBlock,
     TextSpan,
-    activate_license,
     decrypt_pdf,
     merge_pdfs,
     open_pdf,
-    set_license_payload,
-    set_license_public_key,
     validate_pdfa,
 )
 from pdfluent import (
@@ -46,7 +42,6 @@ from pdfluent import (
     PdfluentError,
     PdfluentGeometryError,
     PdfluentIoError,
-    PdfluentLicenseError,
     PdfluentLimitError,
     PdfluentPageRangeError,
     PdfluentParseError,
@@ -360,24 +355,6 @@ def use_validate_pdfa(path: str) -> ComplianceReport:
 
 
 # ---------------------------------------------------------------------------
-# License activation
-# ---------------------------------------------------------------------------
-
-def use_activate_license(key: str) -> Optional[LicenseInfo]:
-    try:
-        info: LicenseInfo = activate_license(key)
-        _licensee: str = info.licensee
-        _company: str = info.company
-        _tier: str = info.tier
-        _exp: Optional[str] = info.expires_at
-        _seats: int = info.seats
-        _ = (_licensee, _company, _tier, _exp, _seats)
-        return info
-    except PdfluentLicenseError:
-        return None
-
-
-# ---------------------------------------------------------------------------
 # Digital signatures
 # ---------------------------------------------------------------------------
 
@@ -405,15 +382,6 @@ def use_signatures(doc: Document) -> List[SignatureResult]:
 
 
 # ---------------------------------------------------------------------------
-# Signed-payload license activation
-# ---------------------------------------------------------------------------
-
-def use_signed_license(public_key: bytes, payload: str) -> None:
-    set_license_public_key(public_key)
-    set_license_payload(payload)
-
-
-# ---------------------------------------------------------------------------
 # Exception hierarchy — every subclass must be catchable via base
 # ---------------------------------------------------------------------------
 
@@ -435,8 +403,6 @@ def use_exception_hierarchy(path: str) -> None:
     except PdfluentGeometryError:
         pass
     except PdfluentLimitError:
-        pass
-    except PdfluentLicenseError:
         pass
     except PdfluentError:
         pass

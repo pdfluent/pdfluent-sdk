@@ -6,10 +6,8 @@
 // the PDFluent Commercial Licence. See the LICENSE file in this repository --
 // that file travels with the copy you received, which a URL does not.
 
-use crate::capability::Capability;
 use crate::document::PdfDocument;
 use crate::error::{internal_error, Error, Result};
-use crate::license;
 
 /// Strategy for combining bookmarks when merging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -106,7 +104,6 @@ impl PdfMerger {
     /// - [`Error::Internal`] if called with zero inputs.
     /// - [`Error::InvalidPdf`] wrapping the underlying merge error.
     pub fn build(self) -> Result<PdfDocument> {
-        license::require_capability(Capability::PageOps)?;
         if self.inputs.is_empty() {
             return Err(internal_error(
                 "PdfMerger::build() called with no inputs; add at least one PdfDocument first",

@@ -39,9 +39,6 @@ use pdf_engine::{
 };
 
 use pdfluent::{
-    license_info as pdfl_license_info, set_license_key as pdfl_set_license_key,
-    set_license_payload as pdfl_set_license_payload,
-    set_license_public_key as pdfl_set_license_public_key, Tier,
 };
 
 // ---------------------------------------------------------------------------
@@ -89,12 +86,6 @@ pyo3::create_exception!(
     PdfluentIoError,
     PdfluentError,
     "Raised on file-system I/O errors."
-);
-pyo3::create_exception!(
-    pdfluent,
-    PdfluentLicenseError,
-    PdfluentError,
-    "Raised on license validation errors (invalid key, expired, quota exceeded)."
 );
 pyo3::create_exception!(
     pdfluent,
@@ -173,83 +164,21 @@ fn engine_err_to_py(e: EngineError) -> PyErr {
 }
 
 // ---------------------------------------------------------------------------
-// License helpers
+// Error helpers
 // ---------------------------------------------------------------------------
-
-fn tier_to_str(tier: Tier) -> &'static str {
-    match tier {
-        Tier::Trial => "trial",
-        Tier::Developer => "developer",
-        Tier::Team => "team",
-        Tier::Business => "business",
-        Tier::Enterprise => "enterprise",
-        _ => "unknown",
-    }
-}
 
 /// Convert a `pdfluent::Error` into a typed Python exception and attach
 /// canonical C8 metadata (`code`, `message`) to the resulting exception
 /// instance.
 ///
-/// Parity surface: Node, WASM, and .NET expose `.code` directly on
-/// license errors. By setting attributes on the `PyErr` value here we
-/// match that contract — users can branch on
-/// `e.code == "E-LICENSE-INVALID"` without parsing the message string.
-fn pdfluent_license_err_to_py(e: pdfluent::Error) -> PyErr {
+/// Parity surface: Node, WASM, and .NET expose `.code` directly. Setting the
+/// attributes on the `PyErr` value here matches that contract — users branch
+/// on `e.code` without parsing the message string.
+fn pdfluent_err_to_py(e: pdfluent::Error) -> PyErr {
     // Canonical C8 code from the Rust core (see crates/pdfluent/src/error.rs).
     let code = e.code();
-    // The core's Display text, captured before the match moves `e`. Some arms
-    // reuse it rather than paraphrase: see FeatureNotInTier below.
-    let display = e.to_string();
-    let (py_err, message) = match e {
-        pdfluent::Error::InvalidLicense { reason } => {
-            let msg = format!("invalid license: {reason}");
-            (PdfluentLicenseError::new_err(msg.clone()), msg)
-        }
-        // Reuse the core's own text here instead of paraphrasing it. That text
-        // carries the route to a key -- a free evaluation link on Trial, the
-        // pricing page otherwise -- and the paraphrase dropped it, so a Python
-        // caller was told what they could not do and nothing about how to fix
-        // it. Every other binding forwards the Display text; this one did not.
-        pdfluent::Error::FeatureNotInTier { .. } => (
-            PdfluentLicenseError::new_err(display.clone()),
-            display.clone(),
-        ),
-        pdfluent::Error::CapabilityNotCompiled {
-            capability,
-            feature_flag,
-        } => {
-            let msg = format!(
-                "capability {capability:?} is not compiled into this build \
-                 (enable the {feature_flag:?} cargo feature)"
-            );
-            (PdfluentLicenseError::new_err(msg.clone()), msg)
-        }
-        pdfluent::Error::LicenseExpired { expires_at } => {
-            let msg = format!("license expired at unix timestamp {expires_at}");
-            (PdfluentLicenseError::new_err(msg.clone()), msg)
-        }
-        pdfluent::Error::LicenseInvalidSignature => {
-            let msg =
-                "license signature does not verify against the configured public key".to_string();
-            (PdfluentLicenseError::new_err(msg.clone()), msg)
-        }
-        pdfluent::Error::LicenseRateLimited {
-            resource,
-            used,
-            limit,
-        } => {
-            let msg = format!("rate limit exceeded: {used}/{limit} {resource}");
-            (PdfluentLicenseError::new_err(msg.clone()), msg)
-        }
-        other => {
-            let msg = other.to_string();
-            // Non-license errors keep the canonical code on the base class so
-            // every typed PdfluentError carries a `code` if the Rust side has
-            // one — but only license errors are exposed via this helper.
-            (PdfluentError::new_err(msg.clone()), msg)
-        }
-    };
+    let message = e.to_string();
+    let py_err = PdfluentError::new_err(message.clone());
     attach_code_attrs(&py_err, code, &message);
     py_err
 }
@@ -265,31 +194,6 @@ fn attach_code_attrs(err: &PyErr, code: &str, message: &str) {
         let _ = value.setattr("code", code);
         let _ = value.setattr("message", message);
     });
-}
-
-/// Canonical license state snapshot from the Rust core.
-///
-/// Returned by :func:`native_license_info`. Consumers should access the
-/// higher-level :class:`pdfluent.LicenseInfo` returned by
-/// :func:`pdfluent.activate_license` instead.
-#[pyclass(name = "_NativeLicenseInfo")]
-struct PyNativeLicenseInfo {
-    #[pyo3(get)]
-    tier: String,
-    #[pyo3(get)]
-    expires_at: Option<String>,
-    #[pyo3(get)]
-    output_is_marked: bool,
-}
-
-#[pymethods]
-impl PyNativeLicenseInfo {
-    fn __repr__(&self) -> String {
-        format!(
-            "_NativeLicenseInfo(tier={:?}, output_is_marked={})",
-            self.tier, self.output_is_marked
-        )
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -345,8 +249,8 @@ impl PyDocument {
         convert: fn(&pdfluent::PdfDocument) -> pdfluent::Result<Vec<u8>>,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let raw = self.current_bytes()?;
-        let doc = pdfluent::PdfDocument::from_bytes(&raw).map_err(pdfluent_license_err_to_py)?;
-        let out = convert(&doc).map_err(pdfluent_license_err_to_py)?;
+        let doc = pdfluent::PdfDocument::from_bytes(&raw).map_err(pdfluent_err_to_py)?;
+        let out = convert(&doc).map_err(pdfluent_err_to_py)?;
         Ok(PyBytes::new(py, &out))
     }
 }
@@ -520,23 +424,16 @@ impl PyDocument {
     // ------------------------------------------------------------------
 
     /// Convert to a Word document (``.docx``) and return the bytes.
-    ///
-    /// Requires a Business licence or higher. Without one this raises
-    /// ``PdfluentLicenseError`` carrying the link to a free evaluation key.
     fn to_docx<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         self.office_export(py, |d| d.to_docx_bytes())
     }
 
     /// Convert to an Excel workbook (``.xlsx``) and return the bytes.
-    ///
-    /// Requires a Business licence or higher.
     fn to_xlsx<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         self.office_export(py, |d| d.to_xlsx_bytes())
     }
 
     /// Convert to a PowerPoint deck (``.pptx``) and return the bytes.
-    ///
-    /// Requires a Business licence or higher.
     fn to_pptx<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         self.office_export(py, |d| d.to_pptx_bytes())
     }
@@ -1823,89 +1720,372 @@ fn validate_pdfa(path: &str) -> PyResult<PyComplianceReport> {
 }
 
 // ---------------------------------------------------------------------------
-// License functions
+// Module-level functions
 // ---------------------------------------------------------------------------
 
-/// Activate the process-global license key in the Rust core.
+/// Open a PDF from a file path, returning a ``Document``.
 ///
-/// Accepts the simple 1.0 evaluation format: ``"tier:<name>"`` where
-/// ``<name>`` is one of ``trial``, ``developer``, ``team``, ``business``,
-/// or ``enterprise``.
-///
-/// The first call locks the resolved tier for the process lifetime. Subsequent
-/// calls with the **same** tier are idempotent no-ops. Calls with a
-/// **different** tier raise :exc:`PdfluentLicenseError`.
-///
-/// Raises
-/// ------
-/// PdfluentLicenseError
-///     If the key format is invalid or a conflicting tier is already set.
-#[pyfunction]
-fn set_license_key(key: &str) -> PyResult<()> {
-    pdfl_set_license_key(key).map_err(pdfluent_license_err_to_py)
-}
-
-/// Configure the Ed25519 public key used to verify signed JSON license
-/// payloads (SDK 1.1+).
-///
-/// Must be called **once**, before :func:`set_license_payload` or before
-/// passing a JSON payload to :func:`set_license_key`. The key must be
-/// exactly 32 raw bytes (not base64, not PEM, not PKCS#8).
-///
-/// Subsequent calls with the **same** key are idempotent no-ops. Calls with a
-/// **different** key raise :exc:`PdfluentLicenseError`.
+/// Equivalent to ``Document(path)`` but reads more naturally in code.
 ///
 /// Parameters
 /// ----------
-/// key : bytes
-///     32-byte raw Ed25519 public key.
-///
-/// Raises
-/// ------
-/// PdfluentLicenseError
-///     If the key is not 32 bytes, or a different key was already configured.
-#[pyfunction]
-fn set_license_public_key(key: &[u8]) -> PyResult<()> {
-    pdfl_set_license_public_key(key).map_err(pdfluent_license_err_to_py)
-}
-
-/// Activate a cryptographically-signed JSON license payload (SDK 1.1+).
-///
-/// The public key must be configured first via :func:`set_license_public_key`.
-/// This is the explicit 1.1 entry point; :func:`set_license_key` also accepts
-/// signed JSON payloads automatically when the string starts with ``{``.
-///
-/// Parameters
-/// ----------
-/// payload_json : str
-///     JSON string produced by the PDFluent licence-generator tool.
-///
-/// Raises
-/// ------
-/// PdfluentLicenseError
-///     If the JSON is malformed, no public key is configured, or a conflicting
-///     tier is already set (``E-LICENSE-INVALID``); if the signature does not
-///     verify (``E-LICENSE-INVALID-SIGNATURE``); or if the payload is past its
-///     expiry (``E-LICENSE-EXPIRED``).
-#[pyfunction]
-fn set_license_payload(payload_json: &str) -> PyResult<()> {
-    pdfl_set_license_payload(payload_json).map_err(pdfluent_license_err_to_py)
-}
-
-/// Return the current canonical license state from the Rust core.
+/// path : str
+///     File-system path to the PDF.
+/// password : str, optional
+///     Password for encrypted PDFs.
 ///
 /// Returns
 /// -------
-/// _NativeLicenseInfo
-///     Snapshot of the active tier, expiry, and output-marking flag.
+/// Document
+///
+/// Raises
+/// ------
+/// PdfluentParseError
+///     If the file is not a valid PDF.
+/// PdfluentIoError
+///     If the file cannot be read.
 #[pyfunction]
-fn native_license_info() -> PyNativeLicenseInfo {
-    let info = pdfl_license_info();
-    PyNativeLicenseInfo {
-        tier: tier_to_str(info.tier).to_owned(),
-        expires_at: info.expires_at,
-        output_is_marked: info.output_is_marked,
+#[pyo3(signature = (path, password=None))]
+fn open_pdf(path: &str, password: Option<&str>) -> PyResult<PyDocument> {
+    let data = std::fs::read(path).map_err(|e| PdfluentIoError::new_err(format!("{path}: {e}")))?;
+    let raw_bytes = Arc::new(data);
+    let doc = match password {
+        Some(pw) => {
+            PdfDocument::open_with_password(Arc::clone(&raw_bytes), pw).map_err(engine_err_to_py)?
+        }
+        None => PdfDocument::open(Arc::clone(&raw_bytes)).map_err(engine_err_to_py)?,
+    };
+    Ok(PyDocument {
+        inner: Arc::new(doc),
+        raw_bytes,
+        lopdf: Mutex::new(None),
+    })
+}
+
+/// Merge multiple PDF files into a single output file.
+///
+/// Parameters
+/// ----------
+/// input_paths : list[str]
+///     Ordered list of PDF paths to merge.
+/// output_path : str
+///     Destination path for the merged PDF.
+///
+/// Examples
+/// --------
+/// >>> merge_pdfs(["a.pdf", "b.pdf"], "merged.pdf")
+#[pyfunction]
+fn merge_pdfs(input_paths: Vec<String>, output_path: &str) -> PyResult<()> {
+    if input_paths.is_empty() {
+        return Err(PdfluentValidationError::new_err(
+            "input_paths must not be empty",
+        ));
     }
+    let mut doc = pages::merge(&input_paths).map_err(manip_err_to_py)?;
+    doc.save(output_path)
+        .map_err(|e| PdfluentIoError::new_err(e.to_string()))?;
+    Ok(())
+}
+
+/// Decrypt a password-protected PDF and write the decrypted copy to a file.
+///
+/// Parameters
+/// ----------
+/// input_path : str
+///     Path to the encrypted PDF.
+/// output_path : str
+///     Destination path for the decrypted PDF.
+/// password : str
+///     User or owner password.
+#[pyfunction]
+fn decrypt_pdf(input_path: &str, output_path: &str, password: &str) -> PyResult<()> {
+    let data = std::fs::read(input_path)
+        .map_err(|e| PdfluentIoError::new_err(format!("{input_path}: {e}")))?;
+    let mut doc = LopdfDocument::load_mem_with_options(&data, lopdf::LoadOptions::with_password(password)).map_err(|e| {
+        PdfluentEncryptedError::new_err(format!("failed to open with password: {e}"))
+    })?;
+    remove_encryption(&mut doc);
+    doc.save(output_path)
+        .map_err(|e| PdfluentIoError::new_err(e.to_string()))?;
+    Ok(())
+}
+
+/// Validate a PDF file against PDF/A conformance requirements.
+///
+/// Auto-detects the declared PDF/A level from XMP metadata.
+/// Falls back to PDF/A-2B if no level is declared.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Path to the PDF file to validate.
+///
+/// Returns
+/// -------
+/// ComplianceReport
+///
+/// Examples
+/// --------
+/// >>> report = validate_pdfa("document.pdf")
+/// >>> if report.is_compliant:
+/// ...     print("PDF/A compliant")
+/// ... else:
+/// ...     for issue in report.issues:
+/// ...         print(f"[{issue.severity}] {issue.rule}: {issue.message}")
+#[pyfunction]
+fn validate_pdfa(path: &str) -> PyResult<PyComplianceReport> {
+    let data = std::fs::read(path).map_err(|e| PdfluentIoError::new_err(e.to_string()))?;
+    let pdf = Pdf::new(Arc::new(data))
+        .map_err(|e| PdfluentParseError::new_err(format!("invalid PDF: {e:?}")))?;
+    let level = detect_pdfa_level(&pdf).unwrap_or(PdfALevel::A2b);
+    let report = compliance_validate_pdfa(&pdf, level);
+    Ok(PyComplianceReport(report))
+}
+
+// ---------------------------------------------------------------------------
+// Module-level functions
+// ---------------------------------------------------------------------------
+
+/// Open a PDF from a file path, returning a ``Document``.
+///
+/// Equivalent to ``Document(path)`` but reads more naturally in code.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     File-system path to the PDF.
+/// password : str, optional
+///     Password for encrypted PDFs.
+///
+/// Returns
+/// -------
+/// Document
+///
+/// Raises
+/// ------
+/// PdfluentParseError
+///     If the file is not a valid PDF.
+/// PdfluentIoError
+///     If the file cannot be read.
+#[pyfunction]
+#[pyo3(signature = (path, password=None))]
+fn open_pdf(path: &str, password: Option<&str>) -> PyResult<PyDocument> {
+    let data = std::fs::read(path).map_err(|e| PdfluentIoError::new_err(format!("{path}: {e}")))?;
+    let raw_bytes = Arc::new(data);
+    let doc = match password {
+        Some(pw) => {
+            PdfDocument::open_with_password(Arc::clone(&raw_bytes), pw).map_err(engine_err_to_py)?
+        }
+        None => PdfDocument::open(Arc::clone(&raw_bytes)).map_err(engine_err_to_py)?,
+    };
+    Ok(PyDocument {
+        inner: Arc::new(doc),
+        raw_bytes,
+        lopdf: Mutex::new(None),
+    })
+}
+
+/// Merge multiple PDF files into a single output file.
+///
+/// Parameters
+/// ----------
+/// input_paths : list[str]
+///     Ordered list of PDF paths to merge.
+/// output_path : str
+///     Destination path for the merged PDF.
+///
+/// Examples
+/// --------
+/// >>> merge_pdfs(["a.pdf", "b.pdf"], "merged.pdf")
+#[pyfunction]
+fn merge_pdfs(input_paths: Vec<String>, output_path: &str) -> PyResult<()> {
+    if input_paths.is_empty() {
+        return Err(PdfluentValidationError::new_err(
+            "input_paths must not be empty",
+        ));
+    }
+    let mut doc = pages::merge(&input_paths).map_err(manip_err_to_py)?;
+    doc.save(output_path)
+        .map_err(|e| PdfluentIoError::new_err(e.to_string()))?;
+    Ok(())
+}
+
+/// Decrypt a password-protected PDF and write the decrypted copy to a file.
+///
+/// Parameters
+/// ----------
+/// input_path : str
+///     Path to the encrypted PDF.
+/// output_path : str
+///     Destination path for the decrypted PDF.
+/// password : str
+///     User or owner password.
+#[pyfunction]
+fn decrypt_pdf(input_path: &str, output_path: &str, password: &str) -> PyResult<()> {
+    let data = std::fs::read(input_path)
+        .map_err(|e| PdfluentIoError::new_err(format!("{input_path}: {e}")))?;
+    let mut doc = LopdfDocument::load_mem_with_options(&data, lopdf::LoadOptions::with_password(password)).map_err(|e| {
+        PdfluentEncryptedError::new_err(format!("failed to open with password: {e}"))
+    })?;
+    remove_encryption(&mut doc);
+    doc.save(output_path)
+        .map_err(|e| PdfluentIoError::new_err(e.to_string()))?;
+    Ok(())
+}
+
+/// Validate a PDF file against PDF/A conformance requirements.
+///
+/// Auto-detects the declared PDF/A level from XMP metadata.
+/// Falls back to PDF/A-2B if no level is declared.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Path to the PDF file to validate.
+///
+/// Returns
+/// -------
+/// ComplianceReport
+///
+/// Examples
+/// --------
+/// >>> report = validate_pdfa("document.pdf")
+/// >>> if report.is_compliant:
+/// ...     print("PDF/A compliant")
+/// ... else:
+/// ...     for issue in report.issues:
+/// ...         print(f"[{issue.severity}] {issue.rule}: {issue.message}")
+#[pyfunction]
+fn validate_pdfa(path: &str) -> PyResult<PyComplianceReport> {
+    let data = std::fs::read(path).map_err(|e| PdfluentIoError::new_err(e.to_string()))?;
+    let pdf = Pdf::new(Arc::new(data))
+        .map_err(|e| PdfluentParseError::new_err(format!("invalid PDF: {e:?}")))?;
+    let level = detect_pdfa_level(&pdf).unwrap_or(PdfALevel::A2b);
+    let report = compliance_validate_pdfa(&pdf, level);
+    Ok(PyComplianceReport(report))
+}
+
+// ---------------------------------------------------------------------------
+// Module-level functions
+// ---------------------------------------------------------------------------
+
+/// Open a PDF from a file path, returning a ``Document``.
+///
+/// Equivalent to ``Document(path)`` but reads more naturally in code.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     File-system path to the PDF.
+/// password : str, optional
+///     Password for encrypted PDFs.
+///
+/// Returns
+/// -------
+/// Document
+///
+/// Raises
+/// ------
+/// PdfluentParseError
+///     If the file is not a valid PDF.
+/// PdfluentIoError
+///     If the file cannot be read.
+#[pyfunction]
+#[pyo3(signature = (path, password=None))]
+fn open_pdf(path: &str, password: Option<&str>) -> PyResult<PyDocument> {
+    let data = std::fs::read(path).map_err(|e| PdfluentIoError::new_err(format!("{path}: {e}")))?;
+    let raw_bytes = Arc::new(data);
+    let doc = match password {
+        Some(pw) => {
+            PdfDocument::open_with_password(Arc::clone(&raw_bytes), pw).map_err(engine_err_to_py)?
+        }
+        None => PdfDocument::open(Arc::clone(&raw_bytes)).map_err(engine_err_to_py)?,
+    };
+    Ok(PyDocument {
+        inner: Arc::new(doc),
+        raw_bytes,
+        lopdf: Mutex::new(None),
+    })
+}
+
+/// Merge multiple PDF files into a single output file.
+///
+/// Parameters
+/// ----------
+/// input_paths : list[str]
+///     Ordered list of PDF paths to merge.
+/// output_path : str
+///     Destination path for the merged PDF.
+///
+/// Examples
+/// --------
+/// >>> merge_pdfs(["a.pdf", "b.pdf"], "merged.pdf")
+#[pyfunction]
+fn merge_pdfs(input_paths: Vec<String>, output_path: &str) -> PyResult<()> {
+    if input_paths.is_empty() {
+        return Err(PdfluentValidationError::new_err(
+            "input_paths must not be empty",
+        ));
+    }
+    let mut doc = pages::merge(&input_paths).map_err(manip_err_to_py)?;
+    doc.save(output_path)
+        .map_err(|e| PdfluentIoError::new_err(e.to_string()))?;
+    Ok(())
+}
+
+/// Decrypt a password-protected PDF and write the decrypted copy to a file.
+///
+/// Parameters
+/// ----------
+/// input_path : str
+///     Path to the encrypted PDF.
+/// output_path : str
+///     Destination path for the decrypted PDF.
+/// password : str
+///     User or owner password.
+#[pyfunction]
+fn decrypt_pdf(input_path: &str, output_path: &str, password: &str) -> PyResult<()> {
+    let data = std::fs::read(input_path)
+        .map_err(|e| PdfluentIoError::new_err(format!("{input_path}: {e}")))?;
+    let mut doc = LopdfDocument::load_mem_with_options(&data, lopdf::LoadOptions::with_password(password)).map_err(|e| {
+        PdfluentEncryptedError::new_err(format!("failed to open with password: {e}"))
+    })?;
+    remove_encryption(&mut doc);
+    doc.save(output_path)
+        .map_err(|e| PdfluentIoError::new_err(e.to_string()))?;
+    Ok(())
+}
+
+/// Validate a PDF file against PDF/A conformance requirements.
+///
+/// Auto-detects the declared PDF/A level from XMP metadata.
+/// Falls back to PDF/A-2B if no level is declared.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Path to the PDF file to validate.
+///
+/// Returns
+/// -------
+/// ComplianceReport
+///
+/// Examples
+/// --------
+/// >>> report = validate_pdfa("document.pdf")
+/// >>> if report.is_compliant:
+/// ...     print("PDF/A compliant")
+/// ... else:
+/// ...     for issue in report.issues:
+/// ...         print(f"[{issue.severity}] {issue.rule}: {issue.message}")
+#[pyfunction]
+fn validate_pdfa(path: &str) -> PyResult<PyComplianceReport> {
+    let data = std::fs::read(path).map_err(|e| PdfluentIoError::new_err(e.to_string()))?;
+    let pdf = Pdf::new(Arc::new(data))
+        .map_err(|e| PdfluentParseError::new_err(format!("invalid PDF: {e:?}")))?;
+    let level = detect_pdfa_level(&pdf).unwrap_or(PdfALevel::A2b);
+    let report = compliance_validate_pdfa(&pdf, level);
+    Ok(PyComplianceReport(report))
 }
 
 // ---------------------------------------------------------------------------
@@ -1939,10 +2119,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     m.add("PdfluentIoError", m.py().get_type::<PdfluentIoError>())?;
     m.add(
-        "PdfluentLicenseError",
-        m.py().get_type::<PdfluentLicenseError>(),
-    )?;
-    m.add(
         "PdfluentGeometryError",
         m.py().get_type::<PdfluentGeometryError>(),
     )?;
@@ -1965,17 +2141,12 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAnnotation>()?;
     m.add_class::<PyRedactReport>()?;
     m.add_class::<PySignatureResult>()?;
-    m.add_class::<PyNativeLicenseInfo>()?;
     m.add_class::<text_edit::PyTextEditor>()?;
     // Functions
     m.add_function(wrap_pyfunction!(open_pdf, m)?)?;
     m.add_function(wrap_pyfunction!(merge_pdfs, m)?)?;
     m.add_function(wrap_pyfunction!(validate_pdfa, m)?)?;
     m.add_function(wrap_pyfunction!(decrypt_pdf, m)?)?;
-    m.add_function(wrap_pyfunction!(set_license_key, m)?)?;
-    m.add_function(wrap_pyfunction!(set_license_public_key, m)?)?;
-    m.add_function(wrap_pyfunction!(set_license_payload, m)?)?;
-    m.add_function(wrap_pyfunction!(native_license_info, m)?)?;
     Ok(())
 }
 

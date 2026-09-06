@@ -928,44 +928,29 @@ impl PdfDocument {
     /// the price list.
     #[napi]
     pub fn to_docx(&self) -> Result<Buffer> {
-        self.office_export(pdfluent::Capability::DocxExport, |b| {
-            pdf_docx::convert_pdf_bytes_to_docx(b).map_err(|e| e.to_string())
-        })
+        self.office_export(|b| pdf_docx::convert_pdf_bytes_to_docx(b).map_err(|e| e.to_string()))
     }
 
     /// Convert the document to an Excel `.xlsx` workbook. See `toDocx`.
     #[napi]
     pub fn to_xlsx(&self) -> Result<Buffer> {
-        self.office_export(pdfluent::Capability::XlsxExport, |b| {
-            pdf_xlsx::convert_pdf_bytes_to_xlsx(b).map_err(|e| e.to_string())
-        })
+        self.office_export(|b| pdf_xlsx::convert_pdf_bytes_to_xlsx(b).map_err(|e| e.to_string()))
     }
 
     /// Convert the document to a PowerPoint `.pptx` deck, one slide per page.
     /// See `toDocx`.
     #[napi]
     pub fn to_pptx(&self) -> Result<Buffer> {
-        self.office_export(pdfluent::Capability::PptxExport, |b| {
-            pdf_pptx::convert_pdf_bytes_to_pptx(b).map_err(|e| e.to_string())
-        })
+        self.office_export(|b| pdf_pptx::convert_pdf_bytes_to_pptx(b).map_err(|e| e.to_string()))
     }
 }
 
 impl PdfDocument {
     /// Shared body for the three Office exports.
-    ///
-    /// The capability check comes from `pdfluent::require_capability` rather
-    /// than a tier comparison here, so the rule lives in one place and the
-    /// refusal carries the message the facade writes.
     fn office_export(
         &self,
-        cap: pdfluent::Capability,
         convert: fn(&[u8]) -> std::result::Result<Vec<u8>, String>,
     ) -> Result<Buffer> {
-        // The facade's message carries the tier, the free-key URL and the
-        // error-code link. Re-wording it here would mean maintaining the same
-        // sentence in five bindings.
-        pdfluent::require_capability(cap).map_err(|e| napi::Error::from_reason(e.to_string()))?;
         let raw = self.inner.pdf().data().as_ref().to_vec();
         convert(&raw)
             .map(Buffer::from)

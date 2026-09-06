@@ -20,7 +20,6 @@ full SDK surface needed for an in-browser PDF editor. Previously known as
 - **Text watermark**: diagonal text watermark with configurable opacity
 - **Redaction**: by region (rectangle) or by search query (GDPR-safe permanent removal)
 - **Stream compression**: re-deflate content streams for smaller file size
-- **License activation**: process-global tier activation via key string or file
 - **`PdfDocMut`** (Wave 3): stateful editing handle — open once, mutate in
   place, save once. 2.7× faster than the stateless `PdfDoc` chain for
   multi-step edits, identical output bytes.
@@ -169,37 +168,12 @@ wasm-pack build crates/xfa-wasm --target web -- --no-default-features
 | `nodeCount()` | Number of form nodes |
 | `version()` | Engine version string |
 
-### License Activation
+### Licensing
 
-The WASM build runs in Trial mode by default. Output produced by the engine
-is marked via `/Producer` metadata in Trial. Activate a license to remove
-the mark and unlock paid capabilities.
-
-```js
-import init, { activateLicenseKey, licenseStatus } from '@pdfluent/sdk-wasm';
-
-await init();
-activateLicenseKey('tier:enterprise');
-
-const s = licenseStatus();
-console.log(s.tier);            // "Enterprise"
-console.log(s.source);          // "Explicit" | "EnvVar" | "Default"
-console.log(s.outputIsMarked);  // false
-```
-
-**Browser-specific caveats:**
-
-- `activateLicenseFile` is intentionally **not** exposed. Browsers and
-  Workers have no synchronous filesystem access. Fetch the key text
-  yourself (`await fetch(...).then(r => r.text())`) and pass it to
-  `activateLicenseKey`.
-- The `PDFLUENT_LICENSE_KEY` environment variable is honoured only when a
-  Node host provides it; browsers do not expose process env vars.
-- The active tier is **process-global and set-once** within a single WASM
-  instance. Activating a second time with a different tier throws; reload
-  the page or re-initialise the WASM module to switch tiers.
-
-Invalid keys throw `Error`. The key string is never logged.
+Nothing to activate. There is no licence key, no tier and no output mark
+(#226): the WASM build exposes the same capabilities to every caller. PDFluent
+is published under the AGPLv3 with a commercial licence as the alternative, and
+that alternative is a signed order form — see `docs/licensing.md`.
 
 ### PdfDoc
 

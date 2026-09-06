@@ -72,14 +72,15 @@ the branding.
 5. What this licence does not contain, and why
 ----------------------------------------------
 
-No telemetry, and no expiry on a paid licence.
+No telemetry, no licence key, and no expiry on a paid licence.
 
-Stated accurately rather than aspirationally: as of 1 September 2026 the build
-still carries tier checks from the previous model, so an unlicensed binary
-reports `Tier::Trial` and refuses some capabilities. That is being removed
-(issue #199). It is not a condition of this licence and never was — a
-commercial licensee's rights come from this agreement, not from a check in the
-binary — but this file should not describe a product that does not exist yet.
+Stated accurately rather than aspirationally: until 6 September 2026 the build
+still carried tier checks from the previous model, so an unlicensed binary
+reported `Tier::Trial` and refused some capabilities. Those checks are gone
+(issue #226). No code in the software reads a key, refuses a capability, or
+marks output, and `scripts/ci/no_licence_key_in_a_binding.py` refuses a change
+that puts one back. It was never a condition of this licence — a commercial
+licensee's rights come from this agreement, not from a check in the binary.
 
 This is deliberate, not an omission. Published source means any technical check
 can be removed by anyone who has the code, in minutes, so such a check would

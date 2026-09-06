@@ -27,15 +27,11 @@
 //!
 //! ## Licensing
 //!
-//! Provide a license key via any of (highest precedence first):
-//!
-//! 1. [`OpenOptions::with_license_key`](crate::document::OpenOptions::with_license_key)
-//!    — per-document override.
-//! 2. [`license::set_license_key`] — process-global.
-//! 3. `PDFLUENT_LICENSE_KEY` environment variable.
-//!
-//! Without a license the SDK runs in [`Tier::Trial`] mode: all capabilities
-//! accessible, output marked via `/Producer` metadata.
+//! There is no licence key, no tier and no activation call. PDFluent is
+//! published under the AGPLv3 with a commercial licence as the alternative,
+//! and a commercial licensee's rights come from a signed order form rather
+//! than from a check in the binary. Nothing here reads a key, refuses a
+//! capability or marks output. See `docs/licensing.md`.
 //!
 //! ## Design foundation
 //!
@@ -63,7 +59,6 @@ pub use pdf_manip::unicode_font;
 
 #[cfg(feature = "async-tokio")]
 pub mod async_io;
-pub mod capability;
 pub mod compliance;
 pub mod decoration;
 pub mod diagnostics;
@@ -71,7 +66,6 @@ pub mod document;
 pub mod encrypt;
 pub mod error;
 pub mod form;
-pub mod license;
 pub mod merger;
 pub mod metadata;
 mod page_labels;
@@ -82,7 +76,6 @@ pub mod signer;
 pub mod structure;
 #[cfg(feature = "pdfa")]
 pub mod tagged;
-pub mod tier;
 pub mod watermark;
 pub mod xfa;
 
@@ -90,7 +83,6 @@ pub mod xfa;
 // Top-level re-exports (public API surface)
 // ---------------------------------------------------------------------------
 
-pub use crate::capability::{Capability, CapabilitySet};
 pub use crate::compliance::{PdfAProfile, PdfAValidationReport, Violation};
 pub use crate::decoration::PageDecoration;
 pub use crate::diagnostics::{Diagnostic, DiagnosticCategory, LeniencyReport, Severity};
@@ -100,10 +92,6 @@ pub use crate::document::{
 pub use crate::encrypt::{EncryptOptions, EncryptionAlgorithm, Permissions};
 pub use crate::error::{Error, ResourceLimitKind, Result};
 pub use crate::form::{FieldType, FormField, PdfFormMut};
-pub use crate::license::{
-    license_info, require_capability, set_license_key, set_license_payload, set_license_public_key,
-    LicenseInfo,
-};
 pub use crate::merger::{BookmarkMergeStrategy, MergeOptions, PdfMerger};
 pub use crate::metadata::{Metadata, MetadataMut};
 pub use crate::parity::{
@@ -115,7 +103,6 @@ pub use crate::signer::{
     PadesProfile, PdfSigner, Pkcs12Signer, SignOptions, SignatureInfo, SignatureStatus,
     SignatureValidation, SignatureValidationReport,
 };
-pub use crate::tier::Tier;
 pub use crate::watermark::{Layer, Position, Rotation, WatermarkOptions};
 pub use crate::xfa::{
     XfaField, XfaFieldOption, XfaFieldType, XfaFieldValue, XfaFormModel, XfaRect, XfaSetOutcome,

@@ -19,9 +19,9 @@ const path = require('path');
 const FIXTURES = path.join(__dirname, '..', '..', '..', 'fixtures');
 const SAMPLE_PDF = path.join(FIXTURES, 'sample.pdf');
 
-let PdfDocument, setLicenseKey, licenseInfo;
+let PdfDocument;
 try {
-  ({ PdfDocument, setLicenseKey, licenseInfo } = require('../index'));
+  ({ PdfDocument } = require('../index'));
 } catch (e) {
   describe.skip('office export (native module not built)', () => {
     test('placeholder', () => {});
@@ -41,7 +41,6 @@ function assertOoxml(buf, entry, what) {
 
 describe('office export', () => {
   beforeAll(() => {
-    if (typeof setLicenseKey === 'function') setLicenseKey('tier:business');
   });
 
   test('toDocx returns a package Word opens', () => {

@@ -79,8 +79,6 @@ fn compress_with_strict_preset_runs_end_to_end() {
 
 #[test]
 fn add_watermark_delegates_to_add_decoration() {
-    let _ = pdfluent::set_license_key("tier:business");
-
     // Both entry points must reach the same runtime. Until 23-08-2026 this
     // asserted that both failed identically, because the facade refused while
     // the watermark runtime it claimed to be waiting for was already there and

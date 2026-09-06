@@ -20,7 +20,7 @@ import java.util.List;
  *       {@link PdfluentDocument}. Loaded via {@link #load()} +
  *       {@link System#loadLibrary(String)}.</li>
  *   <li><b>{@code libpdf_capi}</b> — flat C ABI consumed via JNA by
- *       {@link PdfDocument} and {@link PdfluentLicensing}. Loaded via
+ *       {@link PdfDocument}. Loaded via
  *       {@link #get()}.</li>
  * </ul>
  * Both libraries expose mostly disjoint surface area; some applications will
@@ -142,7 +142,7 @@ public final class NativeLoader {
     }
 
     // ---------------------------------------------------------------------
-    // C ABI library (libpdf_capi) — used by PdfDocument, PdfluentLicensing
+    // C ABI library (libpdf_capi) — used by PdfDocument
     // ---------------------------------------------------------------------
 
     /**

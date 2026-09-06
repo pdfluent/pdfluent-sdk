@@ -22,11 +22,7 @@
 use pdfluent::prelude::*;
 
 fn business_doc(path: &str) -> PdfDocument {
-    PdfDocument::open_with(
-        path,
-        pdfluent::OpenOptions::new().with_license_key("tier:business"),
-    )
-    .expect("open sample")
+    PdfDocument::open_with(path, pdfluent::OpenOptions::new()).expect("open sample")
 }
 
 // ---------------------------------------------------------------------------
@@ -359,11 +355,8 @@ fn to_images_on_zero_page_document_returns_empty_report() {
     let mut bytes = Vec::new();
     doc_builder.save_to(&mut bytes).expect("serialise");
 
-    let doc = PdfDocument::from_bytes_with(
-        &bytes,
-        pdfluent::OpenOptions::new().with_license_key("tier:business"),
-    )
-    .expect("parse empty doc");
+    let doc = PdfDocument::from_bytes_with(&bytes, pdfluent::OpenOptions::new())
+        .expect("parse empty doc");
     assert_eq!(doc.page_count(), 0);
 
     let dir = std::env::temp_dir().join("pdfluent-zero-page-to_images");

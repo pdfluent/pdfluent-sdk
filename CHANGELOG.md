@@ -2,6 +2,36 @@
 
 All notable changes to PDFluent are documented here.
 
+## [Unreleased]
+
+### Removed
+
+- **The licence key, and every check behind it.** There is no `set_license_key`,
+  no `activate_license`, no `PDFLUENT_LICENSE_KEY`, no `Tier` and no
+  `Capability`. Sixty-five capability gates, six binding activation surfaces,
+  the `xfa-license` and `xfa-license-gen` crates and the `xfa-license-tool`
+  binary are gone with them (#199, #226).
+
+  The decision behind it: the source is published, so any technical check can be
+  removed in minutes by whoever holds the code, and a check would therefore only
+  ever inconvenience the people who intended to pay. What a commercial licensee
+  buys is an agreement — `LICENSE-COMMERCIAL` plus a signed order form — not an
+  unlock.
+
+  Two behaviours change for an unlicensed caller, and both are user-visible:
+  PDF/A font embedding no longer stamps "PDFluent Free Tier" diagonally across
+  every page, and a layout-aware text edit no longer leaves a "PDFluent trial"
+  notice on each modified page. Office export, redaction, signing, PDF/A
+  conversion and layout-aware extraction were refused without a key and now are
+  not.
+
+  Breaking for anyone who called an activation entry point. The call has no
+  replacement because it has nothing left to do: delete it. C ABI status codes
+  16 to 20 and 22 are retired rather than reused, so a caller compiled against
+  an older header can never read a new meaning out of an old constant.
+  `scripts/ci/no_licence_key_in_a_binding.py` refuses a change that puts a key
+  check back.
+
 ## [1.0.0] — 2026-08-23
 
 General availability. Every binding channel moves to `1.0.0`; the crates.io

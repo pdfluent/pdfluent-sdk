@@ -20,9 +20,7 @@
 
 use std::path::PathBuf;
 
-use crate::capability::Capability;
 use crate::compliance::{PdfAProfile, Violation};
-use crate::tier::Tier;
 
 /// Unified result type for the `pdfluent` crate.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -82,58 +80,6 @@ pub enum Error {
         field: String,
         /// Reason the signature is invalid.
         reason: String,
-    },
-
-    // ---------- Licensing ----------
-    /// Required capability is not available in the current tier.
-    FeatureNotInTier {
-        /// Capability that was requested.
-        capability: Capability,
-        /// The tier the user currently holds.
-        current_tier: Tier,
-        /// The minimum tier required.
-        required_tier: Tier,
-    },
-    /// Capability is gated behind a Cargo feature that is not compiled in.
-    CapabilityNotCompiled {
-        /// Capability that was requested.
-        capability: Capability,
-        /// Cargo feature flag to enable.
-        feature_flag: &'static str,
-    },
-    /// License key is malformed or expired.
-    InvalidLicense {
-        /// Human-readable reason.
-        reason: String,
-    },
-    /// License key is well-formed and signed, but its `expires_at` is in
-    /// the past.
-    ///
-    /// Surfaced by the signed-payload pathway only — mock `tier:X` keys
-    /// have no expiry and never produce this variant.
-    LicenseExpired {
-        /// Unix timestamp from the payload's `expires_at` field.
-        expires_at: u64,
-    },
-    /// License key is structurally a signed JSON payload but the Ed25519
-    /// signature does not verify against the configured public key.
-    ///
-    /// Indicates either a tampered payload or a payload signed by a
-    /// different private key. Treat as a hard failure — never fall
-    /// through to Trial.
-    LicenseInvalidSignature,
-    /// A license-enforced rate or usage limit was exceeded at runtime.
-    ///
-    /// Returned by `LicenseGuard::record_*` calls during operation; not
-    /// an activation-time error. Carries the metered resource, used
-    /// value, and configured cap.
-    LicenseRateLimited {
-        /// Metered resource name, e.g. `"api_calls"` or `"pages"`.
-        resource: String,
-        /// How many units have been consumed in the current window.
-        used: u64,
-        /// The license's hard cap for this resource in the current window.
-        limit: u64,
     },
 
     // ---------- Environment ----------
@@ -333,12 +279,6 @@ impl Error {
             Error::PdfaValidationFailed { .. } => "E-COMPLIANCE-PDFA-INVALID",
             Error::DecryptionFailed { .. } => "E-SECURITY-DECRYPTION-FAILED",
             Error::InvalidSignature { .. } => "E-SECURITY-INVALID-SIGNATURE",
-            Error::FeatureNotInTier { .. } => "E-LICENSE-FEATURE-NOT-IN-TIER",
-            Error::CapabilityNotCompiled { .. } => "E-LICENSE-CAPABILITY-NOT-COMPILED",
-            Error::InvalidLicense { .. } => "E-LICENSE-INVALID",
-            Error::LicenseExpired { .. } => "E-LICENSE-EXPIRED",
-            Error::LicenseInvalidSignature => "E-LICENSE-INVALID-SIGNATURE",
-            Error::LicenseRateLimited { .. } => "E-LICENSE-RATE-LIMITED",
             Error::TextEditFailed { .. } => "E-EDIT-TEXT-FAILED",
             Error::UnsupportedOnWasm { .. } => "E-ENV-UNSUPPORTED-ON-WASM",
             Error::MissingDependency { .. } => "E-ENV-MISSING-DEPENDENCY",
@@ -367,20 +307,6 @@ impl Error {
             Error::InvalidSignature { .. } => {
                 "https://pdfluent.com/errors#E-SECURITY-INVALID-SIGNATURE"
             }
-            Error::FeatureNotInTier { .. } => {
-                "https://pdfluent.com/errors#E-LICENSE-FEATURE-NOT-IN-TIER"
-            }
-            Error::CapabilityNotCompiled { .. } => {
-                "https://pdfluent.com/errors#E-LICENSE-CAPABILITY-NOT-COMPILED"
-            }
-            Error::InvalidLicense { .. } => "https://pdfluent.com/errors#E-LICENSE-INVALID",
-            Error::LicenseExpired { .. } => "https://pdfluent.com/errors#E-LICENSE-EXPIRED",
-            Error::LicenseInvalidSignature => {
-                "https://pdfluent.com/errors#E-LICENSE-INVALID-SIGNATURE"
-            }
-            Error::LicenseRateLimited { .. } => {
-                "https://pdfluent.com/errors#E-LICENSE-RATE-LIMITED"
-            }
             Error::TextEditFailed { .. } => "https://pdfluent.com/errors#E-EDIT-TEXT-FAILED",
             Error::UnsupportedOnWasm { .. } => {
                 "https://pdfluent.com/errors#E-ENV-UNSUPPORTED-ON-WASM"
@@ -408,15 +334,24 @@ impl std::fmt::Display for Error {
                 None => write!(f, "I/O error: {source}"),
             },
             Error::FileNotFound { path } => write!(f, "File not found: {}", path.display()),
-            Error::InvalidPdf { byte_offset, reason } => match byte_offset {
+            Error::InvalidPdf {
+                byte_offset,
+                reason,
+            } => match byte_offset {
                 Some(o) => write!(f, "Invalid PDF at byte {o}: {reason}"),
                 None => write!(f, "Invalid PDF: {reason}"),
             },
-            Error::UnsupportedPdfVersion { found, supported_up_to } => write!(
+            Error::UnsupportedPdfVersion {
+                found,
+                supported_up_to,
+            } => write!(
                 f,
                 "Unsupported PDF version {found} (this build supports up to {supported_up_to})"
             ),
-            Error::PdfaValidationFailed { profile, violations } => write!(
+            Error::PdfaValidationFailed {
+                profile,
+                violations,
+            } => write!(
                 f,
                 "PDF/A validation failed for profile {profile:?} with {} violation(s)",
                 violations.len()
@@ -425,57 +360,6 @@ impl std::fmt::Display for Error {
             Error::InvalidSignature { field, reason } => {
                 write!(f, "Signature '{field}' is invalid: {reason}")
             }
-            Error::FeatureNotInTier {
-                capability,
-                current_tier,
-                required_tier,
-            } => {
-                // On Trial the useful next step is a free evaluation key, not a
-                // price list. Sending an evaluating developer to /pricing when
-                // they can have the feature working in a minute for nothing is
-                // the most expensive sentence in the funnel. Above Trial the
-                // key already exists, so the price list is the right pointer.
-                let next_step = if *current_tier == Tier::Trial {
-                    "  Free 30-day evaluation key, no card: https://pdfluent.com/sdk\n  Pricing: https://pdfluent.com/pricing"
-                } else {
-                    "  Upgrade: https://pdfluent.com/pricing"
-                };
-                write!(
-                    f,
-                    "Capability {capability:?} requires tier {required_tier:?}; current tier is {current_tier:?}.\n{next_step}\n  Docs: {}",
-                    self.docs_url()
-                )
-            }
-            Error::CapabilityNotCompiled {
-                capability,
-                feature_flag,
-            } => write!(
-                f,
-                "Capability {capability:?} requires the `{feature_flag}` Cargo feature, which is not enabled in this build.\n  Docs: {}",
-                self.docs_url()
-            ),
-            Error::InvalidLicense { reason } => {
-                write!(f, "Invalid license: {reason}\n  Docs: {}", self.docs_url())
-            }
-            Error::LicenseExpired { expires_at } => write!(
-                f,
-                "License expired at unix timestamp {expires_at}.\n  Renew: https://pdfluent.com/pricing\n  Docs: {}",
-                self.docs_url()
-            ),
-            Error::LicenseInvalidSignature => write!(
-                f,
-                "License signature does not verify against the configured public key — tampered or wrong-key payload.\n  Docs: {}",
-                self.docs_url()
-            ),
-            Error::LicenseRateLimited {
-                resource,
-                used,
-                limit,
-            } => write!(
-                f,
-                "Rate limit exceeded: {used}/{limit} {resource} in the current window.\n  Upgrade or wait for window reset.\n  Docs: {}",
-                self.docs_url()
-            ),
             Error::TextEditFailed { reason } => {
                 write!(f, "Text edit failed: {reason}")
             }
@@ -484,10 +368,7 @@ impl std::fmt::Display for Error {
                 "Operation `{operation}` is not supported on wasm32 targets.\n  Docs: {}",
                 self.docs_url()
             ),
-            Error::MissingDependency {
-                dep,
-                install_hint,
-            } => write!(
+            Error::MissingDependency { dep, install_hint } => write!(
                 f,
                 "Missing dependency: {dep}.\n  Install: {install_hint}\n  Docs: {}",
                 self.docs_url()
@@ -506,7 +387,10 @@ impl std::fmt::Display for Error {
                 self.docs_url()
             ),
             Error::Unsupported(reason) => write!(f, "Unsupported operation: {reason}"),
-            Error::Internal { message, crate_version } => write!(
+            Error::Internal {
+                message,
+                crate_version,
+            } => write!(
                 f,
                 "Internal error (please report): {message} [pdfluent {crate_version}]"
             ),
@@ -662,53 +546,6 @@ impl From<pdf_redact::RedactError> for Error {
 
 #[cfg(test)]
 mod tests {
-    /// A tier refusal must always name a way out.
-    ///
-    /// This is the promise the bindings inherit: the message says what is not
-    /// available *and* where to get a key. Two bindings had quietly broken it
-    /// by paraphrasing this text into their own sentence -- Python dropped the
-    /// link entirely, Node never carried one -- so the caller learned only
-    /// that they were blocked. Assert it here, at the source, because that is
-    /// the one place all five bindings read from.
-    #[test]
-    fn a_tier_refusal_always_names_a_route_to_a_key() {
-        for (current, required, expect) in [
-            (Tier::Trial, Tier::Business, "https://pdfluent.com/sdk"),
-            (
-                Tier::Developer,
-                Tier::Business,
-                "https://pdfluent.com/pricing",
-            ),
-            (Tier::Team, Tier::Enterprise, "https://pdfluent.com/pricing"),
-        ] {
-            let text = Error::FeatureNotInTier {
-                capability: Capability::DocxExport,
-                current_tier: current,
-                required_tier: required,
-            }
-            .to_string();
-            assert!(
-                text.contains(expect),
-                "{current:?} -> {required:?} does not point at {expect}: {text}"
-            );
-        }
-    }
-
-    /// On Trial the route must be the free key, not the price list. Someone
-    /// evaluating the SDK has not decided to buy yet; sending them to pricing
-    /// asks for a decision they cannot make and hides the thing that would let
-    /// them try it.
-    #[test]
-    fn trial_is_offered_a_free_key_rather_than_a_price_list() {
-        let text = Error::FeatureNotInTier {
-            capability: Capability::DocxExport,
-            current_tier: Tier::Trial,
-            required_tier: Tier::Business,
-        }
-        .to_string();
-        assert!(text.contains("evaluation"), "no free-key offer: {text}");
-    }
-
     use super::*;
     use std::collections::HashSet;
 
@@ -748,27 +585,6 @@ mod tests {
                 field: "sig1".into(),
                 reason: "bad cert".into(),
             },
-            Error::FeatureNotInTier {
-                capability: crate::capability::Capability::XfaFlatten,
-                current_tier: crate::tier::Tier::Trial,
-                required_tier: crate::tier::Tier::Developer,
-            },
-            Error::CapabilityNotCompiled {
-                capability: crate::capability::Capability::XfaFlatten,
-                feature_flag: "xfa",
-            },
-            Error::InvalidLicense {
-                reason: "expired".into(),
-            },
-            Error::LicenseExpired {
-                expires_at: 1_700_000_000,
-            },
-            Error::LicenseInvalidSignature,
-            Error::LicenseRateLimited {
-                resource: "api_calls".into(),
-                used: 1100,
-                limit: 1000,
-            },
             Error::UnsupportedOnWasm { operation: "sign" },
             Error::MissingDependency {
                 dep: "pdfium",
@@ -796,10 +612,11 @@ mod tests {
             assert!(seen.insert(code), "Duplicate error code detected: {code}");
         }
 
-        // Confirm every variant is covered (count guard).
+        // Confirm every variant is covered (count guard). Nineteen until #226
+        // removed the six licence variants with the checks that produced them.
         assert_eq!(
             variants.len(),
-            19,
+            13,
             "Update this test when new Error variants are added"
         );
     }

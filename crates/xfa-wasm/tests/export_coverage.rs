@@ -44,7 +44,6 @@ fn assert_ooxml(bytes: &[u8], entry: &str, what: &str) {
 
 #[wasm_bindgen_test]
 fn to_docx_runs_in_wasm() {
-    let _ = pdfluent::set_license_key("tier:business");
     let doc = PdfDoc::open(SAMPLE_PDF).expect("open sample.pdf");
     let out = doc
         .to_docx()
@@ -54,7 +53,6 @@ fn to_docx_runs_in_wasm() {
 
 #[wasm_bindgen_test]
 fn to_xlsx_runs_in_wasm() {
-    let _ = pdfluent::set_license_key("tier:business");
     let doc = PdfDoc::open(SAMPLE_PDF).expect("open sample.pdf");
     let out = doc
         .to_xlsx()
@@ -64,7 +62,6 @@ fn to_xlsx_runs_in_wasm() {
 
 #[wasm_bindgen_test]
 fn to_pptx_runs_in_wasm() {
-    let _ = pdfluent::set_license_key("tier:business");
     let doc = PdfDoc::open(MULTI_PDF).expect("open multi-page.pdf");
     let out = doc
         .to_pptx()

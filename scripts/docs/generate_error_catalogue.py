@@ -151,36 +151,6 @@ HOW_TO_FIX: dict[str, str] = {
         "The signature in `field` failed verification. Check `reason` for "
         "details. Do not trust the document content if integrity is required."
     ),
-    "E-LICENSE-FEATURE-NOT-IN-TIER": (
-        "Upgrade your license tier to at least `required_tier`. See "
-        "https://pdfluent.com/pricing. Check `capability` to identify which "
-        "feature triggered this error."
-    ),
-    "E-LICENSE-CAPABILITY-NOT-COMPILED": (
-        "Rebuild with the `feature_flag` Cargo feature enabled, or use a "
-        "pre-built binary that includes the capability."
-    ),
-    "E-LICENSE-INVALID": (
-        "Re-issue the license key or call `activate_license()` again with a "
-        "valid key. Check `reason` for the specific parse failure."
-    ),
-    "E-LICENSE-EXPIRED": (
-        "Renew the license — the `expires_at` unix timestamp in the payload "
-        "is in the past. Visit https://pdfluent.com/pricing or contact "
-        "sales for a refreshed key."
-    ),
-    "E-LICENSE-INVALID-SIGNATURE": (
-        "The signed payload does not verify against the configured public "
-        "key. Either the payload was tampered, or it was signed with a "
-        "different private key than the verifier expects. Re-download the "
-        "license file from PDFluent and try again; if the issue persists, "
-        "contact support."
-    ),
-    "E-LICENSE-RATE-LIMITED": (
-        "A licence-enforced rate or usage cap was reached. Inspect "
-        "`resource`, `used`, and `limit` to identify which cap fired. "
-        "Either upgrade the tier or wait for the metering window to reset."
-    ),
     "E-ENV-UNSUPPORTED-ON-WASM": (
         "This operation (`operation`) cannot run in a WASM32 environment. Use "
         "the server-side API or guard with `#[cfg(not(target_arch = \"wasm32\"))]`."
@@ -265,54 +235,6 @@ BINDING_STATUS: dict[str, dict[str, str]] = {
         "dotnet":  "TBD (no dedicated subtype — gap)",
         "java":    "TBD (no dedicated subtype — gap)",
         "c_abi":   "PDF_STATUS_ERROR_SIGN (partial — sign covers both signing failure and invalid sig)",
-    },
-    "E-LICENSE-FEATURE-NOT-IN-TIER": {
-        "python":  "PdfluentLicenseError (.code = E-LICENSE-FEATURE-NOT-IN-TIER)",
-        "wasm_ts": "PdfluentError (.code = E-LICENSE-FEATURE-NOT-IN-TIER)",
-        "node":    "PdfluentLicenseError (.code = E-LICENSE-FEATURE-NOT-IN-TIER)",
-        "dotnet":  "PdfluentLicenseException (.Code = E-LICENSE-FEATURE-NOT-IN-TIER)",
-        "java":    "PdfluentLicenseException (getCode() = E-LICENSE-FEATURE-NOT-IN-TIER)",
-        "c_abi":   "PDF_STATUS_ERROR_UNKNOWN (gap — no licence-specific C code in 1.0; tracked)",
-    },
-    "E-LICENSE-CAPABILITY-NOT-COMPILED": {
-        "python":  "PdfluentLicenseError (.code = E-LICENSE-CAPABILITY-NOT-COMPILED)",
-        "wasm_ts": "PdfluentError (.code = E-LICENSE-CAPABILITY-NOT-COMPILED)",
-        "node":    "PdfluentLicenseError (.code = E-LICENSE-CAPABILITY-NOT-COMPILED)",
-        "dotnet":  "PdfluentLicenseException (.Code = E-LICENSE-CAPABILITY-NOT-COMPILED)",
-        "java":    "PdfluentLicenseException (getCode() = E-LICENSE-CAPABILITY-NOT-COMPILED)",
-        "c_abi":   "PDF_STATUS_ERROR_UNKNOWN (gap — no licence-specific C code in 1.0; tracked)",
-    },
-    "E-LICENSE-INVALID": {
-        "python":  "PdfluentLicenseError (.code = E-LICENSE-INVALID)",
-        "wasm_ts": "PdfluentError (.code = E-LICENSE-INVALID)",
-        "node":    "PdfluentLicenseError (.code = E-LICENSE-INVALID)",
-        "dotnet":  "PdfluentLicenseException (.Code = E-LICENSE-INVALID)",
-        "java":    "PdfluentLicenseException (getCode() = E-LICENSE-INVALID)",
-        "c_abi":   "PDF_STATUS_ERROR_INVALID_LICENSE (=16) + PDF_STATUS_ERROR_LICENSE_ALREADY_SET (=17) + PDF_STATUS_ERROR_LICENSE_FILE (=18); upstream bindings consolidate all three under .code = E-LICENSE-INVALID",
-    },
-    "E-LICENSE-EXPIRED": {
-        "python":  "PdfluentLicenseError (.code = E-LICENSE-EXPIRED)",
-        "wasm_ts": "PdfluentError (.code = E-LICENSE-EXPIRED)",
-        "node":    "PdfluentLicenseError (.code = E-LICENSE-EXPIRED)",
-        "dotnet":  "PdfluentLicenseException (.Code = E-LICENSE-EXPIRED)",
-        "java":    "PdfluentLicenseException (getCode() = E-LICENSE-EXPIRED)",
-        "c_abi":   "PDF_STATUS_ERROR_LICENSE_EXPIRED (=19)",
-    },
-    "E-LICENSE-INVALID-SIGNATURE": {
-        "python":  "PdfluentLicenseError (.code = E-LICENSE-INVALID-SIGNATURE)",
-        "wasm_ts": "PdfluentError (.code = E-LICENSE-INVALID-SIGNATURE)",
-        "node":    "PdfluentLicenseError (.code = E-LICENSE-INVALID-SIGNATURE)",
-        "dotnet":  "PdfluentLicenseException (.Code = E-LICENSE-INVALID-SIGNATURE)",
-        "java":    "PdfluentLicenseException (getCode() = E-LICENSE-INVALID-SIGNATURE)",
-        "c_abi":   "PDF_STATUS_ERROR_LICENSE_INVALID_SIGNATURE (=20)",
-    },
-    "E-LICENSE-RATE-LIMITED": {
-        "python":  "PdfluentLicenseError (.code = E-LICENSE-RATE-LIMITED)",
-        "wasm_ts": "PdfluentError (.code = E-LICENSE-RATE-LIMITED)",
-        "node":    "PdfluentLicenseError (.code = E-LICENSE-RATE-LIMITED)",
-        "dotnet":  "PdfluentLicenseException (.Code = E-LICENSE-RATE-LIMITED)",
-        "java":    "PdfluentLicenseException (getCode() = E-LICENSE-RATE-LIMITED)",
-        "c_abi":   "PDF_STATUS_ERROR_UNKNOWN (gap — runtime-metering surface not yet exposed via C ABI in 1.0)",
     },
     "E-ENV-UNSUPPORTED-ON-WASM": {
         "python":  "N/A (Python binding is not WASM)",

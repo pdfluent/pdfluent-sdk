@@ -63,18 +63,6 @@ pub mod code {
     pub const PARSE_UNSUPPORTED_VERSION: &str = "E-PARSE-UNSUPPORTED-VERSION";
     /// PDF/A validation failed.
     pub const COMPLIANCE_PDFA_INVALID: &str = "E-COMPLIANCE-PDFA-INVALID";
-    /// License key invalid or malformed.
-    pub const LICENSE_INVALID: &str = "E-LICENSE-INVALID";
-    /// Required feature not in tier.
-    pub const LICENSE_FEATURE_NOT_IN_TIER: &str = "E-LICENSE-FEATURE-NOT-IN-TIER";
-    /// Signed payload has expired.
-    pub const LICENSE_EXPIRED: &str = "E-LICENSE-EXPIRED";
-    /// Signed payload's Ed25519 signature does not verify.
-    pub const LICENSE_INVALID_SIGNATURE: &str = "E-LICENSE-INVALID-SIGNATURE";
-    /// Runtime rate / usage limit exceeded.
-    pub const LICENSE_RATE_LIMITED: &str = "E-LICENSE-RATE-LIMITED";
-    /// Capability requires a feature flag not compiled into this build.
-    pub const LICENSE_CAPABILITY_NOT_COMPILED: &str = "E-LICENSE-CAPABILITY-NOT-COMPILED";
     /// Operation is unsupported on the WebAssembly target.
     pub const ENV_UNSUPPORTED_ON_WASM: &str = "E-ENV-UNSUPPORTED-ON-WASM";
     /// Internal safety-net.
@@ -119,8 +107,6 @@ pub mod legacy_code {
     pub const PDFA_CLEANUP_FAILED: &str = "PDFA_CLEANUP_FAILED";
     pub const COLORSPACE_ERROR: &str = "COLORSPACE_ERROR";
     pub const XMP_REPAIR_FAILED: &str = "XMP_REPAIR_FAILED";
-    pub const LICENSE_ERROR: &str = "LICENSE_ERROR";
-    pub const LICENSE_ALREADY_SET: &str = "LICENSE_ALREADY_SET";
 }
 
 fn build(code: &str, message: &str, operation: &str, help: &str, legacy_code: &str) -> JsValue {
@@ -185,9 +171,6 @@ pub fn pdf_engine_error<E: PdfError>(operation: &str, e: E) -> JsValue {
         "CORRUPT_PDF" => (code::PARSE_INVALID_PDF, legacy_code::INVALID_PDF),
         "INVALID_PAGE_NUMBER" => (code::WASM_PAGE_OUT_OF_RANGE, legacy_code::PAGE_OUT_OF_RANGE),
         "UNSUPPORTED_PDF_VERSION" => (code::PARSE_UNSUPPORTED_VERSION, "UNSUPPORTED_PDF_VERSION"),
-        "LICENSE_EXPIRED" | "LICENSE_INVALID" => {
-            (code::LICENSE_INVALID, legacy_code::LICENSE_ERROR)
-        }
         _ => (code::INTERNAL, legacy_code::OPERATION_FAILED),
     };
     let help = e.help().unwrap_or_default();

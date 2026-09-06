@@ -82,7 +82,7 @@ If your snapshot is older than the listed change, apply the rename.
 | Alignment type | `Alignment::*` | Removed (unused). |
 | `docs_url` return type | `String` | `&'static str` |
 | Clone on PdfDocument | `doc.clone()` | Removed. Use `PdfDocument::from_bytes(&doc.to_bytes()?)`. |
-| License plumbing added | n/a | `OpenOptions::with_license_key`, `set_license_key`, env `PDFLUENT_LICENSE_KEY`. |
+| License plumbing added, then removed | n/a | Added in 1.0, removed in #226: there is no key, no tier and no `PDFLUENT_LICENSE_KEY`. |
 
 ### 2.2 RFC v1.2
 
@@ -103,7 +103,7 @@ If your snapshot is older than the listed change, apply the rename.
 | Permissions defaults | `aes256()` → no-permissions | `aes256()` / `aes128()` default to `Permissions::full_access()`. |
 | Encryption presets | n/a | Every preset honours ISO 32000-2 §7.6.4.2 accessibility-extraction. |
 | Signature reporting | `all_valid()` on unsigned docs panicked | Returns vacuous-true; pair with `is_signed()`. |
-| Trial capability scope | Trial = all technical caps | Trial still marks output; `AirGapped` / `OemRedistribution` remain Enterprise-only. |
+| Trial capability scope | Trial = all technical caps | No tiers at all (#226); nothing is withheld and nothing is marked. |
 
 ---
 

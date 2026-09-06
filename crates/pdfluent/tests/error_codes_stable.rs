@@ -76,45 +76,6 @@ fn variant_samples() -> Vec<(Error, &'static str)> {
             "E-SECURITY-INVALID-SIGNATURE",
         ),
         (
-            Error::FeatureNotInTier {
-                capability: pdfluent::Capability::DigitalSignatureSign,
-                current_tier: pdfluent::Tier::Developer,
-                required_tier: pdfluent::Tier::Team,
-            },
-            "E-LICENSE-FEATURE-NOT-IN-TIER",
-        ),
-        (
-            Error::CapabilityNotCompiled {
-                capability: pdfluent::Capability::Html2Pdf,
-                feature_flag: "html-to-pdf",
-            },
-            "E-LICENSE-CAPABILITY-NOT-COMPILED",
-        ),
-        (
-            Error::InvalidLicense {
-                reason: "test".into(),
-            },
-            "E-LICENSE-INVALID",
-        ),
-        (
-            Error::LicenseExpired {
-                expires_at: 1_700_000_000,
-            },
-            "E-LICENSE-EXPIRED",
-        ),
-        (
-            Error::LicenseInvalidSignature,
-            "E-LICENSE-INVALID-SIGNATURE",
-        ),
-        (
-            Error::LicenseRateLimited {
-                resource: "api_calls".into(),
-                used: 1100,
-                limit: 1000,
-            },
-            "E-LICENSE-RATE-LIMITED",
-        ),
-        (
             Error::UnsupportedOnWasm { operation: "x" },
             "E-ENV-UNSUPPORTED-ON-WASM",
         ),

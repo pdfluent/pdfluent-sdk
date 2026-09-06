@@ -117,9 +117,10 @@ paden = [
   #
   # The literal was in t3's block on a loan for #220 that expired when #220
   # landed, and the block above this one records that ci.yml is t1's own file
-  # rather than a loan in the first place. Same handling either way: t2 takes it
-  # back by moving the literal, without asking.
-  ".github/workflows/ci.yml",
+  # rather than a loan in the first place. Same handling either way: whoever
+  # needs it takes it back by moving the literal, without asking -- and t3 did,
+  # on 06-09-2026 for #226. The literal is in t3's block below and not here
+  # until that ticket lands.
   "scripts/ci/site_blocks_compile.py",
   "scripts/ci/test_site_blocks_register.py",
   "scripts/ci/test_gate_logs_do_not_pile_up.py",
@@ -220,6 +221,22 @@ paden = [
   # the literal. The other two stay here; nothing has edited them since.
   "scripts/ci/test_no_withdrawn_object.py",
   "scripts/ci/test_sweep_exemption.py",
+]
+# LENT TO t3, 06-09-2026, for #226, and only these two files of the suite.
+#
+# Removing the licence key removed the free-tier watermark that PDF/A font
+# embedding stamped on every unlicensed run, so the `pdfa-converted` fixture and
+# its baseline page changed: 1361 of 76800 pixels on one page, which is the mark
+# and nothing else. Regenerating them is part of the change that causes them --
+# landing the removal without the new baseline turns this suite red on master
+# for a reason that is not a regression.
+#
+# The suite itself, its harness and its workflow stay here. Back to t1 the
+# moment #226 lands; whoever next edits them takes them back by removing these
+# two lines.
+uitgezonderd = [
+  "crates/visual-regression/fixtures/pdfa-converted.pdf",
+  "crates/visual-regression/baseline/pdfa-converted-p1.png",
 ]
 # NOT claimed, and worth saying so: `crates/pdfluent/src/document.rs` and the two
 # parity tests are edited by this change but stay with whoever owns the SDK
@@ -396,6 +413,13 @@ uitgezonderd = [
   # t3: the guard that puts the three licence registers side by side (#304).
   "scripts/ci/one_licence_three_registers.py",
   "scripts/ci/test_one_licence_three_registers.py",
+  # t3: the guard that reads LICENSE-COMMERCIAL §5 against the binary (#226).
+  "scripts/ci/no_licence_key_in_a_binding.py",
+  "scripts/ci/test_no_licence_key_in_a_binding.py",
+  # t3: ON LOAN for #226 -- the conformance gate stamped `"licensed": <the
+  # environment has a key>` on every measurement, and there is no key any more.
+  # Back the moment that ticket lands.
+  "scripts/ci/pdfa_conformance_gate.py",
   # t1: guards whose subject is docs/UPSTREAM_FORKS.toml and the worktrees this
   # repository is checked out into. Same carve-out as the licence guards above.
   "scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py",
@@ -463,6 +487,34 @@ paden = [
   # question, not a build one (#220).
   "scripts/ci/the_order_form_agrees_with_the_licence.py",
   "scripts/ci/test_the_order_form_agrees_with_the_licence.py",
+  # The same licence read against the binary instead of against the other
+  # document. §5 now states as a fact that nothing in the software reads a key,
+  # refuses a capability or marks output (#226), so what this guard watches is a
+  # licence promise -- not a build rule. Excepted from t2's `scripts/ci/**`.
+  "scripts/ci/no_licence_key_in_a_binding.py",
+  "scripts/ci/test_no_licence_key_in_a_binding.py",
+  # ON LOAN, 06-09-2026, for #226, and both for the same reason: a guard that
+  # runs nowhere is not a guard, and the two files that decide where it runs are
+  # not this territory's.
+  #
+  #   ci.yml   two steps in `guards`, beside the other licence guards, and
+  #            nothing else in the file.
+  #   pdfa_conformance_gate.py   it recorded `"licensed": <the environment has a
+  #            key>` in every measurement, because an unlicensed run used to
+  #            carry the free-tier watermark and therefore measured a different
+  #            document. It does not any more, so the field can only ever be
+  #            false and would invite two numbers to be compared as if it still
+  #            meant something.
+  #
+  # Back to their owners the moment #226 lands; whoever next edits them takes
+  # them back by moving the literals, and needs no permission to.
+  ".github/workflows/ci.yml",
+  "scripts/ci/pdfa_conformance_gate.py",
+  # ON LOAN from t1, 06-09-2026, for #226. The two files the watermark removal
+  # changes, and nothing else of that suite -- see t1's block for why they
+  # travel with this change rather than after it. Back when this lands.
+  "crates/visual-regression/fixtures/pdfa-converted.pdf",
+  "crates/visual-regression/baseline/pdfa-converted-p1.png",
   # `.github/workflows/ci.yml` was here, on loan for #220. That loan carried its
   # own expiry -- "back to t2 the moment this lands" -- and #220 landed on
   # 05-09-2026, so it is spent. The literal has moved on to t1's block for #344

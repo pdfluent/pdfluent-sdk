@@ -97,67 +97,6 @@ interface PdfCapiLibrary extends Library {
 
     void pdf_clear_error();
 
-    // ---- License activation (Wave 1) ----------------------------------------
-
-    /** PdfluentLicenseStatus payload. */
-    class PdfluentLicenseStatus extends Structure {
-        public int tier;
-        public int source;
-        public int outputIsMarked;
-
-        @Override
-        protected List<String> getFieldOrder() {
-            return Arrays.asList("tier", "source", "outputIsMarked");
-        }
-
-        public static class ByReference extends PdfluentLicenseStatus implements Structure.ByReference {}
-    }
-
-    /**
-     * Activate the process-global license from a key string.
-     * Returns 0 on success; 16 ErrorInvalidLicense; 17 ErrorLicenseAlreadySet.
-     */
-    int pdfluent_license_activate_key(String key);
-
-    /**
-     * Activate the license from a file path (UTF-8 text).
-     * Returns 0 on success; 18 ErrorLicenseFile if the file cannot be read.
-     */
-    int pdfluent_license_activate_file(String path);
-
-    /** Effective tier as an int (0=Trial, 1=Developer, 2=Team, 3=Business, 4=Enterprise). */
-    int pdfluent_license_effective_tier();
-
-    /** Fill the output struct with the current license status. */
-    int pdfluent_license_status(PdfluentLicenseStatus.ByReference out);
-
-    // ---- Signed-payload license activation (Wave 2) -------------------------
-
-    /**
-     * Inject the process-global Ed25519 verification key.
-     *
-     * <p>C ABI: {@code PdfStatus pdfluent_license_set_public_key(const unsigned
-     * char *public_key, size_t key_len)}. The key buffer is BORROWED; the
-     * library copies what it needs. {@code keyLen} must equal 32.
-     *
-     * @return 0 OK · 1 ErrorInvalidArgument (null or not 32 bytes) ·
-     *         16 ErrorInvalidLicense (a different key was already injected).
-     */
-    int pdfluent_license_set_public_key(byte[] publicKey, NativeLong keyLen);
-
-    /**
-     * Activate the process-global license from a signed JSON payload.
-     *
-     * <p>C ABI: {@code PdfStatus pdfluent_license_activate_payload(const char
-     * *payload_json)}. {@link #pdfluent_license_set_public_key} must have been
-     * called first. The payload is BORROWED.
-     *
-     * @return 0 OK · 1 ErrorInvalidArgument · 16 ErrorInvalidLicense ·
-     *         17 ErrorLicenseAlreadySet · 19 ErrorLicenseExpired ·
-     *         20 ErrorLicenseInvalidSignature.
-     */
-    int pdfluent_license_activate_payload(String payloadJson);
-
     // ---- Structured text-block extraction ----------------------------------
 
     /**

@@ -175,12 +175,6 @@ def main() -> None:
         "measured_total": total,
         "pass": passed,
         "counts": counts,
-        # Unlicensed runs carry the free-tier watermark, which the pipeline then
-        # has to embed a font for — a different document than a licensed run
-        # produces. Recording it keeps two numbers from being compared blind.
-        "licensed": bool(
-            os.environ.get("PDFLUENT_LICENSE_FILE") or os.environ.get("PDFLUENT_LICENSE_KEY")
-        ),
         "verapdf": verapdf_version(args.verapdf),
         "profile": "PDF/A-2b",
     }
