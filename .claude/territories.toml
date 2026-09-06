@@ -402,6 +402,7 @@ uitgezonderd = [
   "scripts/ci/test_the_pre_push_gate_picks_its_lane.py",
   "scripts/ci/touched_crates.py",
   "scripts/ci/test_touched_crates.py",
+  "scripts/ci/test_persistent_builds_check_their_build_dir.py",
   "scripts/ci/every_guard_has_a_job.py",
   "scripts/ci/mirror_only_guards.toml",
   "docs/ci/CI_RUNNER_OPERATING_RUNBOOK.md",
@@ -621,6 +622,11 @@ paden = [
   "scripts/ci/test_the_pre_push_gate_picks_its_lane.py",
   "scripts/ci/touched_crates.py",
   "scripts/ci/test_touched_crates.py",
+  # And the test of the guard that keeps the workspace job runnable: it asks
+  # whether a job that compiles on the persistent runner puts cargo on a PATH
+  # the runner service does not carry. The guard itself is unclaimed; its test
+  # is not, and splitting the pair would land the rule without the proof.
+  "scripts/ci/test_persistent_builds_check_their_build_dir.py",
   # The two registers the workspace job moves an entry in. Three guards stopped
   # being mirror-only the moment ci.yml ran them, and a ratchet that is not
   # updated in the same commit reports the win as a fault on every run.
