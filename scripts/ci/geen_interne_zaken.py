@@ -14,9 +14,11 @@ er was nergens een moment waarop iemand zich afvroeg of dít naar buiten mocht.
 De klant- en partnernamen staan NIET in dit bestand. Ze staan in een lijst
 buiten de boom, standaard `~/.config/pdfluent/interne-termen.txt`, te overrulen
 met `PDFLUENT_INTERNE_TERMEN`. Formaat: één term per regel, regels die met `#`
-beginnen zijn commentaar, elke term wordt als regex-alternatief gebruikt (punten
-dus ontsnappen: `Instantly\\.ai`). Aanvullen doe je daar, nooit hier -- een
-verbodslijst die haar eigen termen publiceert lekt precies wat zij tegenhoudt.
+beginnen zijn commentaar. Een regel is letterlijke tekst, tenzij er een
+backslash in staat -- dan is het een patroon dat de schrijver zo bedoeld heeft
+(`Instantly\\.ai`). Zie `_als_alternatief` voor waarom dat onderscheid er is.
+Aanvullen doe je daar, nooit hier -- een verbodslijst die haar eigen termen
+publiceert lekt precies wat zij tegenhoudt.
 Ontbreekt de lijst, dan weigert deze controle zichtbaar in plaats van te slagen.
 
 Commitboodschappen dragen hetzelfde risico en ze zijn moeilijker terug te nemen:
@@ -116,6 +118,44 @@ PRIVATE_PAD = os.environ.get(
 )
 
 
+
+def _als_alternatief(term: str) -> str:
+    """One list line as one alternative of the partner pattern.
+
+    THE LIST HOLDS TWO KINDS OF LINE, AND THE BACKSLASH TELLS THEM APART
+
+    The documented idiom for this list is a name with its metacharacters escaped
+    -- `Instantly\\.ai` -- so a line that carries a backslash is a pattern its
+    author wrote on purpose and is compiled as one. Every other line is literal
+    text and is escaped here.
+
+    Until 06-09-2026 every line was compiled as a pattern. That was invisible
+    while the list held names, because a name carries no metacharacter; it
+    stopped being invisible when #222 put base64 key material on the list to
+    keep it out of the published history. `+` is a metacharacter: a line
+    beginning with one raised `nothing to repeat` and took down not just its own
+    rule but `alle_regels()` and every caller of it -- the seeding, the message
+    guard, the tree guard. A line further in is worse than a crash: `v+A` reads
+    as "one or more v", so the term silently stops matching the text it was
+    added for, and the guard reports a clean tree over the thing it was given to
+    find.
+
+    BOUNDARIES ARE PER TERM, AND ONLY WHERE THEY MEAN ANYTHING
+
+    `\\b` sits between a word character and a non-word one. Wrapped around the
+    whole alternation it required every term to begin and end in a word
+    character -- true of a name, not of a base64 line ending in `=` or `/`,
+    which would then match nowhere. So the boundary is applied per term, at each
+    edge that is a word character, and left off at an edge that is not.
+    """
+    kern = term if "\\" in term else re.escape(term)
+    def _woord(c: str) -> bool:
+        return bool(c) and (c.isalnum() or c == "_")
+    voor = r"\b" if _woord(term[:1]) else ""
+    na = r"\b" if _woord(term[-1:]) else ""
+    return voor + kern + na
+
+
 def private_regel():
     """De partnerregel, of None als de lijst ontbreekt.
 
@@ -135,7 +175,8 @@ def private_regel():
     # them however it feels like. It is also the whole reason `::add-mask::`
     # cannot be relied on -- masking is exact -- so removing it would quietly
     # undo both this rule and the argument for redacting its hits.
-    _PRIVE_RX = re.compile(r"\b(" + "|".join(termen) + r")\b", re.I)
+    _PRIVE_RX = re.compile("(" + "|".join(_als_alternatief(t) for t in termen) + ")",
+                           re.I)
     # A second pattern WITHOUT word boundaries, for paths.
     #
     # `\b` sits between a word character and a non-word one, and `_` is a word

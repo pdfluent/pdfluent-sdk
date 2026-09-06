@@ -446,6 +446,13 @@ jobs:
       - name: A hit does not publish the term it found
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_een_treffer_publiceert_de_term_niet.py
+      # A list line is text unless it carries a backslash. Compiling every line
+      # as a pattern was invisible while the list held names and stopped being
+      # invisible when #222 put key material on it: one line raised, and the
+      # others would silently have matched nothing.
+      - name: A term list line is text, not a pattern
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_term_list_is_literal.py
       # The range selection of the internal-matter guard lives with the other
       # message-guard tests, NOT inside internal-matter-guard: that job holds a
       # secret and runs exactly one step of its own, so nothing that a pull

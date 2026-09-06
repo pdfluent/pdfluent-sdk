@@ -526,6 +526,11 @@ run seedtest  python3 scripts/ci/test_seed_public_repo.py
 run noaitest  python3 scripts/ci/test_no_ai_attribution.py
 run msgclean  python3 scripts/ci/geen_interne_zaken.py --bereik github/master..HEAD
 run msgredact python3 scripts/ci/test_een_treffer_publiceert_de_term_niet.py
+# The private list gained 25 lines of base64 in #222, to keep a key out of the
+# published history. Every line used to be compiled as a regex, so one of them
+# took `alle_regels()` down and the rest would have matched nothing: the two
+# failures that make a term list worth testing separately from the guard.
+run termlist  python3 scripts/ci/test_the_term_list_is_literal.py
 
 run treetest  python3 scripts/ci/test_no_personal_address_in_the_tree.py
 run treeaddr  python3 scripts/ci/no_personal_address_in_the_tree.py
