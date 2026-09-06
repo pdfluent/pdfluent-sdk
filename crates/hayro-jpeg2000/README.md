@@ -11,6 +11,10 @@ This crate is a **fork of [`hayro-jpeg2000`](https://github.com/LaurenzV/hayro)*
 by Laurenz Stampfl. The fork is maintained by PDFluent for coordinated
 exact-version pinning across the workspace.
 
+If you do not need PDFluent's changes, upstream
+[`hayro-jpeg2000`](https://github.com/LaurenzV/hayro) is the better choice: it is the original,
+it is actively maintained, and it does not carry our requirements.
+
 ## What this crate gives you
 
 - Decode JPEG 2000-encoded image data (the `/Filter /JPXDecode` PDF stream)

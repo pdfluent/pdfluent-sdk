@@ -8,9 +8,9 @@
 
 PDF font handling — Type1 and CFF parsing, CMap parsing, PostScript scanning, ToUnicode mapping, and Standard 14 font fallbacks.
 
-This crate is part of the [PDFluent](https://pdfluent.com) commercial Rust PDF SDK.
-
-**Free for evaluation. Production use requires a valid license.**
+It merges `hayro-cmap` and `hayro-postscript` in, and is used by the
+[PDFluent](https://pdfluent.com) Rust PDF SDK on the upstream terms:
+**Apache-2.0 OR MIT**, for the whole crate, PDFluent's extensions included.
 
 ## What it does
 
@@ -24,21 +24,22 @@ Beta. Production-grade for common PDF font configurations. Coverage of edge-case
 
 Most users do not depend on this crate directly. Use the [`pdfluent`](https://crates.io/crates/pdfluent) facade or [`pdf-engine`](https://crates.io/crates/pdf-engine).
 
-## Origin
+## License
 
-This crate was forked from [`hayro-font`](https://github.com/LaurenzV/hayro) (with `hayro-cmap` and `hayro-postscript` merged in) by Laurenz Stampfl, and has been substantially extended. Original Apache-2.0/MIT contributions are attributed in `THIRD_PARTY_LICENSES.txt`; PDFluent extensions are governed by the PDFluent Commercial License.
+**Apache-2.0 OR MIT** — preserved from upstream `hayro-font`. Relicensing is
+prohibited, so how far this fork is extended does not move it: the extensions
+are licensed on the same terms as the code they were built on. The upstream
+attributions are in `THIRD_PARTY_LICENSES.txt` in the repository root.
 
-## Licensing
+```
+Copyright (c) Laurenz Stampfl (hayro-font, hayro-cmap, hayro-postscript)
+Copyright (c) 2026 Innovation Trigger BV (PDFluent fork)
+```
 
-- Free for evaluation, development, and testing
-- Production use requires a valid PDFluent commercial license
-- Redistribution requires the OEM Redistribution add-on
-
-See [LICENSE](LICENSE) for full terms, or visit <https://pdfluent.com/terms>.
+See [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT).
 
 ## Links
 
 - Main crate: <https://crates.io/crates/pdfluent>
 - Documentation: <https://pdfluent.com/docs>
-- Trial: <https://pdfluent.com/trial>
-- Pricing: <https://pdfluent.com/pricing>
+- Upstream hayro: <https://github.com/LaurenzV/hayro>

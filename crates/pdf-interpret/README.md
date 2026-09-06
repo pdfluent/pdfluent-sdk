@@ -12,6 +12,10 @@ This crate is a **fork of [`hayro-interpret`](https://github.com/LaurenzV/hayro)
 by Laurenz Stampfl, with PDFluent-specific font integration through
 [`pdf-font`](https://crates.io/crates/pdf-font).
 
+If you do not need PDFluent's changes, upstream
+[`hayro-interpret`](https://github.com/LaurenzV/hayro) is the better choice: it is the original,
+it is actively maintained, and it does not carry our requirements.
+
 ## What this crate gives you
 
 - Walk a PDF page's content stream and emit typed graphics operations

@@ -12,6 +12,10 @@ This crate is a **fork of [`hayro-ccitt`](https://github.com/LaurenzV/hayro)**
 by Laurenz Stampfl. The fork is maintained by PDFluent for coordinated
 exact-version pinning across the workspace.
 
+If you do not need PDFluent's changes, upstream
+[`hayro-ccitt`](https://github.com/LaurenzV/hayro) is the better choice: it is the original,
+it is actively maintained, and it does not carry our requirements.
+
 ## What this crate gives you
 
 - Decode CCITT G3 / G4 (one-dimensional and two-dimensional) bitmap data
