@@ -58,11 +58,13 @@ its blocks hash to something this file has not accepted, so a new block on the
 site cannot go live before it has been through the compiler here.
 """
 import argparse
+import contextlib
 import hashlib
 import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -327,6 +329,58 @@ def wrap(index: int, code: str) -> str:
     )
 
 
+# The build directory of the throwaway crate, one per checkout.
+#
+# This used to be a fresh `mkdtemp(prefix="siteblocks-")` per run, and nothing
+# ever removed it. Each one holds a full debug build of the facade -- two
+# gigabytes -- so on 05-09-2026 forty-five of them stood in $TMPDIR, free disk
+# fell from 72 GB to 35 GB in three hours, and every push stopped at the floor
+# the pre-push gate keeps (#344). Nobody noticed, because a leak that costs
+# nothing per run only shows up as somebody else's failure.
+#
+# So the directory lives in the checkout that is being measured, at
+# `target/site-blocks`. Three things follow from that, and all three are the
+# point:
+#
+#   * $TMPDIR stays as this gate found it. That is checked, in
+#     `test_site_blocks_register.py`, in both directions.
+#   * There is exactly one of them per checkout instead of one per run, and it
+#     goes when the worktree goes -- `/target` is ignored by git, and the
+#     sweeper that clears `target/` of landed work clears this with it.
+#   * It stays warm. The build is what costs the time here: five hundred blocks
+#     against a freshly compiled facade is tens of minutes, and cold every time
+#     is what made a fresh directory per run expensive as well as leaky.
+#
+# Per checkout and not one shared directory, deliberately. The manifest below
+# pins `pdfluent` by absolute path, and a build directory shared between
+# worktrees bakes in the paths of whichever one filled it -- that is what broke
+# the landing lane on 05-09-2026 when landings briefly shared a target.
+#
+# The fallback is the old behaviour for the case where the checkout cannot be
+# written to, and it is removed on the way out whether the gate returns or
+# raises. `finally`, not a line at the end of `main`: this function has eight
+# ways to return one.
+WARM_DIR = pathlib.Path("target") / "site-blocks"
+
+
+@contextlib.contextmanager
+def build_workdir(repo: pathlib.Path):
+    """A directory to build the blocks in, that does not outlive its purpose."""
+    warm = repo / WARM_DIR
+    try:
+        warm.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        warm = None
+    if warm is not None:
+        yield warm
+        return
+    temp = pathlib.Path(tempfile.mkdtemp(prefix="siteblocks-"))
+    try:
+        yield temp
+    finally:
+        shutil.rmtree(temp, ignore_errors=True)
+
+
 def build(workdir: pathlib.Path, pieces: list[str]) -> tuple[int, str]:
     (workdir / "src" / "lib.rs").write_text("".join(pieces))
     # A build directory of its own, not the caller's.
@@ -552,8 +606,27 @@ def main() -> int:
             f"checks; repair the export (#247) instead of adding entries to it."
         )
 
-    workdir = pathlib.Path(tempfile.mkdtemp(prefix="siteblocks-"))
-    (workdir / "src").mkdir()
+    with build_workdir(REPO) as workdir:
+        return compile_the_blocks(workdir, blocks, source_blocks, all_keys,
+                                  register, form_errors, a.check)
+
+
+def compile_the_blocks(
+    workdir: pathlib.Path,
+    blocks: list[dict],
+    source_blocks: int,
+    all_keys: set[tuple[str, str]],
+    register: dict[tuple[str, str], dict],
+    form_errors: list[str],
+    check: bool,
+) -> int:
+    """Build every block, judge the outcome, and write or check the report.
+
+    Apart from `main` because the build directory is a resource with a lifetime:
+    everything from here on is inside `build_workdir`, and there is no return
+    path that can step around its clean-up.
+    """
+    (workdir / "src").mkdir(parents=True, exist_ok=True)
     # Take the workspace lockfile along.
     #
     # `--offline` can only choose versions already in the registry cache. Without
@@ -715,7 +788,7 @@ def main() -> int:
     for s, n in sorted(per_kind.items(), key=lambda x: -x[1]):
         print(f"  {n:4}  {s}")
 
-    if a.check:
+    if check:
         if not REPORT.exists():
             print(f"{REPORT} is missing; run without --check first.", file=sys.stderr)
             return 1
