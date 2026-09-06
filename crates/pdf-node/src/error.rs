@@ -17,10 +17,10 @@
 //!
 //! ```json
 //! {
-//!   "code": "E-LICENSE-INVALID",
-//!   "message": "license key is invalid",
-//!   "operation": "activate",
-//!   "cause": "unknown tier \"platinum\"; expected trial/developer/team/business/enterprise"
+//!   "code": "E-PARSE-INVALID-PDF",
+//!   "message": "operation failed",
+//!   "operation": "open",
+//!   "cause": "xref table is corrupt at byte 4096"
 //! }
 //! ```
 //!
@@ -42,10 +42,17 @@ use napi::Status;
 /// into a `PdfluentError`.
 ///
 /// `operation` is a short verb describing what the caller was attempting
-/// (e.g. `"activate"`, `"status"`, `"open"`).
+/// (e.g. `"open"`, `"save"`, `"flatten"`).
 ///
 /// `cause` is an optional, safe-to-expose underlying message.  It must NOT
-/// contain license-key material, passwords, or any other sensitive data.
+/// contain passwords or any other sensitive data.
+///
+/// Unused since the licence surface was removed (#226): that surface was the
+/// only caller. It stays because the JS wrapper and `docs/error_catalogue.md`
+/// both describe this shape as the Node error contract, and the next surface
+/// to adopt a typed code needs the encoder to exist rather than to be
+/// reinvented one call-site at a time.
+#[allow(dead_code)]
 pub fn structured_error(
     code: &str,
     message: &str,
@@ -61,59 +68,10 @@ pub fn structured_error(
     napi::Error::new(Status::GenericFailure, payload.to_string())
 }
 
-/// Convert a [`pdfluent::Error`] (license activation, capability checks) into
-/// a structured napi error whose JSON payload carries a stable `.code`
-/// drawn from [`pdfluent::Error::code`].
-pub fn pdfluent_err_to_napi(err: pdfluent::Error, operation: &str) -> napi::Error {
-    let code = err.code();
-    // Top-level message is intentionally short and stable per code; the
-    // detailed human-readable form goes in `cause` so callers that want it
-    // can render it but typed callers branch on `code` instead.
-    let (message, cause): (&'static str, String) = match &err {
-        pdfluent::Error::InvalidLicense { reason } => ("license key is invalid", reason.clone()),
-        // The cause carries the core's own text, not a paraphrase. That text
-        // ends with a route to a key -- a free-evaluation link on Trial, the
-        // pricing page otherwise -- and the paraphrase dropped it, leaving a
-        // Node caller told what they could not do and nothing about how to fix
-        // it. The stable `message` stays constant so typed callers can keep
-        // matching on it.
-        pdfluent::Error::FeatureNotInTier { .. } => (
-            "feature not available in current license tier",
-            err.to_string(),
-        ),
-        pdfluent::Error::CapabilityNotCompiled {
-            capability,
-            feature_flag,
-        } => (
-            "capability not compiled into this build",
-            format!("{capability:?} requires Cargo feature {feature_flag:?}"),
-        ),
-        pdfluent::Error::LicenseExpired { expires_at } => (
-            "license expired",
-            format!("expires_at = {expires_at} (unix timestamp)"),
-        ),
-        pdfluent::Error::LicenseInvalidSignature => (
-            "license signature does not verify",
-            "the signed payload was tampered or signed with a different private key than the verifier expects".to_string(),
-        ),
-        pdfluent::Error::LicenseRateLimited {
-            resource,
-            used,
-            limit,
-        } => (
-            "license rate limit exceeded",
-            format!("{used}/{limit} {resource} in the current window"),
-        ),
-        other => ("operation failed", other.to_string()),
-    };
-    structured_error(code, message, operation, Some(&cause))
-}
-
 /// Convert a `pdf-engine` error into a (non-structured) napi error.
 ///
 /// Existing call-sites use this to preserve historical behaviour.  Newer
-/// surfaces (e.g. the license activation entry points) should prefer
-/// [`structured_error`] / [`pdfluent_err_to_napi`] so JavaScript callers can
+/// surfaces should prefer [`structured_error`] so JavaScript callers can
 /// branch on `.code`.
 pub fn to_napi_error(err: pdf_engine::EngineError) -> napi::Error {
     napi::Error::new(Status::GenericFailure, format!("{err}"))

@@ -13,9 +13,6 @@ from typing import Iterator, List, Optional, Tuple, Type, Union
 
 __version__: str
 
-# Mapping from JSON license-payload tier names to canonical Rust tier names.
-_TIER_MAP: dict[str, str]
-
 # ---------------------------------------------------------------------------
 # Exception hierarchy
 # ---------------------------------------------------------------------------
@@ -49,139 +46,11 @@ class PdfluentPageRangeError(PdfluentError):
 class PdfluentIoError(PdfluentError):
     """Raised on file-system I/O errors."""
 
-class PdfluentLicenseError(PdfluentError):
-    """Raised on license validation errors (invalid key, expired, quota exceeded).
-
-    Carries a canonical C8 error code as ``code`` (e.g. ``"E-LICENSE-INVALID"``,
-    ``"E-LICENSE-FEATURE-NOT-IN-TIER"``, ``"E-LICENSE-CAPABILITY-NOT-COMPILED"``)
-    plus a ``message`` attribute mirroring the human-readable detail.  This
-    matches the Node, WASM, and .NET parity surfaces: callers can branch on
-    ``e.code`` without parsing ``str(e)``.
-    """
-
-    code: str
-    message: str
-
 class PdfluentGeometryError(PdfluentError):
     """Raised when a page has an invalid or unsupported geometry."""
 
 class PdfluentLimitError(PdfluentError):
     """Raised when a processing limit (page count, file size, etc.) is exceeded."""
-
-# ---------------------------------------------------------------------------
-# License
-# ---------------------------------------------------------------------------
-
-@dataclass
-class LicenseInfo:
-    """Validated license information returned by :func:`activate_license`.
-
-    Attributes
-    ----------
-    tier:
-        Canonical license tier as reported by the Rust core:
-        ``"trial"``, ``"developer"``, ``"team"``, ``"business"``,
-        or ``"enterprise"``.
-    expires_at:
-        Expiration date in ISO 8601 format, or ``None`` for perpetual
-        licenses.  Always ``None`` in 1.0.
-    output_is_marked:
-        ``True`` when the Rust core marks output via ``/Producer``
-        (Trial tier only).
-    licensee:
-        Name of the license holder (from the JSON payload).
-    company:
-        Company or organisation name (from the JSON payload).
-    seats:
-        Number of concurrent developer seats (from the JSON payload).
-    """
-
-    tier: str
-    expires_at: Optional[str]
-    output_is_marked: bool
-    licensee: str
-    company: str
-    seats: int
-
-def activate_license(license_key: str) -> LicenseInfo:
-    """Activate a PDFluent license and return the validated license information.
-
-    The key may be supplied as:
-
-    - A JSON string (the raw license file contents).
-    - A base64-encoded JSON string (as distributed in ``PDFLUENT_LICENSE_KEY``).
-    - A file path — if ``license_key`` ends with ``.json`` or ``.license`` and
-      the path exists, the file is read automatically.
-
-    Parameters
-    ----------
-    license_key:
-        Raw license JSON, base64-encoded JSON, or a path to a license file.
-
-    Returns
-    -------
-    LicenseInfo
-        License information reflecting the canonical Rust core state.
-
-    Raises
-    ------
-    PdfluentLicenseError
-        If the key is empty, malformed, has an unknown tier, or the Rust
-        core rejects it.
-    """
-    ...
-
-def license_status() -> str:
-    """Return the current canonical license tier as reported by the Rust core.
-
-    Returns
-    -------
-    str
-        One of ``"trial"``, ``"developer"``, ``"team"``, ``"business"``,
-        or ``"enterprise"``.
-    """
-    ...
-
-def set_license_public_key(key: bytes) -> None:
-    """Configure the Ed25519 public key used to verify signed JSON license
-    payloads.
-
-    Must be called **once**, before :func:`set_license_payload`. The key must
-    be exactly 32 raw bytes. Re-calling with the same key is idempotent; a
-    different key raises :exc:`PdfluentLicenseError`.
-
-    Parameters
-    ----------
-    key:
-        32-byte raw Ed25519 public key.
-
-    Raises
-    ------
-    PdfluentLicenseError
-        If the key is not 32 bytes, or a different key was already configured.
-    """
-    ...
-
-def set_license_payload(payload_json: str) -> None:
-    """Activate a cryptographically-signed JSON license payload.
-
-    The public key must be configured first via :func:`set_license_public_key`.
-
-    Parameters
-    ----------
-    payload_json:
-        JSON string produced by the PDFluent licence-generator tool.
-
-    Raises
-    ------
-    PdfluentLicenseError
-        If the JSON is malformed, no public key is configured, a conflicting
-        tier is already set, the signature does not verify, or the payload is
-        past its expiry. The exception carries a canonical ``code`` (e.g.
-        ``"E-LICENSE-INVALID"``, ``"E-LICENSE-INVALID-SIGNATURE"``,
-        ``"E-LICENSE-EXPIRED"``).
-    """
-    ...
 
 # ---------------------------------------------------------------------------
 # Module-level functions

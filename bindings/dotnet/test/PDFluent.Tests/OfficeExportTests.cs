@@ -52,15 +52,6 @@ namespace PDFluent.Tests
             Assert.Contains(entry, Encoding.Latin1.GetString(pkg));
         }
 
-        public OfficeExportTests()
-        {
-            // Office export is Business and up. The refusal path runs in its
-            // own test class file for the reason found in the C ABI suite:
-            // licence state is process-wide, so a refusal test sharing a
-            // process with a licensed one proves nothing.
-            Licensing.ActivateKey("tier:business");
-        }
-
         [Fact]
         public void ToDocxReturnsAPackageWordOpens()
         {

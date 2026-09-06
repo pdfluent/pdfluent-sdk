@@ -88,10 +88,10 @@ fn main() -> Result<()> {
 }
 ```
 
-The `producer` field is automatically marked by the SDK in
-[`Tier::Trial`](https://pdfluent.com/pricing) mode; activate
-a commercial license via [`set_license_key`](https://pdfluent.com/docs)
-to remove the trial mark.
+The `producer` field carries "PDFluent" and is never marked as trial output:
+there is no trial and no key (#226). You may replace or remove that string in
+your own build under either licence — see
+[`docs/licensing.md`](../licensing.md).
 
 ---
 

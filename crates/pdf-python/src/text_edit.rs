@@ -197,8 +197,7 @@ fn build_options(
 /// Find and replace text in a PDF while preserving fonts, positioning and the
 /// surrounding page content.
 ///
-/// Trial-tier edits stamp a small "PDFluent trial" notice on each modified
-/// page; licensed tiers edit without it. Searching never modifies anything.
+/// Searching never modifies anything.
 #[pyclass(name = "TextEditor", module = "pdfluent")]
 pub struct PyTextEditor {
     doc: pdfluent::PdfDocument,

@@ -19,11 +19,7 @@
 use pdfluent::prelude::*;
 
 fn enterprise_doc(path: &str) -> PdfDocument {
-    PdfDocument::open_with(
-        path,
-        pdfluent::OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open sample")
+    PdfDocument::open_with(path, pdfluent::OpenOptions::new()).expect("open sample")
 }
 
 // ---------------------------------------------------------------------------

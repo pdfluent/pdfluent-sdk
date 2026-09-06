@@ -36,8 +36,6 @@ members = [
 
     # --- Existing support crates ---
     "crates/xfa-api-server",
-    "crates/xfa-license",
-    "crates/xfa-license-gen",
 
     # --- PDF manipulation ---
     "crates/pdf-manip",
@@ -84,7 +82,7 @@ resolver = "2"
 
 [workspace.package]
 # RC line is 1.0.0-beta.17. This workspace default is inherited by crates that
-# use `version.workspace = true` (e.g. pdf-ocr, xfa-license, and internal/
+# use `version.workspace = true` (e.g. pdf-ocr and internal/
 # unreleased crates). It was previously pinned at beta.3 while 18 first-party
 # crates had been bumped to beta.8 individually — leaving inheritors stranded
 # at beta.3. Aligned to beta.8 so the whole first-party RC line is coherent.
@@ -137,7 +135,6 @@ formcalc-interpreter = { path = "crates/formcalc-interpreter", version = "=1.0.0
 xfa-layout-engine = { path = "crates/xfa-layout-engine", version = "=1.0.0" }
 xfa-js-sandboxed = { path = "crates/xfa-js-sandboxed", version = "=1.0.0" }
 xfa-json = { path = "crates/xfa-json", version = "=1.0.0" }
-xfa-license = { path = "crates/xfa-license", version = "=1.0.0" }
 
 # Forked crates from hayro (open-source: MIT OR Apache-2.0)
 pdf-syntax = { path = "crates/pdf-syntax", version = "=0.5.6" }

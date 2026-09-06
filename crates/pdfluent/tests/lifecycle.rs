@@ -95,11 +95,7 @@ fn text_extracts_fixture_content() {
 
 #[test]
 fn text_with_layout_produces_blocks() {
-    let doc = PdfDocument::open_with(
-        FIXTURE_PATH,
-        pdfluent::OpenOptions::new().with_license_key("tier:developer"),
-    )
-    .expect("open");
+    let doc = PdfDocument::open_with(FIXTURE_PATH, pdfluent::OpenOptions::new()).expect("open");
     let blocks = doc.text_with_layout().expect("text_with_layout");
     // Minimal fixture has exactly one text block on page 1.
     assert!(

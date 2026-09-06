@@ -91,28 +91,29 @@ that. See https://pdfluent.com/pricing.
   xfa-js-sandboxed     — sandboxed JavaScript runtime for XFA scripts
   formcalc-interpreter — FormCalc evaluation
   xfa-json             — XFA JSON conversion
-  xfa-license          — license enforcement runtime
 
-The Software, when used without a Valid License, may produce output that
-contains identifying markers (a Producer string in PDF metadata and a
-one-time stderr warning). This is by design. See LICENSE-COMMERCIAL, which
-sets out what a commercial licence changes about it.
+The Software produces the same output whether or not a commercial licence is
+held: there is no licence key, nothing is withheld and no marker is added
+(#226). Documents carry "PDFluent" in the PDF Producer entry and in XMP
+metadata, which either licence lets you replace or remove in your own build.
+See LICENSE-COMMERCIAL §4.
 
 ============================================================================
-EVALUATION AND TRIAL
+EVALUATION
 ============================================================================
 
-All PDFluent crates may be used freely for Evaluation Use, including
-development, testing, demonstration, and non-public staging environments.
+Every crate above may be evaluated with nothing asked in return: no key, no
+sign-up, no time limit. There is no separate evaluation build -- what you
+install is the whole product, under the AGPLv3.
 
-Production Use of the proprietary commercial crates requires a valid
-license. PDFluent issues 30-day Ed25519-signed clean trial keys (without
-the unlicensed-output markers) on request via the trial form on the
-website.
+What an evaluation ends with is a choice of licence rather than an expiry:
+the AGPL and its obligation to offer your users the corresponding source, or
+the commercial licence, which removes that obligation. The commercial route
+is a signed order form (LICENSE-COMMERCIAL §10); write to sales@pdfluent.com.
 
-  Trial:    https://pdfluent.com/trial
-  Pricing:  https://pdfluent.com/pricing
-  Terms:    https://pdfluent.com/terms
+  Licensing: https://pdfluent.com/docs/licensing
+  Pricing:   https://pdfluent.com/pricing
+  Terms:     https://pdfluent.com/terms
 
 ============================================================================
 CONTACT

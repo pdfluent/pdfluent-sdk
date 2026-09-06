@@ -87,11 +87,7 @@ fn build_xfa_pdf() -> Vec<u8> {
 }
 
 fn open_enterprise(bytes: &[u8]) -> PdfDocument {
-    PdfDocument::from_bytes_with(
-        bytes,
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open")
+    PdfDocument::from_bytes_with(bytes, OpenOptions::new()).expect("open")
 }
 
 #[test]
@@ -202,17 +198,21 @@ fn non_xfa_document_reports_unsupported() {
     assert_eq!(err.code(), "E-UNSUPPORTED");
 }
 
+/// The inverse of what this asserted until #226: reading and filling an XFA
+/// form needs no licence.
+///
+/// It used to open on Trial -- which granted neither `XfaParse` nor `XfaFill`
+/// -- and expect `E-LICENSE-FEATURE-NOT-IN-TIER` from both calls. There are no
+/// tiers and no such code now, so what is worth pinning is that the plain
+/// `OpenOptions::new()` path reaches both.
 #[test]
-fn xfa_fill_requires_tier() {
-    // Trial tier: XfaParse/XfaFill are not licensed.
+fn xfa_fill_needs_no_licence() {
     let bytes = build_xfa_pdf();
-    let mut doc =
-        PdfDocument::from_bytes_with(&bytes, OpenOptions::new().with_license_key("tier:trial"))
-            .expect("open");
-    let err = doc.xfa_form_model().expect_err("trial lacks XfaParse");
-    assert_eq!(err.code(), "E-LICENSE-FEATURE-NOT-IN-TIER");
-    let err = doc
-        .set_xfa_field_value("form1.applicant.name", XfaFieldValue::Text("x"))
-        .expect_err("trial lacks XfaFill");
-    assert_eq!(err.code(), "E-LICENSE-FEATURE-NOT-IN-TIER");
+    let mut doc = PdfDocument::from_bytes_with(&bytes, OpenOptions::new()).expect("open");
+    let model = doc
+        .xfa_form_model()
+        .expect("an unlicensed caller reads the form");
+    assert!(!model.fields.is_empty());
+    doc.set_xfa_field_value("form1.applicant.name", XfaFieldValue::Text("x"))
+        .expect("an unlicensed caller fills the form");
 }

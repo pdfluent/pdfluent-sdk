@@ -1,182 +1,72 @@
-# License Activation
+# Licensing
 
-PDFluent runs in **Trial** mode by default. Trial unlocks the minimum surface
-needed to evaluate the SDK and marks output via the `/Producer` metadata
-field. To remove the watermark and unlock the full capability set, activate
-a license key.
+PDFluent has **no licence key**. There is nothing to activate, nothing to
+renew, and no call that unlocks a feature. Every capability in this repository
+is present in every build, and the output of a build with no licence is
+byte-identical to the output of a build with one.
 
-This page covers the SDK's license activation, not the desktop editor. The
-PDFluent editor is free to use, including at work, but that license doesn't
-extend to the SDK. If you're embedding PDFluent or calling it from your own
-code, you need an SDK license. See
-[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing).
+That is not a gap. It is the model, decided on 25 August 2026 (#199) and
+carried out in #226: published source means any technical check can be removed
+by whoever holds the code, so a check would only ever inconvenience the people
+who intended to pay. What a commercial licensee buys is an agreement, not an
+unlock.
 
-Each binding exposes the same three operations:
+## The two licences
 
-1. **Activate from a key string** — primary path
-2. **Activate from a file** — convenience: read a UTF-8 text file and call activate
-3. **Read the current license status** — tier, source, and whether output is marked
+PDFluent is published under the **GNU AGPLv3** (`LICENSE-AGPL`). That is the
+default and it is the complete product.
 
-## Key format (1.0)
+The AGPL asks something back: if you convey the software, or let users interact
+with a modified version over a network, you must offer those users the
+corresponding source under the same licence. Where that is impossible — a
+closed surrounding product, a customer contract, a legal department that will
+not accept copyleft in a shipped binary — the **PDFluent Commercial Licence**
+(`LICENSE-COMMERCIAL`) is the alternative. You are not buying features. You are
+buying the right not to publish your own source.
 
-The 1.0 release accepts a **simple evaluation format**:
+## How to buy
 
-```
-tier:trial
-tier:developer
-tier:team
-tier:business
-tier:enterprise
-```
+The commercial route is a signed order form, and nothing else:
 
-Cryptographically-signed payloads (Ed25519) ship in 1.1 and will be accepted
-by the same `activate_*` functions without breaking the existing API.
+1. Write to **sales@pdfluent.com** with the legal entity, the versions you want
+   covered, and which of the four `LICENSE-COMMERCIAL` §2 grants you need.
+2. You receive the order form — the template is
+   [`docs/licensing/order-form.md`](licensing/order-form.md) — filled in for
+   your case.
+3. Both parties sign it. `LICENSE-COMMERCIAL` §10 says the agreement is that
+   licence text plus this form, and that **the form prevails** where the two
+   conflict.
+4. You receive a countersigned agreement, an invoice, and an entry in
+   PDFluent's licence register. Those three are the deliverables named in
+   `LICENSE-COMMERCIAL` §5, and they are all of them.
 
-## Environment variable
+There is no self-service checkout on pdfluent.com today. A page that offers one
+would be describing something that does not exist, which is the failure #226
+was opened about: buttons reading "Buy now" that led to a contact form.
 
-All bindings honour the `PDFLUENT_LICENSE_KEY` environment variable. If set
-to a parseable key when the SDK initialises, the resolved tier becomes the
-default.
+## What a licensee receives, and what changes in the software
 
-```bash
-export PDFLUENT_LICENSE_KEY=tier:developer
-```
+Nothing changes in the software. Specifically:
 
-In a browser (WASM in a real browser tab) the env-var path is not available;
-use `activateLicenseKey` instead.
-
-## Process-global, set-once
-
-The Rust core uses a process-global write-once mechanism. Re-activating with
-the same tier is idempotent. Re-activating with a different tier returns an
-"already set" error — **restart the process to switch tiers**.
-
-## Per-language usage
-
-### Rust
-
-```rust
-use pdfluent::{set_license_key, license_info};
-
-set_license_key("tier:enterprise")?;
-let info = license_info();
-println!("{:?}", info.tier);  // Enterprise
-```
-
-### C ABI
-
-```c
-#include "pdf_capi.h"
-
-PdfStatus s = pdfluent_license_activate_key("tier:enterprise");
-if (s != PDF_STATUS_OK) {
-    fprintf(stderr, "%s\n", pdf_get_last_error());
-}
-
-PdfluentLicenseStatus status;
-pdfluent_license_status(&status);
-printf("tier=%d source=%d marked=%d\n",
-       status.tier, status.source, status.output_is_marked);
-```
-
-### Python
-
-```python
-import pdfluent
-
-# JSON license file format (tier maps to canonical Rust tier internally)
-info = pdfluent.activate_license('{"tier": "enterprise", "licensee": "Acme", "seats": 5}')
-print(info.tier)             # "enterprise"
-print(info.output_is_marked) # False
-print(pdfluent.license_status())  # "enterprise"
-```
-
-The `activate_license` function accepts a JSON string, a base64-encoded JSON string,
-a file path ending in `.json` or `.license`, or reads the `PDFLUENT_LICENSE_KEY`
-environment variable when called with an empty string.
-
-JSON tier names are mapped to canonical Rust tiers:
-
-| JSON `tier` | Canonical Rust tier |
+| | |
 |---|---|
-| `"trial"` | `"trial"` |
-| `"basic"` | `"developer"` |
-| `"professional"` | `"team"` |
-| `"enterprise"` | `"enterprise"` |
-| `"archival"` | `"business"` |
+| Features | all of them, before and after; nothing is withheld from an unlicensed build |
+| Output | identical; no watermark, no `/Producer` marking, no trial notice |
+| Expiry | none. A version you licensed keeps working, because nothing in it can stop |
+| Network | nothing contacts a server, so air-gapped deployment needs no permission |
+| Attribution | `LICENSE-COMMERCIAL` §4 — you may remove the "PDFluent" `/Producer` string in your build. So may an AGPL licensee |
 
-`LicenseInfo` shape (post-1.0 fix):
+## What the environment does not do
 
-| Field | Type | Source |
-|---|---|---|
-| `tier` | `str` | Rust core canonical tier |
-| `expires_at` | `Optional[str]` | ISO 8601 / `None` (always `None` in 1.0) |
-| `output_is_marked` | `bool` | Rust core |
-| `licensee` | `str` | JSON payload |
-| `company` | `str` | JSON payload |
-| `seats` | `int` | JSON payload |
+`PDFLUENT_LICENSE_KEY` was read by every binding until #226. It is read by none
+of them now: setting it changes nothing, and no code path in this repository
+consults it. `scripts/ci/no_licence_key_in_a_binding.py` refuses a commit that
+brings one back.
 
-### WASM (JavaScript / TypeScript)
+## Not covered by either licence
 
-```javascript
-import init, { activateLicenseKey, licenseStatus } from '@pdfluent/sdk-wasm';
-
-await init();
-activateLicenseKey('tier:enterprise');
-const s = licenseStatus();
-console.log(s.tier);            // "Enterprise"
-console.log(s.outputIsMarked);  // false
-```
-
-### .NET
-
-The .NET assembly targets `netstandard2.1`. Consumer frameworks must be
-netstandard2.1-compatible: .NET Core 3.0+, .NET 5/6/7/8/9/10, Mono 6.4+,
-Xamarin / MAUI / Unity 2021.2+. .NET Framework 4.x is no longer supported.
-
-```csharp
-using XfaPdf;
-
-Licensing.ActivateKey("tier:enterprise");
-LicenseStatus s = Licensing.Status;
-Console.WriteLine(s.Tier);  // Enterprise
-```
-
-### Java
-
-```java
-import com.pdfluent.PdfluentLicensing;
-
-PdfluentLicensing.activateKey("tier:enterprise");
-PdfluentLicensing.LicenseStatus s = PdfluentLicensing.status();
-System.out.println(s.tier);  // ENTERPRISE
-```
-
-## Status object shape
-
-All bindings expose the same three fields:
-
-| Field | Meaning |
-|-------|---------|
-| `tier` | `Trial` / `Developer` / `Team` / `Business` / `Enterprise` |
-| `source` | `Default` (no key) / `EnvVar` / `Explicit` |
-| `output_is_marked` | `true` only in Trial — output carries the trial `/Producer` mark |
-
-## Error model
-
-| Failure | Rust | C ABI | Python | WASM | .NET | Java |
-|---------|------|-------|--------|------|------|------|
-| Invalid key | `Error::InvalidLicense` | `ErrorInvalidLicense=16` | `PdfluentLicenseError` | `Error` | `PdfException` | `PdfException` |
-| Already set | `Error::InvalidLicense` | `ErrorLicenseAlreadySet=17` | `PdfluentLicenseError` | `Error` | `InvalidOperationException` | `IllegalStateException` |
-| File read failed | — (manual) | `ErrorLicenseFile=18` | `PdfluentLicenseError` | not exposed | `FileNotFoundException` | `IOException` |
-
-The C ABI thread-local last-error string (via `pdf_get_last_error()`)
-carries a human-readable message. Bindings translate this into idiomatic
-exceptions.
-
-## Security notes
-
-- The SDK does not log license keys.
-- Error messages report parse failure modes, never the raw key.
-- Tests use only fake-format keys (`tier:developer`, etc.). No real signed
-  key should be committed to source control.
+Several components are forks of third-party open-source projects and stay under
+their own permissive licences. They are not PDFluent's to relicense and need no
+licence from PDFluent. `NOTICE` records which they are;
+[`docs/licensing/boundary.toml`](licensing/boundary.toml) is the
+machine-readable version.

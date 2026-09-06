@@ -192,11 +192,6 @@ dir = "crates/xfa-layout-engine"
 side = "ours"
 
 [[crate]]
-name = "xfa-license"
-dir = "crates/xfa-license"
-side = "ours"
-
-[[crate]]
 name = "xfa-wasm"
 dir = "crates/xfa-wasm"
 side = "ours"
@@ -317,12 +312,6 @@ side = "internal"
 publish_false = true
 
 [[crate]]
-name = "xfa-license-gen"
-dir = "crates/xfa-license-gen"
-side = "internal"
-publish_false = true
-
-[[crate]]
 name = "xfa-test-runner"
 dir = "crates/xfa-test-runner"
 side = "internal"
@@ -418,10 +407,6 @@ side = "internal"
 
 [[package]]
 manifest = "bindings/dotnet/test/PDFluent.Tests/PDFluent.Tests.csproj"
-side = "internal"
-
-[[package]]
-manifest = "bindings/dotnet/test/PDFluent.Tests.Unlicensed/PDFluent.Tests.Unlicensed.csproj"
 side = "internal"
 
 [[package]]

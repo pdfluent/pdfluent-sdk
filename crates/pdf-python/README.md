@@ -190,7 +190,6 @@ PdfluentError                 — base; catch all pdfluent errors
 ├── PdfluentEncryptedError    — operation blocked by encryption
 ├── PdfluentPageRangeError    — page index out of range
 ├── PdfluentIoError           — file-system I/O errors
-├── PdfluentLicenseError      — invalid / expired license
 ├── PdfluentGeometryError     — invalid page geometry
 └── PdfluentLimitError        — processing-limit exceeded
 ```
@@ -229,25 +228,6 @@ def safe_open(path: str) -> Optional[Document]:
         return None
 ```
 
-## License Activation
-
-```python
-from pdfluent import activate_license, LicenseInfo, PdfluentLicenseError
-
-# Activate from a JSON license string or base64-encoded key
-try:
-    info: LicenseInfo = activate_license(open("my.license").read())
-    print(f"{info.tier} license for {info.company} ({info.seats} seats)")
-except PdfluentLicenseError as exc:
-    print(f"License error: {exc}")
-
-# Or set the environment variable and call with empty string:
-# PDFLUENT_LICENSE_KEY="<base64-key>" python myscript.py
-info = activate_license("")   # reads PDFLUENT_LICENSE_KEY from env
-```
-
-`LicenseInfo` fields: `licensee`, `company`, `tier`, `expires_at` (Unix timestamp), `seats`.
-
 ## Comparison
 
 | | pdfluent | pypdf | pdfminer | pdfplumber | pikepdf |
@@ -262,43 +242,16 @@ info = activate_license("")   # reads PDFLUENT_LICENSE_KEY from env
 | Native deps | **none** | none | none | none | libqpdf |
 | Language | **Rust** | Python | Python | Python | C++ |
 
-## License Activation
+## Licence
 
-The SDK runs in Trial mode by default; output is marked via `/Producer`
-metadata. Activate a license to unlock the paid-tier capability set.
+PDFluent is published under the **GNU AGPLv3**, with the **PDFluent Commercial
+Licence** as the alternative for anyone who cannot accept the copyleft
+obligation. There is no licence key, no activation call and no tier: every
+feature works in every build and output is never marked.
 
-```python
-import pdfluent
-
-# Activate from a key string
-pdfluent.activate_license_key("tier:enterprise")
-
-# Or read the key from a UTF-8 text file
-pdfluent.activate_license_file("/path/to/key.lic")
-
-# Inspect the current status (always succeeds; defaults to Trial)
-status = pdfluent.license_status()
-print(status.tier)              # "Enterprise"
-print(status.source)            # "Explicit" | "EnvVar" | "Default"
-print(status.output_is_marked)  # False
-```
-
-The `PDFLUENT_LICENSE_KEY` environment variable is honoured automatically
-on process start when no explicit activation has happened.
-
-**Behavior to be aware of:**
-
-- The active tier is **process-global and set-once**. Re-activating with the
-  same key is a no-op. Re-activating with a different tier raises
-  `RuntimeError`; restart Python to switch tiers.
-- Invalid keys raise `ValueError`; missing license files raise `OSError`.
-- The key string is never logged or stored beyond the call to
-  `activate_license_key`.
-
-The 1.0 release accepts the simple evaluation format `tier:<name>`
-(`trial`/`developer`/`team`/`business`/`enterprise`). Cryptographically
-signed payloads will be accepted by the same functions in 1.1 without
-breaking the API.
+The commercial route is a signed order form, not a checkout. Write to
+sales@pdfluent.com; the terms are in `LICENSE-COMMERCIAL` and the form template
+in `docs/licensing/order-form.md`.
 
 ## Building from Source
 
@@ -311,9 +264,9 @@ maturin develop --release          # install in current venv
 maturin build --release            # build wheel in ./dist/
 ```
 
-## License
+## Licence
 
-PDFluent Commercial License. See LICENSE.
+AGPL-3.0-only, or the PDFluent Commercial Licence. See `LICENSE`.
 
 ## Links
 

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 # Deliberately non-publishable to crates.io. This crate bundles internal
 # research/corpus binaries (xfa-collector, corpus-render, edge-case-analyzer,
-# accuracy-report, xfa-license-tool) alongside the user `pdfluent` CLI binary.
+# accuracy-report) alongside the user `pdfluent` CLI binary.
 # The user-facing CLI is distributed as signed platform binaries via
 # scripts/release/pdfluent_cli_package.sh, NOT as crates.io source. (A legacy
 # 1.0.0-beta.8 was published before this governance was set; it is superseded.)
@@ -38,10 +38,6 @@ name = "edge-case-analyzer"
 path = "src/bin/edge-case-analyzer.rs"
 
 [[bin]]
-name = "xfa-license-tool"
-path = "src/bin/license_tool.rs"
-
-[[bin]]
 name = "corpus-render"
 path = "src/bin/corpus-render.rs"
 
@@ -55,7 +51,6 @@ formcalc-interpreter.workspace = true
 xfa-layout-engine.workspace = true
 pdf-xfa.workspace = true
 pdf-forms.workspace = true
-xfa-license = { workspace = true, features = ["signing"] }
 anyhow.workspace = true
 reqwest.workspace = true
 clap.workspace = true

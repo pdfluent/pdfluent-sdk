@@ -22,9 +22,7 @@
 // the PDFluent Commercial Licence. See the LICENSE file in this repository --
 // that file travels with the copy you received, which a URL does not.
 
-use crate::capability::Capability;
 use crate::error::{internal_error, Result};
-use crate::license;
 
 /// Field type of a form field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,10 +75,6 @@ pub struct FormField {
 /// to disk at the next `save` / `save_with` / `to_bytes` call.
 pub struct PdfFormMut<'a> {
     lopdf: &'a mut lopdf::Document,
-    /// Per-document license-key override, propagated from
-    /// [`crate::OpenOptions::with_license_key`] so that per-doc tier
-    /// overrides apply to form-fill operations.
-    license_override: Option<&'a str>,
 }
 
 impl std::fmt::Debug for PdfFormMut<'_> {
@@ -94,23 +88,17 @@ impl std::fmt::Debug for PdfFormMut<'_> {
 
 impl<'a> PdfFormMut<'a> {
     /// Internal constructor. Not part of the public surface.
-    pub(crate) fn new(lopdf: &'a mut lopdf::Document, license_override: Option<&'a str>) -> Self {
-        Self {
-            lopdf,
-            license_override,
-        }
+    pub(crate) fn new(lopdf: &'a mut lopdf::Document) -> Self {
+        Self { lopdf }
     }
 
     /// Set a text field value.
     ///
     /// # Errors
     ///
-    /// - [`crate::Error::FeatureNotInTier`] if the active tier does not grant
-    ///   [`Capability::AcroFormFill`].
     /// - [`crate::Error::Internal`] when the field is not found or is not a
     ///   text field.
     pub fn set_text(&mut self, name: &str, value: &str) -> Result<&mut Self> {
-        self.require_fill()?;
         apply(self.lopdf, name, pdf_forms::WriteValue::Text(value))?;
         Ok(self)
     }
@@ -126,7 +114,6 @@ impl<'a> PdfFormMut<'a> {
     ///
     /// As for [`set_text`](Self::set_text), plus the same tier check.
     pub fn set_checkbox(&mut self, name: &str, value: bool) -> Result<&mut Self> {
-        self.require_fill()?;
         apply(self.lopdf, name, pdf_forms::WriteValue::Checkbox(value))?;
         Ok(self)
     }
@@ -142,7 +129,6 @@ impl<'a> PdfFormMut<'a> {
     ///
     /// As for [`set_text`](Self::set_text), plus the same tier check.
     pub fn set_radio(&mut self, name: &str, value: &str) -> Result<&mut Self> {
-        self.require_fill()?;
         apply(self.lopdf, name, pdf_forms::WriteValue::Radio(value))?;
         Ok(self)
     }
@@ -158,7 +144,6 @@ impl<'a> PdfFormMut<'a> {
     ///
     /// As for [`set_text`](Self::set_text), plus the same tier check.
     pub fn set_dropdown(&mut self, name: &str, value: &str) -> Result<&mut Self> {
-        self.require_fill()?;
         apply(self.lopdf, name, pdf_forms::WriteValue::Choice(value))?;
         Ok(self)
     }
@@ -181,15 +166,10 @@ impl<'a> PdfFormMut<'a> {
     /// an error if the field is not a multi-select list box or if any value
     /// is not in `/Opt` (non-editable fields).
     pub fn set_multi_select(&mut self, name: &str, values: &[&str]) -> Result<&mut Self> {
-        self.require_fill()?;
         let owned: Vec<String> = values.iter().map(|s| (*s).to_string()).collect();
         pdf_forms::apply_choice_multi(self.lopdf, name, &owned)
             .map_err(|e| internal_error(e.to_string()))?;
         Ok(self)
-    }
-
-    fn require_fill(&self) -> Result<()> {
-        license::require_capability_with_override(Capability::AcroFormFill, self.license_override)
     }
 }
 

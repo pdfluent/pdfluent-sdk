@@ -39,7 +39,6 @@ pub mod edit_handle;
 pub mod canvas2d_device;
 
 pub mod edits;
-pub mod license;
 pub mod pdfluent_error;
 pub mod text_edit;
 
@@ -1143,51 +1142,34 @@ impl PdfDoc {
 
     /// Convert this PDF to a Word `.docx` package.
     ///
-    /// Returns the package as a `Uint8Array`. Requires a Business licence or
-    /// higher; without one the call throws `CAPABILITY_NOT_LICENSED` rather
-    /// than returning a document the caller has not paid for.
+    /// Returns the package as a `Uint8Array`.
     ///
     /// The browser SDK could not do this until 23-08-2026: the conversion
     /// crates were excluded from wasm32 by a comment that applied to the
     /// renderer, not to them.
     #[wasm_bindgen(js_name = "toDocx")]
     pub fn to_docx(&self) -> Result<Vec<u8>, JsValue> {
-        self.office_export(pdfluent::Capability::DocxExport, |b| {
-            pdf_docx::convert_pdf_bytes_to_docx(b).map_err(|e| e.to_string())
-        })
+        self.office_export(|b| pdf_docx::convert_pdf_bytes_to_docx(b).map_err(|e| e.to_string()))
     }
 
     /// Convert this PDF to an Excel `.xlsx` workbook. See [`Self::to_docx`].
     #[wasm_bindgen(js_name = "toXlsx")]
     pub fn to_xlsx(&self) -> Result<Vec<u8>, JsValue> {
-        self.office_export(pdfluent::Capability::XlsxExport, |b| {
-            pdf_xlsx::convert_pdf_bytes_to_xlsx(b).map_err(|e| e.to_string())
-        })
+        self.office_export(|b| pdf_xlsx::convert_pdf_bytes_to_xlsx(b).map_err(|e| e.to_string()))
     }
 
     /// Convert this PDF to a PowerPoint `.pptx` deck, one slide per page.
     /// See [`Self::to_docx`].
     #[wasm_bindgen(js_name = "toPptx")]
     pub fn to_pptx(&self) -> Result<Vec<u8>, JsValue> {
-        self.office_export(pdfluent::Capability::PptxExport, |b| {
-            pdf_pptx::convert_pdf_bytes_to_pptx(b).map_err(|e| e.to_string())
-        })
+        self.office_export(|b| pdf_pptx::convert_pdf_bytes_to_pptx(b).map_err(|e| e.to_string()))
     }
 
     /// Shared body for the three Office exports.
-    ///
-    /// The capability check comes from `pdfluent::require_capability` rather
-    /// than a tier comparison here, so the rule lives in one place. Note that
-    /// this is currently the only capability wasm enforces — see B7 on the
-    /// roadmap.
     fn office_export(
         &self,
-        cap: pdfluent::Capability,
         convert: fn(&[u8]) -> Result<Vec<u8>, String>,
     ) -> Result<Vec<u8>, JsValue> {
-        if let Err(e) = pdfluent::require_capability(cap) {
-            return Err(wasm_err_simple("CAPABILITY_NOT_LICENSED", &e.to_string()));
-        }
         convert(self.pdf.data().as_ref()).map_err(|e| wasm_err_simple("OPERATION_FAILED", &e))
     }
 
@@ -1734,8 +1716,6 @@ mod tests {
             code::IO_GENERIC,
             code::PARSE_UNSUPPORTED_VERSION,
             code::COMPLIANCE_PDFA_INVALID,
-            code::LICENSE_INVALID,
-            code::LICENSE_FEATURE_NOT_IN_TIER,
             code::ENV_UNSUPPORTED_ON_WASM,
             code::INTERNAL,
             code::WASM_INVALID_ARGUMENT,
@@ -1763,11 +1743,6 @@ mod tests {
         assert_eq!(code::PARSE_INVALID_PDF, "E-PARSE-INVALID-PDF");
         assert_eq!(code::IO_GENERIC, "E-IO-GENERIC");
         assert_eq!(code::COMPLIANCE_PDFA_INVALID, "E-COMPLIANCE-PDFA-INVALID");
-        assert_eq!(code::LICENSE_INVALID, "E-LICENSE-INVALID");
-        assert_eq!(
-            code::LICENSE_FEATURE_NOT_IN_TIER,
-            "E-LICENSE-FEATURE-NOT-IN-TIER"
-        );
         assert_eq!(code::ENV_UNSUPPORTED_ON_WASM, "E-ENV-UNSUPPORTED-ON-WASM");
     }
 
@@ -1791,8 +1766,6 @@ mod tests {
             legacy_code::PDFA_CLEANUP_FAILED,
             legacy_code::COLORSPACE_ERROR,
             legacy_code::XMP_REPAIR_FAILED,
-            legacy_code::LICENSE_ERROR,
-            legacy_code::LICENSE_ALREADY_SET,
         ] {
             assert!(
                 s.chars().all(|c| c.is_ascii_uppercase() || c == '_'),

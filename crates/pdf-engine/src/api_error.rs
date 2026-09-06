@@ -147,19 +147,6 @@ pub enum Error {
         /// Diagnostic of why the xref could not be parsed.
         reason: String,
     },
-    /// The PDFluent license file is past its expiry date. Renew the
-    /// license or accept the unlicensed-evaluation behaviour.
-    LicenseExpired {
-        /// The expiry date the license declared, as an ISO-8601 string.
-        expired_since: String,
-    },
-    /// The license file is malformed, has a bad signature, or is for a
-    /// different product/key set. The SDK falls back to evaluation mode
-    /// when this fires unless the caller treats it as a hard error.
-    LicenseInvalid {
-        /// Specific reason the license could not be accepted.
-        reason: String,
-    },
     /// Writing the output document failed (disk full, permission denied,
     /// network drive vanished, etc.).
     OutputWriteFailed {
@@ -234,8 +221,6 @@ impl PdfError for Error {
             Error::InvalidEncoding { .. } => "INVALID_ENCODING",
             Error::StreamDecodeFailed { .. } => "STREAM_DECODE_FAILED",
             Error::XrefCorrupt { .. } => "XREF_CORRUPT",
-            Error::LicenseExpired { .. } => "LICENSE_EXPIRED",
-            Error::LicenseInvalid { .. } => "LICENSE_INVALID",
             Error::OutputWriteFailed { .. } => "OUTPUT_WRITE_FAILED",
             Error::ImageDecodeFailed { .. } => "IMAGE_DECODE_FAILED",
             Error::EncryptionFailed { .. } => "ENCRYPTION_FAILED",
@@ -264,8 +249,6 @@ impl PdfError for Error {
             Error::InvalidEncoding { encoding } => Some(format!("The encoding '{}' is invalid or unsupported.", encoding)),
             Error::StreamDecodeFailed { filter } => Some(format!("The stream could not be decoded using filter '{}'.", filter)),
             Error::XrefCorrupt { .. } => Some("The cross-reference table is corrupt. Try opts.repair(true).".to_string()),
-            Error::LicenseExpired { .. } => Some("Please renew your license key at https://pdfluent.dev/pricing".to_string()),
-            Error::LicenseInvalid { .. } => Some("Check your license key or environment variables.".to_string()),
             Error::OutputWriteFailed { .. } => Some("Ensure the destination path is writable and you have sufficient disk space.".to_string()),
             Error::ImageDecodeFailed { format } => Some(format!("The image format '{}' could not be decoded.", format)),
             Error::EncryptionFailed { .. } => Some("Check the encryption parameters and permissions.".to_string()),
@@ -293,8 +276,6 @@ impl fmt::Display for Error {
             Error::InvalidEncoding { .. } => "InvalidEncoding",
             Error::StreamDecodeFailed { .. } => "StreamDecodeFailed",
             Error::XrefCorrupt { .. } => "XrefCorrupt",
-            Error::LicenseExpired { .. } => "LicenseExpired",
-            Error::LicenseInvalid { .. } => "LicenseInvalid",
             Error::OutputWriteFailed { .. } => "OutputWriteFailed",
             Error::ImageDecodeFailed { .. } => "ImageDecodeFailed",
             Error::EncryptionFailed { .. } => "EncryptionFailed",
@@ -376,16 +357,6 @@ impl fmt::Display for Error {
             }
             Error::XrefCorrupt { reason } => {
                 write!(f, "  The cross-reference table is corrupt: {}\n\n", reason)?;
-            }
-            Error::LicenseExpired { expired_since } => {
-                write!(
-                    f,
-                    "  Your PDFluent license expired on {}.\n\n",
-                    expired_since
-                )?;
-            }
-            Error::LicenseInvalid { reason } => {
-                write!(f, "  Invalid license key: {}\n\n", reason)?;
             }
             Error::OutputWriteFailed { path, reason } => {
                 write!(

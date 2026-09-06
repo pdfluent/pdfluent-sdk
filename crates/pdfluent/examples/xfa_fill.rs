@@ -35,10 +35,7 @@ fn main() -> Result<()> {
         }
     }
 
-    let mut doc = PdfDocument::open_with(
-        &path,
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )?;
+    let mut doc = PdfDocument::open_with(&path, OpenOptions::new())?;
 
     if !doc.has_xfa_form() {
         eprintln!("{path}: not an XFA form");

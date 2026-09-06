@@ -724,6 +724,24 @@ jobs:
       - name: The order form and the commercial licence still agree
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/the_order_form_agrees_with_the_licence.py
+      # And the same licence read against the binary rather than against the
+      # other document (#226). §5 says as a statement of fact that nothing in
+      # the software reads a key, refuses a capability or marks output. The
+      # checks it describes were never decided on -- `require_capability` spread
+      # to sixty-five call sites, six bindings each grew an `activate` because
+      # the one beside it had one, and a free-tier watermark sat inside
+      # `embed_fonts` where no reader of the PDF/A code would look. Every one of
+      # those was a small sensible edit; the class is only visible to something
+      # that looks at all six surfaces at once.
+      #
+      # The test first, for the reason above it: a guard that finds nothing and a
+      # guard that reads nothing print the same line.
+      - name: The no-key guard goes red where it must
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_no_licence_key_in_a_binding.py
+      - name: No binding reads a licence key
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/no_licence_key_in_a_binding.py
       # The other orphan. Blocking, with the cutoff at 2c03659a -- the commit
       # that introduced the DCO this morning (#223). The rule applies from the
       # moment the rule exists, so no history is rewritten.

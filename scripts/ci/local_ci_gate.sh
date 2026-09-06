@@ -425,6 +425,14 @@ run licbtest  python3 scripts/ci/test_license_boundary.py
 # neither document admits to (#220).
 run orderform python3 scripts/ci/the_order_form_agrees_with_the_licence.py
 run orderftst python3 scripts/ci/test_the_order_form_agrees_with_the_licence.py
+# The same licence, read against the binary instead of against the other
+# document. LICENSE-COMMERCIAL §5 now states as a fact that nothing in the
+# software reads a key, refuses a capability or marks output (#226) -- and the
+# sixty-five capability gates it describes did not arrive as a decision, they
+# arrived one locally-sensible edit at a time. The test first, because this
+# guard's good day looks exactly like a guard that reads nothing.
+run keytest   python3 scripts/ci/test_no_licence_key_in_a_binding.py
+run nokey     python3 scripts/ci/no_licence_key_in_a_binding.py
 run lictest   python3 scripts/ci/test_license_gate.py
 run javafix   python3 scripts/ci/the_java_fixture_is_the_one_we_generate.py
 run fixenv    python3 scripts/ci/a_fixture_cannot_touch_a_real_repo.py

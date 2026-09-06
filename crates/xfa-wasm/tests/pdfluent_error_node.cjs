@@ -68,14 +68,14 @@ assert.equal(globalThis.__PdfluentError, before, 'ctor must be cached on globalT
 
 // Legacy code dispatch reads through.
 const err2 = new PdfluentError(
-  'license already set',
-  'E-LICENSE-INVALID',
-  'license.activate',
+  'page 9 is out of range',
+  'E-WASM-PAGE-OUT-OF-RANGE',
+  'document.page',
   '',
-  'https://pdfluent.com/errors/E-LICENSE-INVALID',
-  'LICENSE_ALREADY_SET',
+  'https://pdfluent.com/errors/E-WASM-PAGE-OUT-OF-RANGE',
+  'PAGE_OUT_OF_RANGE',
 );
-assert.equal(err2.legacyCode, 'LICENSE_ALREADY_SET');
-assert.equal(err2.code, 'E-LICENSE-INVALID');
+assert.equal(err2.legacyCode, 'PAGE_OUT_OF_RANGE');
+assert.equal(err2.code, 'E-WASM-PAGE-OUT-OF-RANGE');
 
 console.log('OK: PdfluentError class shape verified (7 assertions)');

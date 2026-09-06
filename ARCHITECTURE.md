@@ -165,7 +165,6 @@ crates/
 ├── xfa-test-runner/       # Corpus test runner
 ├── xfa-golden-tests/      # Visual regression tests
 ├── pdf-bench/             # Performance benchmarks (Criterion)
-├── xfa-license/           # License key validation
 ├── pdfium-ffi-bridge/     # PDFium FFI (optional, golden tests only)
 fuzz/                      # Fuzzing harness (cargo-fuzz)
 ```
@@ -856,7 +855,6 @@ Comprehensive documentation and example code for all bindings (#340).
 - `xfa-collector` — corpus data collection
 - `edge-case-report` / `edge-case-analyzer` — edge case analysis
 - `accuracy-report` — rendering accuracy reporting
-- `xfa-license-tool` — license key management
 - `corpus-render` — batch rendering
 
 ### 14.2 xfa-api-server
@@ -1059,7 +1057,6 @@ pdf-extract (text/images) → pdf-redact (GDPR)
 | `spki`, `der` | X.509 certificate parsing |
 | `p12` | PKCS#12 identity loading |
 | `pkcs8` | Private key parsing |
-| `hmac` | License key validation |
 
 ### OCR / ML Stack
 

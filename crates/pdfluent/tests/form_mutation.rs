@@ -22,8 +22,7 @@ use lopdf::{dictionary, Document, Object, Stream};
 use pdfluent::prelude::*;
 
 fn dev_doc(bytes: &[u8]) -> PdfDocument {
-    PdfDocument::from_bytes_with(bytes, OpenOptions::new().with_license_key("tier:developer"))
-        .expect("parse fixture")
+    PdfDocument::from_bytes_with(bytes, OpenOptions::new()).expect("parse fixture")
 }
 
 // ---------------------------------------------------------------------------
@@ -608,18 +607,20 @@ fn set_multi_select_rejects_unknown_option() {
     assert!(!err.to_string().is_empty());
 }
 
+/// The inverse of what this asserted until #226: a document opened with no
+/// licence of any kind fills its form.
+///
+/// It used to open on Trial -- which did not grant `AcroFormFill` -- and expect
+/// `E-LICENSE-FEATURE-NOT-IN-TIER`. There is no tier and no such code now, so
+/// the property worth pinning is that the plain `OpenOptions::new()` path, the
+/// one every caller who has never heard of licensing takes, works.
 #[test]
-fn set_multi_select_requires_fill_capability() {
+fn set_multi_select_needs_no_licence() {
     let bytes = build_multiselect_pdf();
-    // Trial tier lacks AcroFormFill.
-    let mut doc =
-        PdfDocument::from_bytes_with(&bytes, OpenOptions::new().with_license_key("tier:trial"))
-            .expect("parse");
-    let err = doc
-        .form_mut()
+    let mut doc = PdfDocument::from_bytes_with(&bytes, OpenOptions::new()).expect("parse");
+    doc.form_mut()
         .set_multi_select("languages", &["EN"])
-        .expect_err("trial lacks fill capability");
-    assert_eq!(err.code(), "E-LICENSE-FEATURE-NOT-IN-TIER");
+        .expect("an unlicensed caller must be able to fill a form");
 }
 
 // ---------------------------------------------------------------------------

@@ -1,9 +1,7 @@
 //! Layout-aware text replacement for the WASM binding (SDK surface).
 //!
-//! This handle wraps the `pdfluent::PdfDocument` facade, so licensing rides
-//! along automatically: [`crate::license::activate_license_key`] sets the
-//! process-global tier, Trial-tier edits stamp a "PDFluent trial" notice on
-//! each modified page, and licensed tiers edit without the notice.
+//! This handle wraps the `pdfluent::PdfDocument` facade. Nothing here reads a
+//! licence key and nothing marks the output: there are no tiers (#226).
 //!
 //! All structured values cross the JS boundary as JSON strings: matches and
 //! reports serialize with their canonical field names, and `MatchId` tokens
@@ -11,8 +9,8 @@
 //! asynchronous find → translate → apply workflow).
 //!
 //! This is deliberately a separate handle from `PdfEditHandle`
-//! (`edit_handle.rs`): that one is the free desktop editor's edit path and
-//! stays notice-free; this one is the licensed SDK surface.
+//! (`edit_handle.rs`): that one is the desktop editor's edit path, this one
+//! is the SDK surface.
 
 // Copyright (c) 2026 Innovation Trigger B.V.
 //
@@ -28,7 +26,7 @@ use pdfluent::text_edit::{
 
 use crate::wasm_err_with_op;
 
-/// Find-and-replace editor over a PDF document (SDK surface, licensed).
+/// Find-and-replace editor over a PDF document (SDK surface).
 #[wasm_bindgen]
 pub struct TextEditor {
     doc: pdfluent::PdfDocument,
@@ -371,15 +369,12 @@ mod tests {
             "first occurrence untouched: {text:?}"
         );
 
-        // The SDK surface enforces the trial notice (guarded on the tier:
-        // GLOBAL_TIER is process-wide, so another test may have activated a
-        // license first).
-        if pdfluent::license_info().tier == pdfluent::Tier::Trial {
-            assert!(
-                text.contains("PDFluent trial"),
-                "trial edits through the WASM SDK surface are stamped: {text:?}"
-            );
-        }
+        // Nothing stamps the output any more: a notice here would mean a tier
+        // check came back through the facade. (#226)
+        assert!(
+            !text.contains("PDFluent trial"),
+            "an edit through the WASM SDK surface was marked: {text:?}"
+        );
     }
 
     #[test]

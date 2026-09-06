@@ -36,8 +36,8 @@ async function main(bytes: Uint8Array): Promise<void> {
         case 'E-WASM-PAGE-OUT-OF-RANGE':
           console.error(`[${code}] page index out of range`);
           break;
-        case 'E-LICENSE-INVALID':
-          console.error(`[${code}] license invalid`);
+        case 'E-COMPLIANCE-PDFA-INVALID':
+          console.error(`[${code}] document is not PDF/A conformant`);
           break;
         default:
           console.error(`[${code}] ${err.message} (legacy=${legacy})`);

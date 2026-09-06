@@ -10,7 +10,6 @@
 // that file travels with the copy you received, which a URL does not.
 
 mod error;
-mod license;
 mod text_edit;
 mod types;
 
@@ -20,7 +19,6 @@ use std::ptr;
 use std::slice;
 
 pub use error::*;
-pub use license::*;
 pub use types::*;
 
 // ---- Library lifecycle ---------------------------------------------------
@@ -1199,11 +1197,6 @@ pub unsafe extern "C" fn pdf_page_extract_image(
 // reach Word/Excel/PowerPoint through these three exports. Until 23-08-2026
 // none of the five bindings could convert to Office at all, while the feature
 // page sold it — the Rust crates existed and stopped at the language boundary.
-//
-// The capability check comes from `pdfluent::require_capability`, not from a
-// tier comparison here. A binding that decides for itself that Office export is
-// "Business and up" will disagree with the licence module the first time a tier
-// moves.
 
 /// Shared body for the three Office exports.
 ///
@@ -1213,16 +1206,11 @@ unsafe fn office_export(
     doc: *const PdfDocument,
     out_data: *mut *mut u8,
     out_len: *mut usize,
-    cap: pdfluent::Capability,
     convert: fn(&[u8]) -> std::result::Result<Vec<u8>, String>,
 ) -> PdfStatus {
     if doc.is_null() || out_data.is_null() || out_len.is_null() {
         error::set_last_error_str("null pointer argument");
         return PdfStatus::ErrorInvalidArgument;
-    }
-    if let Err(e) = pdfluent::require_capability(cap) {
-        error::set_last_error_str(&e.to_string());
-        return PdfStatus::ErrorCapabilityNotLicensed;
     }
     let raw = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
     match convert(&raw) {
@@ -1257,13 +1245,9 @@ pub unsafe extern "C" fn pdf_document_to_docx(
     out_len: *mut usize,
 ) -> PdfStatus {
     unsafe {
-        office_export(
-            doc,
-            out_data,
-            out_len,
-            pdfluent::Capability::DocxExport,
-            |b| pdf_docx::convert_pdf_bytes_to_docx(b).map_err(|e| e.to_string()),
-        )
+        office_export(doc, out_data, out_len, |b| {
+            pdf_docx::convert_pdf_bytes_to_docx(b).map_err(|e| e.to_string())
+        })
     }
 }
 
@@ -1278,13 +1262,9 @@ pub unsafe extern "C" fn pdf_document_to_xlsx(
     out_len: *mut usize,
 ) -> PdfStatus {
     unsafe {
-        office_export(
-            doc,
-            out_data,
-            out_len,
-            pdfluent::Capability::XlsxExport,
-            |b| pdf_xlsx::convert_pdf_bytes_to_xlsx(b).map_err(|e| e.to_string()),
-        )
+        office_export(doc, out_data, out_len, |b| {
+            pdf_xlsx::convert_pdf_bytes_to_xlsx(b).map_err(|e| e.to_string())
+        })
     }
 }
 
@@ -1300,13 +1280,9 @@ pub unsafe extern "C" fn pdf_document_to_pptx(
     out_len: *mut usize,
 ) -> PdfStatus {
     unsafe {
-        office_export(
-            doc,
-            out_data,
-            out_len,
-            pdfluent::Capability::PptxExport,
-            |b| pdf_pptx::convert_pdf_bytes_to_pptx(b).map_err(|e| e.to_string()),
-        )
+        office_export(doc, out_data, out_len, |b| {
+            pdf_pptx::convert_pdf_bytes_to_pptx(b).map_err(|e| e.to_string())
+        })
     }
 }
 

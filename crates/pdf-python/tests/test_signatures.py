@@ -8,7 +8,6 @@ Covers the new ``Document`` methods mirroring the Rust core
     Document.verify_signatures()   -> list[SignatureResult]   (alias)
     Document.signatures()          -> list[SignatureResult]   (metadata only)
 
-Plus a smoke check that the signed-payload license functions are importable
 and callable from the top-level ``pdfluent`` package.
 
 Run:
@@ -169,29 +168,3 @@ class TestSignatureResultType:
         assert callable(doc.validate_signatures)
         assert callable(doc.verify_signatures)
         assert callable(doc.signatures)
-
-
-# ---------------------------------------------------------------------------
-# Signed-payload license functions — importable + callable from the package.
-# ---------------------------------------------------------------------------
-
-
-class TestLicenseFunctionExposure:
-    def test_set_license_public_key_exposed(self) -> None:
-        assert hasattr(pdfluent, "set_license_public_key")
-        assert callable(pdfluent.set_license_public_key)
-        assert "set_license_public_key" in pdfluent.__all__
-
-    def test_set_license_payload_exposed(self) -> None:
-        assert hasattr(pdfluent, "set_license_payload")
-        assert callable(pdfluent.set_license_payload)
-        assert "set_license_payload" in pdfluent.__all__
-
-    def test_set_license_public_key_typed_error_on_bad_input(self) -> None:
-        # A wrong-length key must raise the typed license exception with a
-        # canonical ``.code`` attached — proves the error mapper is wired.
-        from pdfluent import PdfluentLicenseError
-
-        with pytest.raises(PdfluentLicenseError) as exc_info:
-            pdfluent.set_license_public_key(b"too-short")
-        assert exc_info.value.code == "E-LICENSE-INVALID"  # type: ignore[attr-defined]

@@ -35,16 +35,6 @@ class PdfluentPageRangeError(PdfluentError):
 class PdfluentIoError(PdfluentError):
     """Raised on file-system I/O errors."""
 
-class PdfluentLicenseError(PdfluentError):
-    """Raised on license validation errors (invalid key, expired, quota exceeded).
-
-    Instances raised through the public ``pdfluent`` API carry canonical C8
-    metadata: ``code`` (e.g. ``"E-LICENSE-INVALID"``) and ``message``.
-    """
-
-    code: str
-    message: str
-
 class PdfluentGeometryError(PdfluentError):
     """Raised when a page has an invalid or unsupported geometry."""
 
@@ -54,96 +44,6 @@ class PdfluentLimitError(PdfluentError):
 # ---------------------------------------------------------------------------
 # Module-level functions
 # ---------------------------------------------------------------------------
-
-class _NativeLicenseInfo:
-    """Canonical license state snapshot from the Rust core.
-
-    Returned by :func:`native_license_info`. Prefer importing
-    :class:`pdfluent.LicenseInfo` from the top-level package.
-    """
-
-    @property
-    def tier(self) -> str:
-        """Canonical tier: ``"trial"``, ``"developer"``, ``"team"``,
-        ``"business"``, or ``"enterprise"``."""
-        ...
-
-    @property
-    def expires_at(self) -> Optional[str]:
-        """Expiration in ISO 8601 format, or ``None`` (always ``None`` in 1.0)."""
-        ...
-
-    @property
-    def output_is_marked(self) -> bool:
-        """``True`` when Trial-tier output watermarking is active."""
-        ...
-
-    def __repr__(self) -> str: ...
-
-def set_license_key(key: str) -> None:
-    """Activate the process-global license key in the Rust core.
-
-    Accepts the simple 1.0 evaluation format ``"tier:<name>"`` as well as a
-    full signed JSON payload (auto-routed to :func:`set_license_payload` when
-    the string starts with ``{``).
-    First call locks the tier; subsequent calls with the same tier are
-    idempotent.  A different tier raises :exc:`PdfluentLicenseError`.
-
-    Raises
-    ------
-    PdfluentLicenseError
-        On invalid format or tier conflict.
-    """
-    ...
-
-def set_license_public_key(key: bytes) -> None:
-    """Configure the Ed25519 public key used to verify signed JSON license
-    payloads.
-
-    Must be called **once**, before :func:`set_license_payload` (or before
-    passing a JSON payload to :func:`set_license_key`). The key must be exactly
-    32 raw bytes (not base64, not PEM, not PKCS#8). Calling again with the same
-    key is an idempotent no-op; a different key raises
-    :exc:`PdfluentLicenseError`.
-
-    Parameters
-    ----------
-    key:
-        32-byte raw Ed25519 public key.
-
-    Raises
-    ------
-    PdfluentLicenseError
-        If the key is not 32 bytes, or a different key was already configured
-        (``code == "E-LICENSE-INVALID"``).
-    """
-    ...
-
-def set_license_payload(payload_json: str) -> None:
-    """Activate a cryptographically-signed JSON license payload.
-
-    The public key must be configured first via :func:`set_license_public_key`.
-    This is the explicit signed-payload entry point; :func:`set_license_key`
-    also accepts signed JSON payloads automatically.
-
-    Parameters
-    ----------
-    payload_json:
-        JSON string produced by the PDFluent licence-generator tool.
-
-    Raises
-    ------
-    PdfluentLicenseError
-        If the JSON is malformed, no public key is configured, or a conflicting
-        tier is already set (``code == "E-LICENSE-INVALID"``); if the signature
-        does not verify (``code == "E-LICENSE-INVALID-SIGNATURE"``); or if the
-        payload is past its expiry (``code == "E-LICENSE-EXPIRED"``).
-    """
-    ...
-
-def native_license_info() -> _NativeLicenseInfo:
-    """Return the current canonical license state from the Rust core."""
-    ...
 
 def open_pdf(path: str, password: Optional[str] = None) -> Document:
     """Open a PDF from a file path, returning a ``Document``."""

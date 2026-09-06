@@ -17,14 +17,7 @@
 use crate::error::{ManipError, Result};
 use lopdf::{dictionary, Document, Object, ObjectId, Stream};
 use std::path::PathBuf;
-use xfa_license::LicenseGuard;
 
-/// The public key used for license validation.
-/// This matches the key used by the license generation tool.
-const PUBLIC_KEY: [u8; 32] = [
-    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00, 0x11, 0x22, 0x33, 0x44,
-    0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44,
-];
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -922,39 +915,6 @@ pub fn promote_inline_font_dicts(doc: &mut Document) -> usize {
 
 /// Embed fonts from system font files into the document.
 pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
-    // --- License check & Watermarking ---
-    // Not SystemTime: it panics on wasm32 and took the whole PDF/A path
-    // down in the browser build. See crate::clock.
-    let now = crate::clock::unix_now_secs();
-
-    let guard = match LicenseGuard::load_from_env(&PUBLIC_KEY, now) {
-        Ok(g) => g,
-        Err(e) => {
-            eprintln!("Warning: Invalid license: {e}. Falling back to Free Tier.");
-            None
-        }
-    };
-
-    let should_watermark = match guard {
-        Some(g) => g.should_watermark(),
-        None => true,
-    };
-
-    if should_watermark {
-        let wm = crate::watermark::TextWatermark {
-            text: "PDFluent Free Tier — pdfluent.com".into(),
-            font_size: 24.0,
-            rotation: 45.0,
-            opacity: 0.2,
-            color: crate::watermark::Color::Gray(0.5),
-            position: crate::watermark::Position::Center,
-            layer: crate::watermark::Layer::Foreground,
-        };
-        let _ =
-            crate::watermark::apply_text_watermark(doc, &wm, &crate::watermark::PageSelection::All);
-    }
-    // ------------------------------------
-
     // FIRST: Isolate shared FontDescriptors to prevent cross-font corruption.
     // Must run before ANY font mutations.
     isolate_font_descriptors(doc);
@@ -25344,9 +25304,11 @@ mod tests {
     fn test_embed_report_structure() {
         let mut doc = make_doc_with_unembedded_font();
         let report = embed_fonts(&mut doc).unwrap();
-        // 2 fonts: the one we added + the watermark Helvetica
-        assert_eq!(report.fonts_inspected, 2);
-        assert_eq!(report.non_embedded_found, 2);
+        // One font: the one the fixture adds. It was two until #226, because
+        // the free-tier watermark stamped on every unlicensed run brought its
+        // own Helvetica in and the pass then had to embed that too.
+        assert_eq!(report.fonts_inspected, 1);
+        assert_eq!(report.non_embedded_found, 1);
     }
 
     #[test]

@@ -20,9 +20,7 @@ use pdfluent::PdfDocument;
 const ACROFORM_PDF: &[u8] = include_bytes!("../../../tests/corpus-mini/acroform.pdf");
 const PLAIN_PDF: &[u8] = include_bytes!("../../../tests/corpus-mini/simple.pdf");
 
-fn licensed() {
-    let _ = pdfluent::set_license_key("tier:business");
-}
+fn licensed() {}
 
 #[test]
 fn flattening_removes_the_form_and_keeps_the_content() {

@@ -46,7 +46,7 @@ Every instrumented method follows these rules:
 |---|---|
 | Span name is the method name, snake-case. | `cargo doc` ↔ `trace` one-to-one mapping. |
 | `self` is skipped via `skip(self)`. | PDFs are large; never print them. |
-| Fields carry non-secret, low-cardinality inputs. | Paths, page counts, tiers — yes. Passwords, license keys, raw bytes — no. |
+| Fields carry non-secret, low-cardinality inputs. | Paths and page counts — yes. Passwords and raw bytes — no. |
 | The target is `pdfluent`. | `RUST_LOG=pdfluent=debug` is the canonical toggle. |
 | Level is `INFO` for operations, `DEBUG` for internals. | |
 | Error results are recorded via `tracing::error!` inside the operation. | |
@@ -95,7 +95,6 @@ Operations that emit an `INFO`-level span:
 | `PdfVersion::parse`, enum `code()` / `docs_url()` | Pure functions. |
 | `Page` / `Pages` accessors | Would fire per-iteration inside `for` loops; too noisy. |
 | `PdfFormMut::set_*` setters | Usually called in fast chains; instrument the enclosing `form_mut` span instead. |
-| License provisioning (`set_license_key`, env read) | Touches secrets; span would need extensive redaction. |
 
 Adding instrumentation to any of the above is **not** a breaking
 change and can land in any MINOR (§7.1 policy below).

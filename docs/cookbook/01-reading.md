@@ -1,9 +1,8 @@
 # Reading Recipes
 
 > All snippets use the canonical, RFC 0001-frozen public API
-> (`use pdfluent::prelude::*;` + `PdfDocument::open(...)`). Provide
-> a license via `set_license_key(...)` or `PDFLUENT_LICENSE_KEY`
-> before production use.
+> (`use pdfluent::prelude::*;` + `PdfDocument::open(...)`). Nothing here
+> needs a licence key: there is none (#226).
 
 ## Extract Text from PDF
 

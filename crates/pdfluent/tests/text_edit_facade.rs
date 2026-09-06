@@ -75,8 +75,7 @@ fn pdf_with_lines(lines: &[&str]) -> Vec<u8> {
 }
 
 fn open_developer(bytes: &[u8]) -> PdfDocument {
-    PdfDocument::from_bytes_with(bytes, OpenOptions::new().with_license_key("tier:developer"))
-        .unwrap()
+    PdfDocument::from_bytes_with(bytes, OpenOptions::new()).unwrap()
 }
 
 #[test]
@@ -161,13 +160,17 @@ fn facade_revision_advances_and_stale_ids_are_refused() {
     );
 }
 
-/// TextEdit is available in Trial, but trial edits stamp a visible notice
-/// on every modified page. Licensed tiers edit without the notice.
+/// The inverse of what this asserted until #226.
+///
+/// It used to prove the trial notice: an edit with no key stamped "PDFluent
+/// trial" on every modified page, and a licensed one did not. There is no key
+/// and no tier now, so what has to hold is that no edit is ever marked -- and
+/// that the environment cannot change it, which is the half that catches the
+/// check coming back on a machine that happens to have a key.
 #[test]
-fn facade_trial_edits_work_but_stamp_a_notice() {
+fn facade_edits_are_never_marked() {
     let bytes = pdf_with_lines(&["Hello World"]);
 
-    // Trial tier (no license key): the edit succeeds…
     let mut doc = PdfDocument::from_bytes(&bytes).unwrap();
     let report = doc
         .replace_text(
@@ -178,33 +181,17 @@ fn facade_trial_edits_work_but_stamp_a_notice() {
         .unwrap();
     assert_eq!(report.replacements_applied, 1);
 
-    // …and the modified page carries the trial notice.
-    let text = doc.text().unwrap();
-    assert!(text.contains("Howdy World"), "{text:?}");
-    assert!(
-        text.contains("PDFluent trial"),
-        "trial notice stamped on the modified page: {text:?}"
-    );
-
-    // A licensed document edits WITHOUT the notice.
-    let mut doc = open_developer(&bytes);
-    doc.replace_text(
-        TextQuery::exact("Hello"),
-        "Howdy",
-        ReplaceOptions::default(),
-    )
-    .unwrap();
     let text = doc.text().unwrap();
     assert!(text.contains("Howdy World"), "{text:?}");
     assert!(
         !text.contains("PDFluent trial"),
-        "licensed edit is notice-free: {text:?}"
+        "an edit was stamped with a trial notice: {text:?}"
     );
 }
 
-/// A trial find_text (read-only) never stamps anything.
+/// find_text (read-only) never stamps anything.
 #[test]
-fn facade_trial_find_is_read_only() {
+fn facade_find_is_read_only() {
     let bytes = pdf_with_lines(&["Hello"]);
     let mut doc = PdfDocument::from_bytes(&bytes).unwrap();
     let matches = doc.find_text(TextQuery::exact("Hello")).unwrap();

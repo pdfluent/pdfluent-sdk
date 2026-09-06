@@ -290,9 +290,15 @@ rood("NOTICE states a fork's licence with the operands the other way round",
      "crates/pdf-syntax", "NOTICE", "declares = 'Apache-2.0 OR MIT'",
      "'MIT OR Apache-2.0'")
 
+# The line this deletes was `xfa-license` until 06-09-2026. That crate was
+# deleted with the licence key it validated (#226), so the mutation stopped
+# applying and this file died on its own fixture rather than on a finding --
+# which is the failure mode a mutation test has to be able to survive.
+# `xfa-json` is picked for the same reasons that one was: published, dual
+# licensed, and named in NOTICE.
 rood("a published crate NOTICE does not name",
-     run_with(edit(KENNISGEVING, "  xfa-license          — license enforcement runtime\n", "")),
-     "crates/xfa-license", "NOTICE", "in neither list")
+     run_with(edit(KENNISGEVING, "  xfa-json             — XFA JSON conversion\n", "")),
+     "crates/xfa-json", "NOTICE", "in neither list")
 
 rood("an internal crate named in NOTICE",
      run_with(edit(KENNISGEVING, "  pdf-ocr              — OCR integration\n",

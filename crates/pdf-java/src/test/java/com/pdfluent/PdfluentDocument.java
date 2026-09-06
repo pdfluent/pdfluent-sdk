@@ -14,8 +14,7 @@ package com.pdfluent;
  * {@code com.pdfluent.PdfluentDocument} (since 18742a72), so this is the class
  * name and package the JVM needs in order to bind them. The shipped wrapper
  * around these symbols lives in {@code bindings/java}; this class exists only
- * so the crate's own suite can call the JNI layer directly, the same way
- * {@link PdfluentLicensing} does for the licence half. Never shipped.
+ * so the crate's own suite can call the JNI layer directly. Never shipped.
  *
  * <p>Only the natives the suite exercises are declared. Declaring one the
  * library does not export would not fail at compile time, only at first call,

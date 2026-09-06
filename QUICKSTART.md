@@ -62,21 +62,10 @@ fn main() -> Result<()> {
 cargo run
 ```
 
-**License note:** Without a license key the SDK runs in evaluation mode — all
-features are available; output PDFs carry an evaluation marker in `/Producer`
-metadata. For production use obtain a license at <https://pdfluent.com/trial>.
-
-Set the key before opening any document:
-
-```rust
-pdfluent::set_license_key("YOUR-KEY-HERE")?;
-```
-
-Or via environment variable:
-
-```bash
-PDFLUENT_LICENSE_KEY=YOUR-KEY-HERE ./my-pdf-app
-```
+**Licence note:** There is no licence key and nothing to activate. Every feature
+is available in every build, and output carries no marker. PDFluent is published
+under the AGPLv3; if you cannot accept the copyleft obligation, the commercial
+licence is a signed order form — see [`docs/licensing.md`](docs/licensing.md).
 
 **More:** <https://pdfluent.com/docs> · [examples/](crates/pdfluent/tests/) · [CHANGELOG](CHANGELOG.md)
 
@@ -304,17 +293,9 @@ wasm-pack build crates/xfa-wasm --target web --release
 
 ## Common Errors
 
-**`Error: evaluation mode — output marked`**
-→ SDK running without a license key. Output is fully functional but `/Producer`
-metadata includes an evaluation marker. Get a license at <https://pdfluent.com/trial>.
-
 **`InvalidPdf` / `ParseError`**
 → File is not a valid PDF, is password-protected, or is corrupted. Try
 `PdfDocument::open_with(path, OpenOptions::default().password("pw"))`.
-
-**`CapabilityError: feature requires license tier X`**
-→ Your license tier does not include this feature. See
-[pdfluent.com/pricing](https://pdfluent.com/pricing) for tier details.
 
 **WASM: `RuntimeError: memory access out of bounds`**
 → Calling a WASM method after `doc.free()`. Ensure all method calls complete
@@ -326,7 +307,7 @@ automatic cleanup.
 ## Links
 
 - **Docs:** <https://pdfluent.com/docs>
-- **Trial license:** <https://pdfluent.com/trial>
+- **Licensing:** [docs/licensing.md](docs/licensing.md)
 - **Pricing:** <https://pdfluent.com/pricing>
 - **Issues:** <https://github.com/pdfluent/pdfluent-sdk/-/issues>
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md)

@@ -18,19 +18,13 @@ fn mini(name: &str) -> PathBuf {
 }
 
 fn open(name: &str) -> PdfDocument {
-    PdfDocument::open_with(
-        mini(name),
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open")
+    PdfDocument::open_with(mini(name), OpenOptions::new()).expect("open")
 }
 
 fn open_with_stream_cap(name: &str, cap: u64) -> PdfDocument {
     PdfDocument::open_with(
         mini(name),
-        OpenOptions::new()
-            .with_license_key("tier:enterprise")
-            .with_processing_limits(ProcessingLimits::new().max_stream_bytes(cap)),
+        OpenOptions::new().with_processing_limits(ProcessingLimits::new().max_stream_bytes(cap)),
     )
     .expect("open")
 }
@@ -141,11 +135,8 @@ fn corrupt_image_drop_is_reported_as_diagnostic() {
     let mut bytes = Vec::new();
     doc.save_to(&mut bytes).unwrap();
 
-    let pdoc = PdfDocument::from_bytes_with(
-        &bytes,
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open corrupt-image PDF");
+    let pdoc =
+        PdfDocument::from_bytes_with(&bytes, OpenOptions::new()).expect("open corrupt-image PDF");
     // Renders (the undecodable image is dropped) and reports the drop.
     let _ = pdoc.render_page(1, 72, ImageFormat::Png).expect("render");
     let diags = pdoc.diagnostics();
@@ -160,18 +151,11 @@ fn corrupt_image_drop_is_reported_as_diagnostic() {
 #[test]
 fn with_repair_does_not_change_load_behaviour() {
     // Recovery is always-on; the advisory flag must not alter load success.
-    let with = PdfDocument::open_with(
-        mini("multi-page.pdf"),
-        OpenOptions::new()
-            .with_license_key("tier:enterprise")
-            .with_repair(true),
-    )
-    .expect("open repair=true");
+    let with = PdfDocument::open_with(mini("multi-page.pdf"), OpenOptions::new().with_repair(true))
+        .expect("open repair=true");
     let without = PdfDocument::open_with(
         mini("multi-page.pdf"),
-        OpenOptions::new()
-            .with_license_key("tier:enterprise")
-            .with_repair(false),
+        OpenOptions::new().with_repair(false),
     )
     .expect("open repair=false");
     assert_eq!(
@@ -211,11 +195,8 @@ fn broken_page_tree_reports_page_tree_rebuilt() {
         buf
     }
 
-    let doc = PdfDocument::from_bytes_with(
-        &broken_page_tree_pdf(),
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open should recover the page tree");
+    let doc = PdfDocument::from_bytes_with(&broken_page_tree_pdf(), OpenOptions::new())
+        .expect("open should recover the page tree");
     let diags = doc.diagnostics();
     assert!(
         diags
@@ -276,11 +257,8 @@ fn unsupported_font_substitution_is_reported() {
         buf
     }
 
-    let doc = PdfDocument::from_bytes_with(
-        &unsupported_font_pdf(),
-        OpenOptions::new().with_license_key("tier:enterprise"),
-    )
-    .expect("open");
+    let doc =
+        PdfDocument::from_bytes_with(&unsupported_font_pdf(), OpenOptions::new()).expect("open");
     let _ = doc.render_page(1, 72, ImageFormat::Png).expect("render");
     let diags = doc.diagnostics();
     assert!(
@@ -302,7 +280,7 @@ fn unsupported_font_substitution_is_reported() {
 fn a_nesting_cycle_reports_a_public_diagnostic() {
     let pad = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/pdf/alternating_smask_xobject.pdf");
-    let doc = PdfDocument::open_with(pad, OpenOptions::new().with_license_key("tier:enterprise"))
+    let doc = PdfDocument::open_with(pad, OpenOptions::new())
         .expect("the fixture is structurally valid; only its XObject/mask pair is circular");
 
     // Succeeds: the bound turns the crash into a missing paint, not a failure.

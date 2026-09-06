@@ -241,7 +241,6 @@ fn processing_limits_image_pixels_rejects_oversized() {
     let bytes = image_xobject_pdf(10_000, 10_000); // 100 MP
 
     let strict = OpenOptions::new()
-        .with_license_key("tier:business")
         .with_processing_limits(ProcessingLimits::default().max_image_pixels(1_000));
     let doc = PdfDocument::from_bytes_with(&bytes, strict).expect("open strict cap");
 
@@ -382,9 +381,7 @@ fn processing_limits_stream_too_large_surfaces_as_resource_limit_exceeded() {
 
     let bytes = stream_too_large_pdf_bytes(IMAGE_BYTES);
     let limits = ProcessingLimits::default().max_stream_bytes(STREAM_CAP);
-    let opts = OpenOptions::new()
-        .with_license_key("tier:business")
-        .with_processing_limits(limits);
+    let opts = OpenOptions::new().with_processing_limits(limits);
     let doc = PdfDocument::from_bytes_with(&bytes, opts).expect("open should succeed");
 
     // to_images triggers render_page → DecodedImageXObject::new → decoded_image

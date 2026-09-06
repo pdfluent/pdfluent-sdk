@@ -65,8 +65,6 @@
  * | `E-IO-GENERIC` | I/O failure |
  * | `E-PARSE-UNSUPPORTED-VERSION` | `PdfDoc.open` — PDF version too new |
  * | `E-COMPLIANCE-PDFA-INVALID` | `convertToPdfa`, `validatePdfA` |
- * | `E-LICENSE-INVALID` | `activateLicenseKey` — bad key |
- * | `E-LICENSE-FEATURE-NOT-IN-TIER` | Restricted method on Trial/lower tier |
  * | `E-ENV-UNSUPPORTED-ON-WASM` | Native-only operation invoked from WASM |
  * | `E-INTERNAL` | Internal safety-net |
  * | `E-WASM-INVALID-ARGUMENT` | Argument validation (e.g. `validatePdfA("xyz")`) |

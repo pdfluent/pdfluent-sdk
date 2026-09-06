@@ -12,11 +12,8 @@
 export declare class PdfluentError extends Error {
   /** Stable machine-readable error code from the C8 error catalogue. */
   readonly code: string | null
-  /** Short verb describing the operation that failed (e.g. "activate"). */
+  /** Short verb describing the operation that failed (e.g. "open"). */
   readonly operation: string | null
   /** Optional human-readable detail string. May be `null`. */
   readonly cause: string | null
 }
-
-/** License-specific error subclass thrown by all license activation surfaces. */
-export declare class PdfluentLicenseError extends PdfluentError {}

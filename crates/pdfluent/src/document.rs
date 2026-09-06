@@ -31,12 +31,10 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::capability::Capability;
 use crate::decoration::PageDecoration;
 use crate::encrypt::EncryptOptions;
 use crate::error::{internal_error, Error, Result};
 use crate::form::{FormField, PdfFormMut};
-use crate::license;
 use crate::metadata::{Metadata, MetadataMut};
 use crate::parity::{
     CompressOptions, CompressReport, FontSubsetReport, ImageFormat, ImageInsert, ImageInsertReport,
@@ -55,7 +53,6 @@ pub struct OpenOptions {
     pub(crate) password: Option<String>,
     pub(crate) repair: bool,
     pub(crate) memory_limit: Option<usize>,
-    pub(crate) license_key: Option<String>,
     pub(crate) processing_limits: Option<pdf_engine::ProcessingLimits>,
 }
 
@@ -116,16 +113,6 @@ impl OpenOptions {
     /// post-1.0 improvement.
     pub fn strict_memory_limit(mut self, bytes: usize) -> Self {
         self.memory_limit = Some(bytes);
-        self
-    }
-
-    /// Provide a per-document license key override.
-    ///
-    /// Overrides the process-global license set via
-    /// [`crate::license::set_license_key`] or the `PDFLUENT_LICENSE_KEY`
-    /// environment variable.
-    pub fn with_license_key(mut self, key: impl Into<String>) -> Self {
-        self.license_key = Some(key.into());
         self
     }
 
@@ -265,12 +252,6 @@ impl SaveOptions {
 pub struct PdfDocument {
     engine: pdf_engine::PdfDocument,
     lopdf: lopdf::Document,
-    /// Per-document license-key override from
-    /// [`OpenOptions::with_license_key`]. Consulted by
-    /// [`require_capability`](Self::require_capability) when gated
-    /// methods are called. `None` means the process-global license
-    /// (or env, or Trial) applies.
-    license_key_override: Option<String>,
     processing_limits: Option<pdf_engine::ProcessingLimits>,
     /// The original bytes of the PDF document. Used for incremental save.
     /// Memory impact: We hold a single reference count `Arc<Vec<u8>>` to the
@@ -446,7 +427,6 @@ impl PdfDocument {
         )
     )]
     pub fn open_with<P: AsRef<Path>>(path: P, opts: OpenOptions) -> Result<Self> {
-        license::require_capability(Capability::PdfParse)?;
         let path_ref = path.as_ref();
 
         // Enforce memory budget BEFORE reading the file into memory. Without
@@ -531,8 +511,6 @@ impl PdfDocument {
         )
     )]
     pub fn from_bytes_with(bytes: &[u8], opts: OpenOptions) -> Result<Self> {
-        license::require_capability(Capability::PdfParse)?;
-
         // ProcessingLimits::max_file_bytes (issue #1429): typed
         // ResourceLimitExceeded variant — preferred path.
         if let Some(ref limits) = opts.processing_limits {
@@ -582,7 +560,6 @@ impl PdfDocument {
         Ok(Self {
             engine,
             lopdf,
-            license_key_override: opts.license_key.clone(),
             processing_limits: opts.processing_limits.clone(),
             original_bytes: Some(shared),
             diagnostics,
@@ -596,7 +573,6 @@ impl PdfDocument {
     /// Reads the stream to completion into an in-memory buffer; streaming
     /// incremental parsing is tracked as a post-1.0 improvement.
     pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
-        license::require_capability(Capability::PdfParse)?;
         let mut bytes = Vec::new();
         reader
             .read_to_end(&mut bytes)
@@ -724,7 +700,6 @@ impl PdfDocument {
     /// println!("Characters extracted: {}", raw.len());
     /// ```
     pub fn text(&self) -> Result<String> {
-        self.require_capability(Capability::TextExtract)?;
         Ok(self.engine.extract_all_text())
     }
 
@@ -736,14 +711,8 @@ impl PdfDocument {
     /// preserved across page breaks. Pages that yield no text contribute an
     /// empty string (no extra blank lines are inserted for them).
     ///
-    /// Requires [`Capability::TextExtract`] (available from the Trial tier).
     /// For structured output with bounding boxes, use
     /// [`text_with_layout`](Self::text_with_layout) instead.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::FeatureNotInTier`] if the active license tier does not
-    /// grant [`Capability::TextExtract`].
     ///
     /// # Example
     ///
@@ -755,7 +724,6 @@ impl PdfDocument {
     /// println!("{text}");
     /// ```
     pub fn extract_text(&self) -> Result<String> {
-        self.require_capability(Capability::TextExtract)?;
         let count = self.engine.page_count();
         with_leniency(&self.diagnostics, || -> Result<String> {
             let mut parts: Vec<String> = Vec::with_capacity(count);
@@ -768,10 +736,8 @@ impl PdfDocument {
 
     /// Extract text grouped into structured blocks with coordinates.
     ///
-    /// Matches the [`Capability::TextExtractWithLayout`] capability. Prefer
-    /// [`text`](Self::text) if you only need plain text.
+    /// Prefer [`text`](Self::text) if you only need plain text.
     pub fn text_with_layout(&self) -> Result<Vec<TextBlock>> {
-        self.require_capability(Capability::TextExtractWithLayout)?;
         let mut out = Vec::new();
         for (idx, blocks) in self
             .engine
@@ -839,17 +805,6 @@ impl PdfDocument {
     /// process.
     pub fn metadata_mut(&mut self) -> MetadataMut<'_> {
         MetadataMut::new(self)
-    }
-
-    // ---------- Capability enforcement ----------
-
-    /// Check that this document's effective license grants `cap`.
-    ///
-    /// Honours the per-document [`OpenOptions::with_license_key`]
-    /// override set at construction before falling back to process-global
-    /// / env / Trial per [`license::effective_tier`].
-    pub(crate) fn require_capability(&self, cap: Capability) -> Result<()> {
-        license::require_capability_with_override(cap, self.license_key_override.as_deref())
     }
 
     /// Pre-flight check for `to_images`: scan the lopdf representation for
@@ -981,7 +936,6 @@ impl PdfDocument {
     /// }
     /// ```
     pub fn form_fields(&self) -> Result<Vec<FormField>> {
-        self.require_capability(Capability::AcroFormRead)?;
         Ok(crate::form::read_acroform_fields(&self.lopdf))
     }
 
@@ -1000,7 +954,6 @@ impl PdfDocument {
     /// Field `name` values are fully qualified (`parent.kid`) and are
     /// accepted verbatim by the [`form_mut`](Self::form_mut) setters.
     pub fn form_model(&self) -> Result<Vec<pdf_forms::FormFieldModel>> {
-        self.require_capability(Capability::AcroFormRead)?;
         Ok(pdf_forms::parse_acroform(self.engine.pdf())
             .map(|tree| pdf_forms::build_form_model(&tree))
             .unwrap_or_default())
@@ -1015,7 +968,6 @@ impl PdfDocument {
     /// field; call [`sync_engine`](Self::sync_engine) afterwards if you need
     /// the change reflected in rendering on this same handle.
     pub fn regenerate_form_appearances(&mut self) -> Result<pdf_forms::WriteOutcome> {
-        self.require_capability(Capability::AcroFormFill)?;
         pdf_forms::regenerate_appearances(&mut self.lopdf)
             .map_err(|e| crate::error::internal_error(e.to_string()))
     }
@@ -1023,8 +975,8 @@ impl PdfDocument {
     /// Mutable form handle.
     ///
     /// Returns unconditionally — the handle is always constructable, even
-    /// on documents without an AcroForm. Capability enforcement and field
-    /// lookups happen on the individual setter calls.
+    /// on documents without an AcroForm. Field lookups happen on the
+    /// individual setter calls.
     ///
     /// Setters accept fully-qualified field names (`parent.kid`) and
     /// update the complete chain: `/V`, widget `/AS`, regenerated `/AP`,
@@ -1039,10 +991,8 @@ impl PdfDocument {
     /// on the same `PdfDocument` handle after mutations, drop the guard and
     /// then call [`sync_engine`](Self::sync_engine) first.
     pub fn form_mut(&mut self) -> PdfFormMut<'_> {
-        // Read the license override BEFORE the mutable borrow of `lopdf`
         // so the two field borrows don't overlap.
-        let license_override = self.license_key_override.as_deref();
-        PdfFormMut::new(&mut self.lopdf, license_override)
+        PdfFormMut::new(&mut self.lopdf)
     }
 
     /// Flatten all AcroForm fields to static content.
@@ -1060,12 +1010,7 @@ impl PdfDocument {
     /// reporting a success that quietly left them editable. Fields that were
     /// flattened stay flattened even when others were skipped.
     ///
-    /// # Errors
-    ///
-    /// [`Error::FeatureNotInTier`] without [`Capability::AcroFormFlatten`].
     pub fn flatten_forms(&mut self) -> Result<FlattenReport> {
-        self.require_capability(Capability::AcroFormFlatten)?;
-
         // Round-trip through bytes because the parser reads a `Pdf` while the
         // flattener writes to the `lopdf` handle, and only the latter carries
         // mutations made through `form_mut`. Parsing the original bytes would
@@ -1124,10 +1069,8 @@ impl PdfDocument {
     ///
     /// # Errors
     ///
-    /// [`Error::Unsupported`] when the document has no XFA form;
-    /// [`Error::FeatureNotInTier`] without the `XfaParse` capability.
+    /// [`Error::Unsupported`] when the document has no XFA form.
     pub fn xfa_form_model(&mut self) -> Result<crate::xfa::XfaFormModel> {
-        self.require_capability(Capability::XfaParse)?;
         self.ensure_xfa_session()?;
         let session = self.xfa_session.as_ref().expect("session ensured above");
         Ok(crate::xfa::XfaFormModel {
@@ -1160,14 +1103,12 @@ impl PdfDocument {
     /// # Errors
     ///
     /// [`Error::Unsupported`] for unknown fields, read-only fields, values
-    /// not assignable to the field's type, or non-XFA documents;
-    /// [`Error::FeatureNotInTier`] without the `XfaFill` capability.
+    /// not assignable to the field's type, or non-XFA documents.
     pub fn set_xfa_field_value(
         &mut self,
         name: &str,
         value: crate::xfa::XfaFieldValue<'_>,
     ) -> Result<crate::xfa::XfaSetOutcome> {
-        self.require_capability(Capability::XfaFill)?;
         self.ensure_xfa_session()?;
         let session = self.xfa_session.as_mut().expect("session ensured above");
         let engine_value = match value {
@@ -1199,16 +1140,8 @@ impl PdfDocument {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::XfaFailed`] on parse, layout or render failure, and a
-    /// capability error when [`Capability::XfaFlatten`] is not available.
-    ///
-    /// # Note
-    ///
-    /// This method did not exist until 24-08-2026 while `Capability::XfaFlatten`
-    /// was already on the tier table -- a capability a customer buys, with no
-    /// route to reach it from the facade. See #198.
+    /// Returns [`Error::XfaFailed`] on parse, layout or render failure.
     pub fn flatten_xfa(&self) -> Result<Vec<u8>> {
-        self.require_capability(Capability::XfaFlatten)?;
         pdf_engine::xfa::flatten(&self.engine).map_err(crate::xfa::map_xfa_err)
     }
 
@@ -1226,7 +1159,6 @@ impl PdfDocument {
     /// As [`flatten_xfa`](Self::flatten_xfa), plus a needs-password error when
     /// neither this password nor the empty one opens the document.
     pub fn flatten_xfa_with_password(&self, password: &str) -> Result<Vec<u8>> {
-        self.require_capability(Capability::XfaFlatten)?;
         pdf_engine::xfa::flatten_with_password(&self.engine, password)
             .map_err(crate::xfa::map_xfa_err)
     }
@@ -1263,7 +1195,6 @@ impl PdfDocument {
     /// consolidated surface is in place so 1.0 code compiles against
     /// the final API, but the rendering pipeline lands post-freeze.
     pub fn add_decoration(&mut self, decoration: PageDecoration) -> Result<()> {
-        self.require_capability(Capability::PdfWrite)?;
         match decoration {
             PageDecoration::Watermark { text, options } => {
                 use pdf_manip::watermark as wm;
@@ -1333,11 +1264,7 @@ impl PdfDocument {
     /// Works on every target, wasm32 included — `pdf-docx` touches no
     /// filesystem.
     ///
-    /// # Capability
-    ///
-    /// Requires [`Capability::DocxExport`].
     pub fn to_docx_bytes(&self) -> Result<Vec<u8>> {
-        self.require_capability(Capability::DocxExport)?;
         let pdf_bytes = self.to_bytes()?;
         pdf_docx::convert_pdf_bytes_to_docx(&pdf_bytes)
             .map_err(|e| internal_error(format!("docx conversion failed: {e}")))
@@ -1346,11 +1273,7 @@ impl PdfDocument {
     /// Convert the document to `.xlsx` and return the bytes. See
     /// [`Self::to_docx_bytes`] for why the byte form exists.
     ///
-    /// # Capability
-    ///
-    /// Requires [`Capability::XlsxExport`].
     pub fn to_xlsx_bytes(&self) -> Result<Vec<u8>> {
-        self.require_capability(Capability::XlsxExport)?;
         let pdf_bytes = self.to_bytes()?;
         pdf_xlsx::convert_pdf_bytes_to_xlsx(&pdf_bytes)
             .map_err(|e| internal_error(format!("xlsx conversion failed: {e}")))
@@ -1359,11 +1282,7 @@ impl PdfDocument {
     /// Convert the document to `.pptx` and return the bytes, one slide per
     /// page. See [`Self::to_docx_bytes`] for why the byte form exists.
     ///
-    /// # Capability
-    ///
-    /// Requires [`Capability::PptxExport`].
     pub fn to_pptx_bytes(&self) -> Result<Vec<u8>> {
-        self.require_capability(Capability::PptxExport)?;
         let pdf_bytes = self.to_bytes()?;
         pdf_pptx::convert_pdf_bytes_to_pptx(&pdf_bytes)
             .map_err(|e| internal_error(format!("pptx conversion failed: {e}")))
@@ -1375,11 +1294,6 @@ impl PdfDocument {
     /// text-extraction pipeline over the PDF and emits an Office Open XML
     /// document. The conversion is text-oriented: tables, layout and
     /// images are best-effort and may not round-trip perfectly.
-    ///
-    /// # Capability
-    ///
-    /// Requires [`Capability::DocxExport`] (Business tier and up per
-    /// RFC §6.3).
     ///
     /// # 1.0 note
     ///
@@ -1398,7 +1312,6 @@ impl PdfDocument {
         )
     )]
     pub fn to_docx<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        self.require_capability(Capability::DocxExport)?;
         let pdf_bytes = self.to_bytes()?;
         let docx_bytes = pdf_docx::convert_pdf_bytes_to_docx(&pdf_bytes)
             .map_err(|e| internal_error(format!("docx conversion failed: {e}")))?;
@@ -1424,10 +1337,6 @@ impl PdfDocument {
     /// PDF has no table model — so the result is best-effort and worth checking
     /// against the source for anything load-bearing.
     ///
-    /// # Capability
-    ///
-    /// Requires [`Capability::XlsxExport`].
-    ///
     /// # Why this exists
     ///
     /// `pdf-xlsx` has existed and been published for a long time, but the facade
@@ -1445,7 +1354,6 @@ impl PdfDocument {
         )
     )]
     pub fn to_xlsx<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        self.require_capability(Capability::XlsxExport)?;
         let pdf_bytes = self.to_bytes()?;
         let xlsx_bytes = pdf_xlsx::convert_pdf_bytes_to_xlsx(&pdf_bytes)
             .map_err(|e| internal_error(format!("xlsx conversion failed: {e}")))?;
@@ -1468,10 +1376,6 @@ impl PdfDocument {
     ///
     /// Routes to [`pdf_pptx::convert_pdf_bytes_to_pptx`], one slide per page.
     ///
-    /// # Capability
-    ///
-    /// Requires [`Capability::PptxExport`].
-    ///
     /// # Why this exists
     ///
     /// Same as [`Document::to_xlsx`]: the crate was published and tested, the
@@ -1486,7 +1390,6 @@ impl PdfDocument {
         )
     )]
     pub fn to_pptx<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        self.require_capability(Capability::PptxExport)?;
         let pdf_bytes = self.to_bytes()?;
         let pptx_bytes = pdf_pptx::convert_pdf_bytes_to_pptx(&pdf_bytes)
             .map_err(|e| internal_error(format!("pptx conversion failed: {e}")))?;
@@ -1513,9 +1416,6 @@ impl PdfDocument {
     ///
     /// Returns the list of written paths in page order.
     ///
-    /// # Capability
-    ///
-    /// Requires [`Capability::RenderRaster`] (available at every tier).
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg_attr(
         feature = "tracing",
@@ -1532,7 +1432,6 @@ impl PdfDocument {
     ) -> Result<ToImagesReport> {
         use pdf_engine::render::RenderOptions;
 
-        self.require_capability(Capability::RenderRaster)?;
         self.check_image_pixel_limits()?;
 
         let total = self.engine.page_count();
@@ -1610,8 +1509,6 @@ impl PdfDocument {
     ///
     /// # Errors
     ///
-    /// - [`Error::FeatureNotInTier`] if the active license does not grant
-    ///   [`crate::capability::Capability::RenderRaster`].
     /// - [`Error::Internal`] if `page` is 0, exceeds [`page_count`](Self::page_count),
     ///   or the render / encode step fails.
     ///
@@ -1628,7 +1525,6 @@ impl PdfDocument {
     pub fn render_page(&self, page: usize, dpi: u32, format: ImageFormat) -> Result<Vec<u8>> {
         use pdf_engine::render::{PixelFormat, RenderOptions};
 
-        self.require_capability(Capability::RenderRaster)?;
         let total = self.engine.page_count();
         if page == 0 || page > total {
             return Err(internal_error(format!(
@@ -1709,16 +1605,11 @@ impl PdfDocument {
     ///
     /// Returns a [`CompressReport`] describing what each pass did.
     ///
-    /// # Capability
-    ///
-    /// Core-tier (always available).
     #[cfg_attr(
         feature = "tracing",
         tracing::instrument(target = "pdfluent", skip(self, opts))
     )]
     pub fn compress(&mut self, opts: CompressOptions) -> Result<CompressReport> {
-        self.require_capability(Capability::PdfWrite)?;
-
         let mut report = CompressReport::default();
 
         if opts.subset_fonts {
@@ -1781,11 +1672,7 @@ impl PdfDocument {
     /// Smaller output files without visual changes. Routes to
     /// [`pdf_manip::font_subset::subset_fonts`].
     ///
-    /// # Capability
-    ///
-    /// Core-tier (always available).
     pub fn subset_fonts(&mut self) -> Result<FontSubsetReport> {
-        self.require_capability(Capability::PdfWrite)?;
         let subset = pdf_manip::font_subset::subset_fonts(&mut self.lopdf)
             .map_err(|e| internal_error(format!("font subsetting failed: {e:?}")))?;
         self.refresh_from_lopdf()?;
@@ -1816,7 +1703,6 @@ impl PdfDocument {
     /// writes no widths and registers the font on no page -- an `Ok(())` the
     /// caller could not tell from a real one.
     pub fn embed_font(&mut self, font_data: &[u8], name: &str) -> Result<String> {
-        self.require_capability(Capability::PdfWrite)?;
         let embedded = pdf_manip::embed_font::embed_font(&mut self.lopdf, font_data, name)
             .map_err(|e| internal_error(format!("font embedding failed: {e}")))?;
         self.refresh_from_lopdf()?;
@@ -1827,12 +1713,7 @@ impl PdfDocument {
     ///
     /// Routes to [`pdf_manip::image_insert::insert_image`].
     ///
-    /// # Capability
-    ///
-    /// Core-tier (always available).
     pub fn insert_image(&mut self, img: ImageInsert) -> Result<ImageInsertReport> {
-        self.require_capability(Capability::PdfWrite)?;
-
         let total = self.engine.page_count();
         if img.page == 0 || img.page > total {
             return Err(internal_error(format!(
@@ -1879,7 +1760,6 @@ impl PdfDocument {
     /// - [`Error::Internal`] wrapping "page out of range" if `page` is 0 or
     ///   exceeds [`page_count`](Self::page_count).
     pub fn rotate_page(&mut self, page: usize, rotation: Rotation) -> Result<()> {
-        self.require_capability(Capability::PageOps)?;
         let total = self.engine.page_count();
         if page == 0 || page > total {
             return Err(internal_error(format!(
@@ -1930,8 +1810,6 @@ impl PdfDocument {
         tracing::instrument(target = "pdfluent", skip(self, opts))
     )]
     pub fn encrypt(&mut self, opts: EncryptOptions) -> Result<()> {
-        self.require_capability(Capability::EncryptionWrite)?;
-
         // Build the pdf-manip encrypt config. Empty passwords mean the
         // caller did not supply one; leave them empty (lopdf accepts).
         let user_pw_bytes = opts.user_password.unwrap_or_default().into_bytes();
@@ -1968,7 +1846,6 @@ impl PdfDocument {
         tracing::instrument(target = "pdfluent", skip(self, password))
     )]
     pub fn decrypt(&mut self, password: &str) -> Result<()> {
-        self.require_capability(Capability::EncryptionRead)?;
         pdf_manip::encrypt::decrypt(&mut self.lopdf, password)?;
         self.refresh_from_lopdf()
     }
@@ -1988,7 +1865,6 @@ impl PdfDocument {
         signer: &dyn crate::signer::PdfSigner,
         opts: crate::signer::SignOptions,
     ) -> Result<()> {
-        self.require_capability(Capability::DigitalSignatureSign)?;
         profile_is_reachable(opts.profile)?;
         let pdf_bytes = self.to_bytes()?;
         let inner_opts = map_sign_options(&opts);
@@ -2005,7 +1881,6 @@ impl PdfDocument {
     /// Does **not** cryptographically validate. Use
     /// [`verify_signatures`](Self::verify_signatures) for the full report.
     pub fn signatures(&self) -> Result<Vec<crate::signer::SignatureInfo>> {
-        self.require_capability(Capability::DigitalSignatureVerify)?;
         let pdf = self.engine.pdf();
         let fields = pdf_sign::signature_fields(pdf);
         let mut out = Vec::with_capacity(fields.len());
@@ -2027,7 +1902,6 @@ impl PdfDocument {
         tracing::instrument(target = "pdfluent", skip(self))
     )]
     pub fn verify_signatures(&self) -> Result<crate::signer::SignatureValidationReport> {
-        self.require_capability(Capability::DigitalSignatureVerify)?;
         let pdf = self.engine.pdf();
         let results = pdf_sign::validate_signatures(pdf);
         let validations = results
@@ -2078,7 +1952,6 @@ impl PdfDocument {
         )
     )]
     pub fn redact(&mut self, text: &str, opts: crate::redact::RedactOptions) -> Result<()> {
-        self.require_capability(Capability::Redaction)?;
         let search_opts = pdf_redact::RedactSearchOptions {
             case_sensitive: opts.case_sensitive,
             regex: opts.regex,
@@ -2103,7 +1976,6 @@ impl PdfDocument {
     /// filters (JBIG2, JPEG2000) cause the operation to fail. Overlapping
     /// annotations and XMP metadata are cleaned during apply.
     pub fn redact_region(&mut self, page: usize, rect: [f64; 4]) -> Result<()> {
-        self.require_capability(Capability::Redaction)?;
         let mut redactor = pdf_redact::Redactor::new();
         redactor.mark(pdf_redact::RedactionArea {
             page: page as u32,
@@ -2161,37 +2033,14 @@ impl PdfDocument {
         Ok(rev)
     }
 
-    /// Bookkeeping after a text-edit commit: stamp the trial notice when the
-    /// effective tier is Trial, advance the stored revision, and re-sync the
-    /// engine view when the commit touched the document.
-    ///
-    /// The trial notice is the deliberate trade for having
-    /// [`Capability::TextEdit`] available in every tier including Trial: the
-    /// feature is fully usable for evaluation, and licensed tiers edit
-    /// without the notice.
+    /// Bookkeeping after a text-edit commit: advance the stored revision and
+    /// re-sync the engine view when the commit touched the document.
     fn after_text_edit_commit(
         &mut self,
         report: &pdf_manip::text_edit::TextReplacementReport,
     ) -> Result<()> {
         if report.replacements_applied == 0 {
             return Ok(());
-        }
-        let tier = license::effective_tier_with_override(self.license_key_override.as_deref());
-        if tier == crate::Tier::Trial && !report.pages_modified.is_empty() {
-            use pdf_manip::watermark::{
-                apply_text_watermark, Color, Layer, PageSelection, Position, TextWatermark,
-            };
-            let notice = TextWatermark {
-                text: "Edited with PDFluent trial - pdfluent.com".into(),
-                font_size: 8.0,
-                rotation: 0.0,
-                opacity: 0.6,
-                color: Color::Gray(0.45),
-                position: Position::BottomLeft(24.0, 12.0),
-                layer: Layer::Foreground,
-            };
-            let selection = PageSelection::Pages(report.pages_modified.clone());
-            apply_text_watermark(&mut self.lopdf, &notice, &selection)?;
         }
         self.text_edit_revision = Some(report.next_revision);
         self.sync_engine()?;
@@ -2211,8 +2060,7 @@ impl PdfDocument {
     /// regions are found and reported with `editable = false` rather than
     /// silently omitted.
     ///
-    /// Available in every tier ([`Capability::TextEdit`]); searching never
-    /// modifies the document.
+    /// Searching never modifies the document.
     ///
     /// # Example
     ///
@@ -2228,7 +2076,6 @@ impl PdfDocument {
         &mut self,
         query: pdf_manip::text_edit::TextQuery,
     ) -> Result<Vec<pdf_manip::text_edit::TextMatch>> {
-        self.require_capability(Capability::TextEdit)?;
         let revision = self.current_text_edit_revision()?;
         let mut session = pdf_manip::text_edit::begin_text_edit(&mut self.lopdf, revision)
             .map_err(|e| Error::TextEditFailed {
@@ -2247,10 +2094,6 @@ impl PdfDocument {
     /// documents are refused unless
     /// [`SignaturePolicy::AllowPostSignatureChange`](pdf_manip::text_edit::SignaturePolicy)
     /// is set in `options`.
-    ///
-    /// Available in every tier ([`Capability::TextEdit`]). **Trial-tier
-    /// edits stamp a small "PDFluent trial" notice on each modified page**;
-    /// licensed tiers edit without the notice.
     ///
     /// # Example
     ///
@@ -2271,7 +2114,6 @@ impl PdfDocument {
         replacement: &str,
         options: pdf_manip::text_edit::ReplaceOptions,
     ) -> Result<pdf_manip::text_edit::TextReplacementReport> {
-        self.require_capability(Capability::TextEdit)?;
         let revision = self.current_text_edit_revision()?;
         let report = pdf_manip::text_edit::replace_text(
             &mut self.lopdf,
@@ -2295,10 +2137,6 @@ impl PdfDocument {
     /// All edits commit under `options` (default: `AllOrNothing` — any
     /// invalid edit aborts the whole transaction with a typed error).
     ///
-    /// Available in every tier ([`Capability::TextEdit`]). **Trial-tier
-    /// edits stamp a small "PDFluent trial" notice on each modified page**;
-    /// licensed tiers edit without the notice.
-    ///
     /// # Example
     ///
     /// ```no_run
@@ -2320,7 +2158,6 @@ impl PdfDocument {
         edits: &[(pdf_manip::text_edit::MatchId, String)],
         options: pdf_manip::text_edit::ReplaceOptions,
     ) -> Result<pdf_manip::text_edit::TextReplacementReport> {
-        self.require_capability(Capability::TextEdit)?;
         let revision = self.current_text_edit_revision()?;
         let mut session = pdf_manip::text_edit::begin_text_edit(&mut self.lopdf, revision)
             .map_err(|e| Error::TextEditFailed {
@@ -2354,9 +2191,6 @@ impl PdfDocument {
         // original backing bytes (needed for incremental save) across the
         // re-parse; `from_bytes` alone would reset them.
         let mut opts = OpenOptions::new();
-        if let Some(ref key) = self.license_key_override {
-            opts = opts.with_license_key(key.clone());
-        }
         if let Some(ref limits) = self.processing_limits {
             opts = opts.with_processing_limits(limits.clone());
         }
@@ -2380,8 +2214,7 @@ impl PdfDocument {
     /// method to check whether the document passes without error-severity
     /// violations.
     ///
-    /// Requires the `pdfa` feature and a license tier that grants
-    /// [`Capability::PdfaValidate`].
+    /// Requires the `pdfa` feature.
     ///
     /// # Example
     ///
@@ -2401,7 +2234,6 @@ impl PdfDocument {
         &self,
         profile: crate::compliance::PdfAProfile,
     ) -> Result<crate::compliance::PdfAValidationReport> {
-        self.require_capability(Capability::PdfaValidate)?;
         let raw = pdf_compliance::validate_pdfa(self.engine.pdf(), profile.into());
         Ok(crate::compliance::report_from_compliance(raw, profile))
     }
@@ -2419,8 +2251,7 @@ impl PdfDocument {
     /// some source documents cannot be made conformant without changing how
     /// they look, which an archival converter must not do silently.
     ///
-    /// Requires the `pdfa` feature and a license tier granting the matching
-    /// [`Capability::PdfaConvertA1b`]/[`A2b`](Capability::PdfaConvertA2b)/[`A3b`](Capability::PdfaConvertA3b).
+    /// Requires the `pdfa` feature.
     ///
     /// # Example
     ///
@@ -2435,12 +2266,6 @@ impl PdfDocument {
     #[cfg(feature = "pdfa")]
     pub fn convert_to_pdfa(&self, profile: crate::compliance::PdfAProfile) -> Result<PdfDocument> {
         use crate::compliance::PdfAProfile;
-
-        self.require_capability(match profile {
-            PdfAProfile::A1b => Capability::PdfaConvertA1b,
-            PdfAProfile::A2b => Capability::PdfaConvertA2b,
-            PdfAProfile::A3b => Capability::PdfaConvertA3b,
-        })?;
 
         let opts = pdf_manip::pdfa::PdfAConvertOptions {
             conformance: match profile {
@@ -2483,7 +2308,6 @@ impl PdfDocument {
     /// per-page in 1.0; this is a best-effort split that only preserves
     /// page content.
     pub fn split_pages(&self) -> Result<Vec<PdfDocument>> {
-        self.require_capability(Capability::PageOps)?;
         let split = pdf_manip::pages::split_per_page(&self.lopdf)?;
         let mut out = Vec::with_capacity(split.len());
         for lopdf_doc in split {
@@ -2511,7 +2335,6 @@ impl PdfDocument {
     /// - [`Error::Internal`] if the normalised range is empty or points
     ///   past the end of the document.
     pub fn extract_pages<R: std::ops::RangeBounds<usize>>(&self, range: R) -> Result<PdfDocument> {
-        self.require_capability(Capability::PageOps)?;
         let total = self.engine.page_count();
         let (start, end) = normalise_page_range(&range, total)?;
         let pages: Vec<u32> = (start..=end).map(|p| p as u32).collect();
@@ -2629,8 +2452,6 @@ impl PdfDocument {
         )
     )]
     pub fn save_with<P: AsRef<Path>>(&self, path: P, opts: SaveOptions) -> Result<()> {
-        self.require_capability(Capability::PdfWrite)?;
-
         // Refuse rather than quietly ignore. Until 23-08-2026 this flag was
         // set, stored and never read by anything: a caller asked for a
         // linearized file, got Ok, and got an ordinary one. That is the silent
@@ -2689,7 +2510,6 @@ impl PdfDocument {
         tracing::instrument(target = "pdfluent", skip(self))
     )]
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        self.require_capability(Capability::PdfWrite)?;
         let mut buf = Vec::with_capacity(64 * 1024);
         // lopdf::Document::save_to takes &mut self; clone so `to_bytes`
         // stays &self. For documents up to ~200 MB this is acceptable;
@@ -2715,8 +2535,6 @@ impl PdfDocument {
         tracing::instrument(target = "pdfluent", skip(self))
     )]
     pub fn to_incremental_bytes(&self) -> Result<Vec<u8>> {
-        self.require_capability(Capability::PdfWrite)?;
-
         // 1. Encryption check: refuse if encrypted.
         if self.lopdf.is_encrypted() {
             return Err(Error::Unsupported(
@@ -2778,7 +2596,6 @@ impl PdfDocument {
     /// streams (`/AP` `/N`) directly into the page content streams, removing them
     /// from the pages' annotation catalogs and from the document.
     pub fn flatten_annotations(&mut self) -> Result<()> {
-        self.require_capability(Capability::PdfWrite)?;
         pdf_annot::flatten_annotations(&mut self.lopdf)
             .map_err(|e| internal_error(format!("Failed to flatten annotations: {e}")))?;
         self.refresh_from_lopdf()
@@ -2786,7 +2603,6 @@ impl PdfDocument {
 
     /// Write the document to a [`std::io::Write`] sink.
     pub fn write_to<W: Write>(&self, mut writer: W) -> Result<()> {
-        self.require_capability(Capability::PdfWrite)?;
         let bytes = self.to_bytes()?;
         writer
             .write_all(&bytes)
@@ -3003,7 +2819,6 @@ pub struct Page<'a> {
 impl Page<'_> {
     /// Extract text from this page.
     pub fn text(&self) -> Result<String> {
-        self.doc.require_capability(Capability::TextExtract)?;
         let text = self.doc.engine.extract_text(self.index)?;
         Ok(text)
     }
@@ -3548,39 +3363,6 @@ mod tests {
             engine_bytes_after,
             engine_bytes_before.as_slice(),
             "engine must no longer be stale after sync_engine"
-        );
-    }
-
-    /// Capability gate: `extract_text` must return `Error::FeatureNotInTier`
-    /// when the effective tier does not include `Capability::TextExtract`.
-    ///
-    /// `TextExtract` is granted to all tiers (including Trial), so we verify
-    /// the gate by constructing the `FeatureNotInTier` variant directly and
-    /// asserting its `code()` matches the stable error code — this is the
-    /// same approach used in `tests/capability_enforcement.rs` for caps that
-    /// are not currently withheld from any real tier.
-    #[test]
-    fn extract_text_capability_gate_error_is_well_formed() {
-        use crate::capability::Capability;
-        use crate::error::Error;
-        use crate::tier::Tier;
-
-        // Construct the error that `extract_text` would return if a future
-        // tier configuration excluded TextExtract.
-        let err = Error::FeatureNotInTier {
-            capability: Capability::TextExtract,
-            current_tier: Tier::Trial,
-            required_tier: Tier::Developer,
-        };
-        assert_eq!(
-            err.code(),
-            "E-LICENSE-FEATURE-NOT-IN-TIER",
-            "stable error code must match RFC §5.4",
-        );
-        let rendered = format!("{err}");
-        assert!(
-            rendered.contains("TextExtract"),
-            "Display must mention the missing capability; got {rendered:?}",
         );
     }
 }
