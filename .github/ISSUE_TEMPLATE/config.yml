@@ -1,0 +1,19 @@
+# Where the issues that are not bug reports go (#233).
+#
+# `blank_issues_enabled: false` is the load-bearing line. With a blank issue
+# available, the forms above are a suggestion, and the report that skips them is
+# exactly the one that needed them. The two links below are the cases the forms
+# deliberately do not cover: a vulnerability, which must not be published, and a
+# licensing question, which is not a defect in anything.
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/pdfluent/pdfluent-sdk/blob/main/SECURITY.md
+    about: >
+      Report it privately to the address in SECURITY.md. A public issue
+      publishes the flaw to everyone who has not yet updated.
+  - name: Commercial licence, pricing, or an AGPL question
+    url: mailto:sales@pdfluent.com
+    about: >
+      PDFluent is offered under the AGPLv3 or a commercial licence. Which one
+      fits is a question about your situation rather than about this code.

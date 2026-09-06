@@ -1,0 +1,74 @@
+# What a stranger's first bug report should carry (#233).
+#
+# A free-text issue box costs two or three round trips before the report is
+# reproducible: the version is missing, the input is described rather than
+# attached, and nobody knows what was expected. Every field below exists because
+# its absence is what a maintainer asks for next.
+#
+# WHY THE SIGN-OFF LINE IS ON AN ISSUE FORM
+#
+# Because a patch pasted into an issue is the commonest way an unsigned
+# contribution arrives: it never passes through the pull request the sign-off
+# gate reads, and merging it by hand certifies nothing. Saying it here is the
+# only moment before that happens.
+name: Bug report
+description: Something behaves differently than documented, or crashes.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **A security vulnerability does not belong here.** It goes to the
+        address in
+        [SECURITY.md](https://github.com/pdfluent/pdfluent-sdk/blob/main/SECURITY.md)
+        instead — a public issue publishes the flaw before there is a fix.
+        The link is absolute on purpose: a relative one on the new-issue page
+        resolves against `/issues/new` and lands nowhere.
+
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce it
+      description: >
+        The shortest code or command that shows it. Attach the PDF if the
+        behaviour depends on one — a description of a file is not a file, and
+        most parser bugs live in the bytes rather than in the API call.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The crate or package version, or the commit you built.
+      placeholder: "1.0.0-beta.17"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: "macOS 15 arm64, Rust 1.83"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: signoff
+    attributes:
+      label: If you attach a patch
+      options:
+        - label: >
+            I understand that any change I contribute is signed off with
+            `git commit -s`, certifying the Developer Certificate of Origin —
+            see CONTRIBUTING.md.
+          required: false

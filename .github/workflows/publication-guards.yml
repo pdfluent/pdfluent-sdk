@@ -144,3 +144,11 @@ jobs:
       - name: Every required check is a job a pull request here reports
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/public_repos_are_protected.py --tree-only
+      # No API and no seeding: it reads this tree and docs/PUBLIC_TREE.toml, so
+      # unlike the guard above it can say the whole truth on a hosted runner.
+      - name: The contribution guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_public_contribution_files_are_complete.py
+      - name: The files a contributor meets are present, honest, and published
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/public_contribution_files_are_complete.py

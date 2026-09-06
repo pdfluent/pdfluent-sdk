@@ -381,6 +381,12 @@ zwaar interntst python3 scripts/ci/test_internal_stays_internal.py
 # nothing else in this tree would ever look at.
 run protectst python3 scripts/ci/test_public_repos_are_protected.py
 run protected python3 scripts/ci/public_repos_are_protected.py
+# The other half of the same question (#233): protection decides what may be
+# merged, these files decide whether an outsider ever learns what is expected of
+# a change at all. Offline and instant -- it reads the tree and the list of paths
+# the seeding strips, so it belongs in the fast lane and runs in the workflow too.
+run contribst python3 scripts/ci/test_public_contribution_files_are_complete.py
+run contribfl python3 scripts/ci/public_contribution_files_are_complete.py
 run territst  python3 scripts/ci/test_territories_do_not_overlap.py
 run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
