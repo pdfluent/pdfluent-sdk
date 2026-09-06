@@ -70,6 +70,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # Two guards here parse workflow YAML, and a runner without a preinstall
+      # answers a missing pyyaml with ModuleNotFoundError -- a guard that fails
+      # for want of a module rather than for want of a finding.
+      # `a_job_has_what_its_scripts_import.py` is what noticed.
+      - run: pip install --quiet pyyaml
       # Every step runs whatever the others did. A red test must not hide a red
       # tree, and a red tree must not hide a second one.
       - name: The NOTICE guard bites in both directions

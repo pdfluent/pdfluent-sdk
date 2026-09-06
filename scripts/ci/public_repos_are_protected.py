@@ -175,19 +175,32 @@ def bescherming(repo: str, tak: str) -> dict | None:
         return None
 
 
-def groen_gezien(repo: str, tak: str) -> set[str]:
-    """Check names that reported success on the head of `tak`.
+# How far back the evidence for question 4 is gathered. One commit is too few:
+# a head pushed while Actions was disabled -- which happened here on 05-09-2026
+# when the budget ran out -- carries no check runs at all, and reading only the
+# head would then call every required check "never reported" and fail on it.
+COMMITS_TERUG = 5
+
+
+def groen_gezien(repo: str, tak: str, terug: int = COMMITS_TERUG) -> set[str]:
+    """Check names that have reported success on the last few commits of `tak`.
 
     The evidence for question 4 on a repository this tree does not seed: a check
-    that has been green there once is a check that arrives.
+    that has been green there is a check that arrives.
     """
+    namen: set[str] = set()
     try:
-        sha = json.loads(gh("api", f"repos/{repo}/commits/{tak}"))["sha"]
-        runs = json.loads(gh("api", f"repos/{repo}/commits/{sha}/check-runs"))
-    except (subprocess.CalledProcessError, KeyError, json.JSONDecodeError):
-        return set()
-    return {r["name"] for r in runs.get("check_runs", [])
-            if r.get("conclusion") == "success"}
+        commits = json.loads(gh("api", f"repos/{repo}/commits?sha={tak}&per_page={terug}"))
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        return namen
+    for commit in commits[:terug]:
+        try:
+            runs = json.loads(gh("api", f"repos/{repo}/commits/{commit['sha']}/check-runs"))
+        except (subprocess.CalledProcessError, KeyError, json.JSONDecodeError):
+            continue
+        namen |= {r["name"] for r in runs.get("check_runs", [])
+                  if r.get("conclusion") == "success"}
+    return namen
 
 
 def beoordeel_repo(rij: dict, prot: dict | None, groen: set[str],
@@ -269,7 +282,7 @@ def zet(rij: dict, contexts: list[str], droog: bool) -> None:
     doel = f"repos/{rij['name']}/branches/{rij['branch']}/protection"
     print(f"  PUT {doel}\n      contexts: {contexts}")
     if droog:
-        print("      (dry run -- pass --apply to send it)")
+        print("      (dry run -- drop --dry-run to send it)")
         return
     subprocess.run(["gh", "api", "--method", "PUT", doel, "--input", "-"],
                    input=json.dumps(lichaam), text=True, check=True,
@@ -285,6 +298,8 @@ def main() -> int:
                         "runner without an administration token can honestly do")
     p.add_argument("--apply", action="store_true",
                    help="set the protection the register describes")
+    p.add_argument("--dry-run", action="store_true",
+                   help="with --apply: print what would be sent and send nothing")
     p.add_argument("--repo", help="limit --apply to one repository")
     args = p.parse_args()
 
@@ -328,7 +343,7 @@ def main() -> int:
                       f"never been reported there; requiring it would block every "
                       f"pull request. Open one that runs it first.")
             else:
-                zet(rij, toegestaan, droog=False)
+                zet(rij, toegestaan, droog=args.dry_run)
 
     for r in gemeld:
         print(f"[protection] pending: {r}")
