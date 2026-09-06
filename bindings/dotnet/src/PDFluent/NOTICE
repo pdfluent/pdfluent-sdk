@@ -5,7 +5,7 @@ the project carry different licenses depending on their origin and role.
 Read this file together with the LICENSE file in the repository root.
 
 ============================================================================
-OPEN-SOURCE FOUNDATION (MIT or MIT OR Apache-2.0)
+OPEN-SOURCE FOUNDATION (permissive upstream licences)
 ============================================================================
 
 The following crates are forks of upstream open-source libraries and remain
@@ -19,21 +19,35 @@ their respective open-source licenses:
   pdfluent-cff         MIT OR Apache-2.0
                        (forked from cff-parser)
 
-  pdfluent-ccitt       MIT OR Apache-2.0
+  pdfluent-ccitt       Apache-2.0 OR MIT
                        (forked from hayro-ccitt by Laurenz Stampfl,
                         https://github.com/LaurenzV/hayro)
 
-  pdfluent-jbig2       MIT OR Apache-2.0
+  pdfluent-jbig2       Apache-2.0 OR MIT
                        (forked from hayro-jbig2)
 
-  pdfluent-jpeg2000    MIT OR Apache-2.0
+  pdfluent-jpeg2000    Apache-2.0 OR MIT
                        (forked from hayro-jpeg2000)
 
-  pdf-syntax           MIT OR Apache-2.0
+  pdf-syntax           Apache-2.0 OR MIT
                        (forked from hayro-syntax)
 
-  pdf-interpret        MIT OR Apache-2.0
+  pdf-interpret        Apache-2.0 OR MIT
                        (forked from hayro-interpret)
+
+  pdf-render           Apache-2.0 OR MIT
+                       (substantially extended fork of hayro, co-authored by
+                        Laurenz Stampfl)
+
+  pdf-font             Apache-2.0 OR MIT
+                       (substantially extended fork merging hayro-font,
+                        hayro-cmap and hayro-postscript, co-authored by
+                        Laurenz Stampfl)
+
+pdf-render and pdf-font carry substantial PDFluent work on top of the upstream
+code. That does not move them across the line: they are derivative works of an
+Apache-2.0 OR MIT original whose relicensing is prohibited, so they stay
+Apache-2.0 OR MIT here, however far they are extended.
 
 The original copyright notices for these upstream projects are preserved
 in their respective source files and in the THIRD_PARTY_LICENSES.txt file.
@@ -62,12 +76,19 @@ that. See https://pdfluent.com/pricing.
   pdfluent-forms       — AcroForm support
   pdf-annot            — annotations
   pdf-docx             — DOCX export
+  pdf-xlsx             — XLSX export and table extraction
+  pdf-pptx             — PowerPoint PPTX export
+  pdf-invoice          — FDF/XFDF form data exchange and ZUGFeRD/Factur-X
+  pdf-text-format      — text run formatting
+  pdf-standard-fonts   — the Standard 14 font programs, compiled in
+                         (the font programs themselves come from PDFium,
+                          © 2014 Foxit Software Inc., BSD-3-Clause; that
+                          notice ships inside the crate)
   pdf-ocr              — OCR integration
-  pdf-render           — page rendering (substantially extended fork)
-  pdf-font             — font handling (substantially extended fork)
   pdf-xfa              — XFA processing engine
   xfa-dom-resolver     — XFA DOM
   xfa-layout-engine    — XFA layout engine
+  xfa-js-sandboxed     — sandboxed JavaScript runtime for XFA scripts
   formcalc-interpreter — FormCalc evaluation
   xfa-json             — XFA JSON conversion
   xfa-license          — license enforcement runtime
