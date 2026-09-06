@@ -24,7 +24,9 @@ kapot blijven -- maar wel op de manier die zijn naam belooft.
 """
 
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 WORTEL = Path(__file__).resolve().parent.parent.parent
@@ -52,6 +54,53 @@ PATRONEN = [
 ]
 
 
+GENERATOR = WORTEL / "scripts" / "corpus-generate-mini.py"
+
+
+def controleer(bestanden: list[Path], waar: str) -> list[str]:
+    """De patronen over een verzameling documenten, met hun herkomst erbij."""
+    fouten = []
+    for pad in bestanden:
+        data = pad.read_bytes()
+        for patroon, uitleg in PATRONEN:
+            treffers = patroon.findall(data)
+            if treffers:
+                fouten.append(f"{waar}{pad.name}: {len(treffers)}x {uitleg}")
+    return fouten
+
+
+def uit_de_generator() -> tuple[list[str], str | None]:
+    """Dezelfde patronen over wat de generator VANDAAG schrijft.
+
+    DE COMMITTED DOCUMENTEN WAREN GEREPAREERD EN DE GENERATOR NIET.
+
+    Acht van de elf droegen `<<//Length`, en die vorm kwam niet uit een
+    typefout in acht bestanden: `scripts/corpus-generate-mini.py` schreef hem,
+    omdat elke aanroep de dictionary opende met `"<</"` en de generator er
+    `/Length` achter plakte. De bestanden zijn in augustus met de hand hersteld.
+    De generator niet -- dus wie het corpus opnieuw genereerde, schreef alle acht
+    precies zo terug.
+
+    Dat is de reden dat deze controle de generator draait in plaats van alleen de
+    map te lezen: een document repareren zonder de bron ervan te repareren, laat
+    de fout staan op de enige plek waar hij zichzelf herhaalt (#236).
+    """
+    if not GENERATOR.is_file():
+        return [], f"{GENERATOR.name} bestaat niet"
+    with tempfile.TemporaryDirectory() as td:
+        uit = subprocess.run(
+            [sys.executable, str(GENERATOR), td],
+            capture_output=True, text=True, check=False,
+        )
+        if uit.returncode != 0:
+            eerste = ((uit.stderr or uit.stdout).strip().splitlines() or ["geen uitvoer"])[-1]
+            return [f"de generator zelf viel om: {eerste}"], None
+        geschreven = sorted(Path(td).glob("*.pdf"))
+        if len(geschreven) < 5:
+            return [f"de generator schreef maar {len(geschreven)} document(en)"], None
+        return controleer(geschreven, "generator "), None
+
+
 def main() -> int:
     if not CORPUS.is_dir():
         print(f"SKIPPED (not a pass): {CORPUS} bestaat niet", file=sys.stderr)
@@ -66,13 +115,9 @@ def main() -> int:
         )
         return 1
 
-    fouten = []
-    for pad in bestanden:
-        data = pad.read_bytes()
-        for patroon, uitleg in PATRONEN:
-            treffers = patroon.findall(data)
-            if treffers:
-                fouten.append(f"{pad.name}: {len(treffers)}x {uitleg}")
+    fouten = controleer(bestanden, "")
+    uit_generator, overgeslagen = uit_de_generator()
+    fouten += uit_generator
 
     if fouten:
         print("[fixtures] documenten met een onbedoelde syntaxfout:\n", file=sys.stderr)
@@ -85,7 +130,11 @@ def main() -> int:
         )
         return 1
 
-    print(f"[fixtures] {len(bestanden)} documenten, geen onbedoelde syntaxfouten")
+    if overgeslagen:
+        print(f"[fixtures] SKIPPED (not a pass) voor de generator: {overgeslagen}",
+              file=sys.stderr)
+    print(f"[fixtures] {len(bestanden)} documenten, geen onbedoelde syntaxfouten, "
+          "en de generator schrijft er ook geen")
     return 0
 
 

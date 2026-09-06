@@ -25,22 +25,36 @@ def pdf_object(obj_num: int, content: str) -> bytes:
 
 
 def pdf_stream(obj_num: int, dictionary: str, data: bytes) -> bytes:
+    """A stream object, whose /Length this function owns.
+
+    THE `<<//Length` DEFECT WAS BORN HERE (#203, #236).
+
+    Every caller passed the dictionary opener as the string `"<</"` and this
+    function appended `/Length`, so the key came out as `//Length`: a double
+    slash, a name nobody looks up, and a stream whose length is therefore
+    unknown. lopdf refused to load the object; the engine reads more tolerantly
+    and produced text anyway, so nothing went red. Redaction reported "no
+    matches" on documents the term is plainly in.
+
+    Eight of the eleven committed fixtures carried it for three months. They were
+    repaired by hand in August and THIS FUNCTION WAS NOT, so anybody regenerating
+    the corpus would have written all eight back exactly as they were.
+
+    The separator is added here rather than expected from the caller: a caller
+    that has to remember it is a caller that will forget it, which is what
+    happened ten times out of ten.
+    """
+    opener = dictionary.rstrip("/")
+    if not opener.startswith("<<"):
+        raise ValueError(
+            f"a stream dictionary must open with `<<`, got {dictionary!r}. "
+            "This function adds /Length itself."
+        )
     return (
-        f"{obj_num} 0 obj\n{dictionary}/Length {len(data)}>>\nstream\n".encode()
+        f"{obj_num} 0 obj\n{opener} /Length {len(data)}>>\nstream\n".encode()
         + data
         + b"\nendstream\nendobj\n"
     )
-
-
-def build_xref_trailer(offsets: list[int], root_ref: str, size: int) -> bytes:
-    xref = b"xref\n"
-    xref += f"0 {len(offsets) + 1}\n".encode()
-    xref += b"0000000000 65535 f \n"
-    for off in offsets:
-        xref += f"{off:010d} 00000 g \n".encode()  # Changed to 'g' for generation
-    # Actually, for active objects it should be 'n' (in use)
-    # Let me fix this
-    return xref  # Will be rebuilt below
 
 
 def make_simple_pdf(pages: int = 1, version: str = "1.7", extra_catalog: str = "",
@@ -81,11 +95,13 @@ def make_simple_pdf(pages: int = 1, version: str = "1.7", extra_catalog: str = "
     pages_obj_num = obj_count + pages + 1  # Reserve number for Pages object
     for i in range(pages):
         pobj = add_obj(
+            # Closed once. The trailing `f">>"` below this line used to add a
+            # second closer, so every page dictionary ended `>>>>>>>>` and the
+            # surplus braces were left for the parser to forgive.
             f"<</Type /Page /Parent {pages_obj_num} 0 R "
             f"/MediaBox [0 0 612 792] "
             f"/Contents {content_objs[i]} 0 R "
             f"/Resources <</Font <</F1 {font_obj} 0 R>>>>>>"
-            f">>"
         )
         page_objs.append(pobj)
 
@@ -96,14 +112,28 @@ def make_simple_pdf(pages: int = 1, version: str = "1.7", extra_catalog: str = "
     )
     assert actual_pages_num == pages_obj_num
 
-    # Extra objects
+    # Extra objects, and the numbers they actually got.
+    #
+    # The number in `extra_objects` was ignored -- the object simply took the
+    # next one -- while the caller wrote its reference into `extra_catalog` by
+    # hand. generate_signed wrote `/Fields [99 0 R]` for an object that became 5,
+    # so the catalog of signed-rsa.pdf pointed at nothing and the document had a
+    # signature no reader could reach. It reported zero signatures for a year,
+    # and a test asserting "this fixture is signed" would have been adjusted to
+    # the fixture rather than the other way round.
+    #
+    # `extra_catalog` may now be a callable, which is handed the numbers the
+    # objects were given. A reference that cannot be typed cannot be mistyped.
+    extra_numbers = []
     if extra_objects:
         for _, content in extra_objects:
-            add_obj(content)
+            extra_numbers.append(add_obj(content))
 
     # Catalog
+    catalog_extra = (extra_catalog(extra_numbers) if callable(extra_catalog)
+                     else extra_catalog)
     catalog = add_obj(
-        f"<</Type /Catalog /Pages {pages_obj_num} 0 R{extra_catalog}>>"
+        f"<</Type /Catalog /Pages {pages_obj_num} 0 R{catalog_extra}>>"
     )
 
     # Xref table
@@ -142,9 +172,54 @@ def generate_multi_page(out: Path):
     out.write_bytes(make_simple_pdf(pages=50))
 
 
+# The XFA package: a template with three fields of different kinds, and a
+# dataset carrying a value for one of them.
+#
+# It was `<xdp:xdp ...></xdp:xdp>` -- an empty package, no template, no fields.
+# `has_xfa_form()` returned false on it, and rightly so: the code was correct and
+# the file did not live up to its name. Anyone writing an XFA test against it
+# tested nothing (#204).
+XFA_TEMPLATE = """<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="mainform" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium short="612pt" long="792pt"/>
+      </pageArea>
+    </pageSet>
+    <field name="fullname" w="3in" h="0.3in" x="0.5in" y="1in">
+      <ui><textEdit/></ui>
+      <value><text>a filled-in name</text></value>
+      <caption><value><text>Name</text></value></caption>
+    </field>
+    <field name="country" w="3in" h="0.3in" x="0.5in" y="1.5in">
+      <ui><choiceList/></ui>
+      <items><text>Netherlands</text><text>Belgium</text><text>Germany</text></items>
+      <caption><value><text>Country</text></value></caption>
+    </field>
+    <field name="agreed" w="0.2in" h="0.2in" x="0.5in" y="2in">
+      <ui><checkButton/></ui>
+      <items><text>1</text><text>0</text></items>
+      <caption><value><text>Agreed</text></value></caption>
+    </field>
+  </subform>
+</template>"""
+
+XFA_DATASETS = """<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <mainform>
+      <fullname>a filled-in name</fullname>
+    </mainform>
+  </xfa:data>
+</xfa:datasets>"""
+
+
 def generate_xfa_form(out: Path):
-    """PDF that contains /XFA key (minimal stub)."""
-    xfa_xml = b"<xdp:xdp xmlns:xdp=\"http://ns.adobe.com/xdp/\"></xdp:xdp>"
+    """PDF carrying an XFA template with three fields, and data for one."""
+    xfa_xml = (
+        '<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">\n'
+        + XFA_TEMPLATE + "\n" + XFA_DATASETS + "\n</xdp:xdp>"
+    ).encode("utf-8")
     # Build PDF with XFA reference
     parts = []
     offsets = []
@@ -197,8 +272,8 @@ def generate_xfa_form(out: Path):
 def generate_signed(out: Path):
     """PDF with /Sig and /ByteRange markers (stub, not cryptographically valid)."""
     data = make_simple_pdf(
-        extra_catalog=(
-            " /AcroForm <</Fields [99 0 R] /SigFlags 3>>"
+        extra_catalog=lambda nums: (
+            f" /AcroForm <</Fields [{nums[0]} 0 R] /SigFlags 3>>"
         ),
         extra_objects=[
             (99, "<</Type /Annot /Subtype /Widget /FT /Sig /T (Signature1) "
