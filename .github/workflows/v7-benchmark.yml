@@ -1,0 +1,130 @@
+name: Benchmark programme (V7)
+
+# The three axes we publish numbers on -- performance, archiving, accuracy --
+# measured by one programme, on our own runner, and never on hosted minutes.
+#
+# WHY IT IS NOT ON A PULL REQUEST
+#
+# Two reasons, and only the second is about money. A run takes minutes of
+# converting and validating, and it would say nothing useful about a branch:
+# `xfa-fast` is a workstation that does other work, so a latency measured while
+# a landing compiles next to it differs from the same code measured at night by
+# more than any change this repository makes. That is written down in
+# benchmarks/BASELINE_HARDWARE.toml as what the class is and is not good for.
+#
+# So it runs on a calendar and on demand, the results carry the machine class
+# they were measured on, and comparing two of them is a decision somebody makes
+# rather than a number a pull request implies.
+#
+# WHY IT MAY FAIL ON A MISSING TOOL
+#
+# veraPDF and mutool are not ours, and both axes that need them record
+# `skipped` with the reason instead of a figure when they are absent. On this
+# runner that is not a limitation but a fault: it is our machine, and a run that
+# quietly measures one axis of three is exactly the partial result that reads as
+# a complete one. The last step says so and stops.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Monday 04:00 UTC. Away from the nightly work, and weekly rather than
+    # nightly because nothing here moves that fast: the corpus is pinned and the
+    # axes are about the shape of the software, not about the last commit.
+    - cron: '0 4 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  # One at a time on one machine. Two of these sharing the desktop would
+  # measure each other.
+  group: v7-benchmark
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # The class this workflow measures. It must have an entry in
+  # benchmarks/BASELINE_HARDWARE.toml and its declared cores must be the cores
+  # the machine has, or the programme writes nothing (#283).
+  BENCH_MACHINE_CLASS: desktop-xfa-fast
+
+jobs:
+  measure:
+    name: Three axes on the fixtures and the gate corpus
+    # Only from the default branch. A dispatch can choose the ref, and this job
+    # runs on the persistent desktop; a branch could otherwise replace the
+    # programme with something that runs as the runner user.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: [self-hosted, xfa-fast]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # The persistent runner hands every job the state the last one left.
+      # Which of gone, dead or unwritable it is, before a build spends forty
+      # minutes finding out. (#264)
+      - name: A mount, a dead disk and a rights problem are told apart
+        run: bash scripts/ci/shared_build_dir_is_there.sh
+      - name: The shared build directory is there and undamaged
+        run: bash scripts/ci/cargo_target_health.sh
+
+      - name: Build the two examples the programme measures through
+        run: |
+          set -euo pipefail
+          cargo build --release -p pdfluent --example performance
+          cargo build --release -p pdf-manip --example pdfa_convert_real
+
+      - name: Materialise the gate corpus from its manifest
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/fetch_gate_corpus.py \
+            --manifest corpus/GATE_CORPUS_MANIFEST.json \
+            --out "${RUNNER_TEMP}/gate-corpus"
+
+      - name: Measure the fixtures
+        run: |
+          set -euo pipefail
+          python3 scripts/benchmarks/v7_benchmark.py measure \
+            --set fixtures --workdir "${RUNNER_TEMP}/v7-fixtures"
+
+      - name: Measure the gate corpus
+        run: |
+          set -euo pipefail
+          python3 scripts/benchmarks/v7_benchmark.py measure \
+            --set gate-corpus \
+            --corpus-dir "${RUNNER_TEMP}/gate-corpus" \
+            --workdir "${RUNNER_TEMP}/v7-gate-corpus"
+
+      # A run that measured one axis of three is not a run. On somebody else's
+      # machine that would be a limitation; on ours it is a fault, and the
+      # reason is in the file this reads.
+      - name: Every axis measured something
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib, sys
+          incomplete = []
+          for path in sorted(pathlib.Path("benchmarks/runs/v7").glob("*.json")):
+              run = json.loads(path.read_text())
+              for axis, skipped in sorted(run["axes"].items()):
+                  if skipped["status"] != "measured":
+                      incomplete.append(f"{run['run_id']} / {axis}: {skipped['why']}")
+          for line in incomplete:
+              print(f"INCOMPLETE (not a pass): {line}", file=sys.stderr)
+          sys.exit(1 if incomplete else 0)
+          PY
+
+      - name: Every published figure still resolves to a run
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_published_number_names_its_run.py
+
+      - name: Keep the runs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: v7-runs-${{ github.run_id }}
+          path: benchmarks/runs/v7/
+          retention-days: 90

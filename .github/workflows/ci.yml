@@ -158,6 +158,14 @@ jobs:
       - name: The baseline-hardware guard still bites
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_a_baseline_names_the_machine.py
+      # The other half of the same rule: a baseline names its machine, and a
+      # figure published from one names its run (#169).
+      - name: Every published figure names the run it came from
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_published_number_names_its_run.py
+      - name: The published-figure guard still bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_published_number_names_its_run.py
       # ---- from licence-registry-guard ----
       - name: Every crate's licence matches the canonical register
         if: ${{ !cancelled() }}
