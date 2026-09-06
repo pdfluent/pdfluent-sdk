@@ -1,5 +1,11 @@
 # pdfluent-lopdf
 
+> **This crate is a fork.** It began as [`lopdf`](https://github.com/J-F-Liu/lopdf) at version 0.44.0 and is
+> maintained separately here. Upstream is actively developed and is the better
+> choice if you do not need the changes made for PDFluent. Licensed as upstream
+> (MIT); see `NOTICE` and `THIRD_PARTY_LICENSES.txt` for the full
+> attribution.
+
 Low-level PDF document object model and writer in pure Rust.
 
 `pdfluent-lopdf` is the parser, object-model, and serializer that the

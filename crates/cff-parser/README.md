@@ -1,5 +1,11 @@
 # pdfluent-cff
 
+> **This crate is a fork.** It began as [`ttf-parser`](https://github.com/RazrFalcon/ttf-parser) and is
+> maintained separately here. Upstream is actively developed and is the better
+> choice if you do not need the changes made for PDFluent. Licensed as upstream
+> (MIT OR Apache-2.0); see `NOTICE` and `THIRD_PARTY_LICENSES.txt` for the full
+> attribution.
+
 A CFF (Compact Font Format) parser in pure Rust, with extensions for
 parsing CFF data embedded in PDF documents.
 

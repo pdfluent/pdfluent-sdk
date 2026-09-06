@@ -1,5 +1,11 @@
 # pdf-render
 
+> **This crate is a fork.** It began as [`hayro`](https://github.com/LaurenzV/hayro) at version 0.5.0 and is
+> maintained separately here. Upstream is actively developed and is the better
+> choice if you do not need the changes made for PDFluent. Licensed as upstream
+> (Apache-2.0 OR MIT); see `NOTICE` and `THIRD_PARTY_LICENSES.txt` for the full
+> attribution.
+
 PDF page rasterizer in pure Rust — vello-backed rendering, no PDFium, WASM-compatible.
 
 This crate is part of the [PDFluent](https://pdfluent.com) commercial Rust PDF SDK.

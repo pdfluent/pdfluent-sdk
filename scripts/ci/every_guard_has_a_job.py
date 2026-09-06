@@ -120,6 +120,21 @@ ALLOWED: dict[str, str] = {
     # one moment at which the answer is worthless. It belongs at the start of a
     # story, in a pair of hands, and CLAUDE.md puts it there as step zero. Its
     # TEST does run, on every pull request, over a fake `gh`.
+    # The measurement needs a full clone of LaurenzV/hayro -- 948 MB, with the
+    # history, because the fork point is a commit and not a version number. No
+    # runner carries that, and fetching it per run would be minutes of network
+    # for a table that changes when the fork moves, which is a handful of times
+    # a year. Run by hand with HAYRO_CLONE set; the committed table is the
+    # result, and `--check` refuses a drifted one.
+    #
+    # What CAN go wrong in silence runs on every pull request as
+    # test_fork_divergence.py: no clone reported as no divergence, a guessed
+    # fork point reported as a measured one, an empty table as a clean one.
+    "fork_divergence.py": (
+        "needs a 948 MB clone of upstream with its history; run by hand with "
+        "HAYRO_CLONE, and test_fork_divergence.py runs in CI"
+    ),
+
     "does_this_already_exist.py": (
         "asked by a person before starting a story, not by a job afterwards; "
         "step zero in CLAUDE.md, and test_does_this_already_exist.py runs in CI"
