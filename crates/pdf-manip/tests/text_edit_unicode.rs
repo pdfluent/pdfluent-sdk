@@ -32,6 +32,7 @@ use pdf_manip::text_edit::{
     begin_text_edit, DocumentRevision, FontFallback, ReplaceOptions, TextQuery,
 };
 use pdf_manip::unicode_font::UnicodeFont;
+use test_skip::skip_test;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -165,8 +166,7 @@ fn type0_fonts(doc: &Document) -> Vec<(Dictionary, Dictionary)> {
 #[test]
 fn writes_scripts_the_source_document_never_contained() {
     let Some(data) = host_font() else {
-        eprintln!("SKIPPED (not a pass): no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
 
     // One per language band the assessment called out as broken.
@@ -195,8 +195,7 @@ fn writes_scripts_the_source_document_never_contained() {
 #[test]
 fn the_embedded_font_is_a_well_formed_identity_h_cid_font() {
     let Some(data) = host_font() else {
-        eprintln!("SKIPPED (not a pass): no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let font = UnicodeFont::from_bytes(data).unwrap();
     if !font.covers("Γειά σου") {
@@ -258,8 +257,7 @@ fn the_embedded_font_is_a_well_formed_identity_h_cid_font() {
 #[test]
 fn the_subsetted_program_is_far_smaller_than_the_original() {
     let Some(data) = host_font() else {
-        eprintln!("SKIPPED (not a pass): no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let original_size = data.len();
     let font = UnicodeFont::from_bytes(data).unwrap();
@@ -290,8 +288,7 @@ fn the_subsetted_program_is_far_smaller_than_the_original() {
 #[test]
 fn the_same_glyph_used_twice_is_stored_once() {
     let Some(data) = host_font() else {
-        eprintln!("SKIPPED (not a pass): no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let font = UnicodeFont::from_bytes(data).unwrap();
 
@@ -316,8 +313,7 @@ fn the_same_glyph_used_twice_is_stored_once() {
 #[test]
 fn refuses_rather_than_writing_blank_boxes_for_missing_glyphs() {
     let Some(data) = host_font() else {
-        eprintln!("SKIPPED (not a pass): no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let font = UnicodeFont::from_bytes(data).unwrap();
 
@@ -342,8 +338,7 @@ fn refuses_rather_than_writing_blank_boxes_for_missing_glyphs() {
 #[test]
 fn latin1_replacements_still_take_the_original_font_route() {
     let Some(data) = host_font() else {
-        eprintln!("SKIPPED (not a pass): no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let font = UnicodeFont::from_bytes(data).unwrap();
 
@@ -424,8 +419,7 @@ fn replace_with_fit(
 fn a_longer_replacement_is_scaled_down_to_fit() {
     use pdf_manip::text_edit::FitPolicy;
     let Some(data) = host_font() else {
-        eprintln!("SKIPPED (not a pass): no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let font = UnicodeFont::from_bytes(data).unwrap();
     let long = "Съешь ещё этих мягких французских булок да выпей чаю";
@@ -453,8 +447,7 @@ fn a_longer_replacement_is_scaled_down_to_fit() {
 fn exact_fit_leaves_the_size_alone() {
     use pdf_manip::text_edit::FitPolicy;
     let Some(data) = host_font() else {
-        eprintln!("SKIPPED (not a pass): no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let font = UnicodeFont::from_bytes(data).unwrap();
     let long = "Съешь ещё этих мягких французских булок да выпей чаю";
@@ -481,8 +474,7 @@ fn exact_fit_leaves_the_size_alone() {
 fn a_shorter_replacement_is_not_enlarged() {
     use pdf_manip::text_edit::FitPolicy;
     let Some(data) = host_font() else {
-        eprintln!("SKIPPED (not a pass): no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let font = UnicodeFont::from_bytes(data).unwrap();
     if !font.covers("Да") {
@@ -503,8 +495,7 @@ fn a_shorter_replacement_is_not_enlarged() {
 fn the_floor_is_reported_rather_than_silently_overrunning() {
     use pdf_manip::text_edit::FitPolicy;
     let Some(data) = host_font() else {
-        eprintln!("SKIPPED (not a pass): no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let font = UnicodeFont::from_bytes(data).unwrap();
     // Far longer than the original: no reasonable size makes this fit.
@@ -549,8 +540,7 @@ fn draw_ops(doc: &Document) -> usize {
 fn reflow_adds_lines_and_keeps_the_font_size() {
     use pdf_manip::text_edit::FitPolicy;
     let Some(data) = host_font() else {
-        eprintln!("SKIPPED (not a pass): no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let font = UnicodeFont::from_bytes(data).unwrap();
     let long = "Съешь ещё этих мягких французских булок да выпей чаю пожалуйста";
@@ -586,8 +576,7 @@ fn reflow_adds_lines_and_keeps_the_font_size() {
 fn reflow_leaves_text_that_already_fits_on_one_line() {
     use pdf_manip::text_edit::FitPolicy;
     let Some(data) = host_font() else {
-        eprintln!("SKIPPED (not a pass): no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let font = UnicodeFont::from_bytes(data).unwrap();
     if !font.covers("Да") {
@@ -611,8 +600,7 @@ fn reflow_restores_the_text_position_for_whatever_follows() {
     use lopdf::content::Content;
     use pdf_manip::text_edit::FitPolicy;
     let Some(data) = host_font() else {
-        eprintln!("SKIPPED (not a pass): no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let font = UnicodeFont::from_bytes(data).unwrap();
     let long = "Съешь ещё этих мягких французских булок да выпей чаю пожалуйста";

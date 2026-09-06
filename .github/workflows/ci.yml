@@ -317,6 +317,14 @@ jobs:
       - name: No test bails out in silence
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_skip_lint.py
+      # And the guard on that guard. It decided whether a block was a bail-out
+      # by looking for the word `return`, so a macro that returns for you was
+      # invisible to it -- read as "not a bail-out" rather than as "announces
+      # nothing". A lint that has stopped looking reports exactly what a clean
+      # tree reports.
+      - name: The skip lint reads a bail-out a macro performs
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_skip_lint_reads_a_returning_macro.py
       # Same family, one layer down: `timeout 30 ... || true` threw the exit
       # code away, so a render the timeout killed -- which writes nothing to
       # stderr -- was scored as a clean page by the crash guard.

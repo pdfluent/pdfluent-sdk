@@ -49,6 +49,7 @@ pdfa-convert = ["dep:xmp-writer", "dep:hayro-jbig2"]
 js-sys = "0.3"
 
 [dev-dependencies]
+test-skip = { path = "../test-skip" }
 tempfile = "3"
 pdf-syntax = { path = "../pdf-syntax" }
 pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign" }

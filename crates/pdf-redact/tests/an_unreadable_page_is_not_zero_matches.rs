@@ -16,6 +16,7 @@
 
 use lopdf::{Document, Object};
 use pdf_redact::search_redact::{search_and_redact, RedactSearchOptions};
+use test_skip::skip_test;
 
 fn corpus(naam: &str) -> Option<Vec<u8>> {
     let pad = format!("../../tests/corpus-mini/{naam}");
@@ -32,8 +33,7 @@ fn corpus(naam: &str) -> Option<Vec<u8>> {
 #[test]
 fn een_leesbaar_document_meldt_geen_onleesbare_paginas() {
     let Some(bytes) = corpus("simple.pdf") else {
-        eprintln!("SKIPPED (not a pass): corpus fixture simple.pdf is not there");
-        return;
+        skip_test!("corpus fixture simple.pdf is not there")
     };
     let mut doc = Document::load_mem(&bytes).expect("simple.pdf laadt");
     let rapport = search_and_redact(&mut doc, "Hello", &RedactSearchOptions::default())
@@ -53,8 +53,7 @@ fn een_leesbaar_document_meldt_geen_onleesbare_paginas() {
 #[test]
 fn een_pagina_zonder_leesbare_inhoud_wordt_gemeld() {
     let Some(bytes) = corpus("simple.pdf") else {
-        eprintln!("SKIPPED (not a pass): corpus fixture simple.pdf is not there");
-        return;
+        skip_test!("corpus fixture simple.pdf is not there")
     };
     let mut doc = Document::load_mem(&bytes).expect("simple.pdf laadt");
 
@@ -87,8 +86,7 @@ fn een_pagina_zonder_leesbare_inhoud_wordt_gemeld() {
 #[test]
 fn een_lege_pagina_is_geen_onleesbare_pagina() {
     let Some(bytes) = corpus("acroform-multiselect.pdf") else {
-        eprintln!("SKIPPED (not a pass): corpus fixture acroform-multiselect.pdf is not there");
-        return;
+        skip_test!("corpus fixture acroform-multiselect.pdf is not there")
     };
     let mut doc = Document::load_mem(&bytes).expect("acroform-multiselect.pdf laadt");
     let rapport = search_and_redact(
@@ -112,8 +110,7 @@ fn een_lege_pagina_is_geen_onleesbare_pagina() {
 #[test]
 fn een_pagina_zonder_contents_is_geen_onleesbare_pagina() {
     let Some(bytes) = corpus("simple.pdf") else {
-        eprintln!("SKIPPED (not a pass): corpus fixture simple.pdf is not there");
-        return;
+        skip_test!("corpus fixture simple.pdf is not there")
     };
     let mut doc = Document::load_mem(&bytes).expect("simple.pdf laadt");
 

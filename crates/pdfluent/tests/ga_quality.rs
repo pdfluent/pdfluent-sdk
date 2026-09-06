@@ -17,6 +17,7 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::Arc;
+use test_skip::skip_test;
 
 use pdfluent::prelude::*;
 
@@ -124,12 +125,7 @@ fn qr1_corpus_open_paths_never_panic() {
 #[test]
 fn qr1_encrypted_without_password_is_typed_not_panic() {
     let Some(bytes) = read_mini("encrypted.pdf") else {
-        eprintln!(
-            "SKIPPED (not a pass): precondition not met at {}:{}",
-            file!(),
-            line!()
-        );
-        return; // fixture optional
+        skip_test!("precondition not met at {}:{}", file!(), line!()) // fixture optional
     };
     // Opening an encrypted document without a password must yield a typed
     // outcome (Ok if the SDK can read structure, or a typed Error) — never a
@@ -158,12 +154,7 @@ fn qr8_pdfdocument_is_send_and_sync() {
 #[test]
 fn qr8_concurrent_open_and_read_is_consistent() {
     let Some(bytes) = read_mini("multi-page.pdf") else {
-        eprintln!(
-            "SKIPPED (not a pass): precondition not met at {}:{}",
-            file!(),
-            line!()
-        );
-        return;
+        skip_test!("precondition not met at {}:{}", file!(), line!())
     };
     let shared = Arc::new(bytes);
     // Baseline single-threaded result.

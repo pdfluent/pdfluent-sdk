@@ -36,6 +36,7 @@ use pdf_manip::text_edit::{
 use pdf_manip::unicode_font::UnicodeFont;
 use std::io::Write;
 use std::process::Command;
+use test_skip::skip_test;
 
 // ---------------------------------------------------------------------------
 // Host prerequisites
@@ -55,10 +56,6 @@ fn tool(name: &str) -> Option<String> {
 }
 
 /// Announce a skip loudly enough that nobody mistakes it for a pass.
-fn skip(reason: &str) {
-    eprintln!("SKIPPED (not a pass): {reason}");
-}
-
 fn host_font() -> Option<Vec<u8>> {
     for path in [
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
@@ -217,8 +214,7 @@ fn normalise(s: &str) -> String {
 #[test]
 fn repeated_characters_do_not_multiply_on_extraction() {
     let Some(data) = host_font() else {
-        skip("no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let font = UnicodeFont::from_bytes(data).expect("font parses");
 
@@ -229,14 +225,12 @@ fn repeated_characters_do_not_multiply_on_extraction() {
     // version, and it stayed green while the defect was reinstated.)
     let replacement = "żółć żółć źdźbło";
     if !font.covers(replacement) {
-        skip("host font does not cover the sample");
-        return;
+        skip_test!("host font does not cover the sample")
     }
     let saved = replace_with_unicode("Hello world", replacement, font);
 
     let Some(text) = extract_with_pdftotext(&saved, "repeats") else {
-        skip("pdftotext not available");
-        return;
+        skip_test!("pdftotext not available")
     };
 
     let got = normalise(&text);
@@ -257,12 +251,10 @@ fn repeated_characters_do_not_multiply_on_extraction() {
 #[test]
 fn non_latin_scripts_survive_a_round_trip_through_pdftotext() {
     let Some(data) = host_font() else {
-        skip("no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     if tool("pdftotext").is_none() {
-        skip("pdftotext not available");
-        return;
+        skip_test!("pdftotext not available")
     }
 
     let mut checked = 0usize;
@@ -302,14 +294,12 @@ fn non_latin_scripts_survive_a_round_trip_through_pdftotext() {
 #[test]
 fn a_second_independent_reader_agrees() {
     let Some(data) = host_font() else {
-        skip("no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let font = UnicodeFont::from_bytes(data).expect("font parses");
     let replacement = "Γειά σου Κόσμε";
     if !font.covers(replacement) {
-        skip("host font does not cover Greek");
-        return;
+        skip_test!("host font does not cover Greek")
     }
     let saved = replace_with_unicode("Hello world", replacement, font);
 
@@ -317,8 +307,7 @@ fn a_second_independent_reader_agrees() {
         extract_with_pdftotext(&saved, "second-a"),
         extract_with_mutool(&saved, "second-b"),
     ) else {
-        skip("need both pdftotext and mutool for this comparison");
-        return;
+        skip_test!("need both pdftotext and mutool for this comparison")
     };
 
     let want = normalise(replacement);
@@ -333,21 +322,18 @@ fn a_second_independent_reader_agrees() {
 #[test]
 fn the_replaced_text_is_really_gone() {
     let Some(data) = host_font() else {
-        skip("no host font with Unicode coverage found");
-        return;
+        skip_test!("no host font with Unicode coverage found")
     };
     let font = UnicodeFont::from_bytes(data).expect("font parses");
     let source = "Hello world";
     let replacement = "Goodbye moon";
     if !font.covers(replacement) {
-        skip("host font does not cover the sample");
-        return;
+        skip_test!("host font does not cover the sample")
     }
     let saved = replace_with_unicode(source, replacement, font);
 
     let Some(text) = extract_with_pdftotext(&saved, "gone") else {
-        skip("pdftotext not available");
-        return;
+        skip_test!("pdftotext not available")
     };
 
     assert!(

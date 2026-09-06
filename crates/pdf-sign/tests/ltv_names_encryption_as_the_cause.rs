@@ -18,6 +18,7 @@
 // that file travels with the copy you received, which a URL does not.
 
 use std::path::Path;
+use test_skip::skip_test;
 
 fn fixture() -> Option<Vec<u8>> {
     // Walk up: tests run from the crate directory, the corpus sits at the root.
@@ -35,11 +36,10 @@ fn fixture() -> Option<Vec<u8>> {
 #[test]
 fn encrypted_input_says_so() {
     let Some(bytes) = fixture() else {
-        eprintln!(
-            "SKIPPED (not a pass): tests/corpus-mini/encrypted.pdf is missing, so the \
+        skip_test!(
+            "tests/corpus-mini/encrypted.pdf is missing, so the \
              encrypted path could not be exercised."
-        );
-        return;
+        )
     };
 
     let err = pdfluent_sign::embed_dss_incremental(

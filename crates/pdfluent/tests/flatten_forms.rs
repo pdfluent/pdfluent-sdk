@@ -16,6 +16,7 @@
 //! claim; "the form is no longer a form and still shows the same text" is.
 
 use pdfluent::PdfDocument;
+use test_skip::skip_test;
 
 const ACROFORM_PDF: &[u8] = include_bytes!("../../../tests/corpus-mini/acroform.pdf");
 const PLAIN_PDF: &[u8] = include_bytes!("../../../tests/corpus-mini/simple.pdf");
@@ -68,8 +69,7 @@ fn flattening_takes_the_values_written_through_form_mut() {
     // silently discard what the caller just filled in.
     let fields = doc.form_fields().expect("form_fields");
     let Some(field) = fields.first().map(|f| f.name.clone()) else {
-        eprintln!("SKIPPED (not a pass): acroform.pdf exposes no field names");
-        return;
+        skip_test!("acroform.pdf exposes no field names")
     };
 
     doc.form_mut()

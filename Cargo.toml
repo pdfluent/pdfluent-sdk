@@ -63,6 +63,7 @@ members = [
     "crates/pdf-diff",
 
     # --- Test infrastructure ---
+    "crates/test-skip",
     "crates/xfa-test-runner",
     "crates/visual-regression",
     "crates/xfa-pdfrest-compare",

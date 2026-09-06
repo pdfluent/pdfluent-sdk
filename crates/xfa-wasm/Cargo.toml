@@ -79,6 +79,7 @@ annotate = ["dep:pdf-annot"]
 wasm = ["render", "annotate"]
 
 [dev-dependencies]
+test-skip = { path = "../test-skip" }
 wasm-bindgen-test = "0.3"
 
 # Used by tests/edit_handle.rs to synthesise minimal PDFs with known

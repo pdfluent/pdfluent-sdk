@@ -20,6 +20,7 @@
 // that file travels with the copy you received, which a URL does not.
 
 use lopdf::{dictionary, Document, Object};
+use test_skip::skip_test;
 
 /// Several descriptors, each shared by several fonts.
 ///
@@ -81,10 +82,7 @@ fn bytes_from_a_fresh_process() -> String {
 #[ignore]
 fn print_isolated_bytes() {
     if std::env::var("PDFLUENT_PRINT_ISOLATED").is_err() {
-        eprintln!(
-            "SKIPPED (not a pass): PDFLUENT_PRINT_ISOLATED is not set, so nothing was printed"
-        );
-        return;
+        skip_test!("PDFLUENT_PRINT_ISOLATED is not set, so nothing was printed")
     }
     let bytes = isolate_and_serialise();
     let som: u64 = bytes

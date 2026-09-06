@@ -4340,6 +4340,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "test-skip",
  "thiserror 2.0.18",
  "time",
  "xfa-json",
@@ -4429,6 +4430,7 @@ dependencies = [
  "sha2 0.10.9",
  "subsetter",
  "tempfile",
+ "test-skip",
  "thiserror 2.0.18",
  "ttf-parser",
  "weezl 0.1.12",
@@ -4499,6 +4501,7 @@ dependencies = [
  "pdfluent-lopdf",
  "regex",
  "tempfile",
+ "test-skip",
  "thiserror 2.0.18",
 ]
 
@@ -4565,6 +4568,7 @@ dependencies = [
  "pdfluent-lopdf",
  "roxmltree",
  "rquickjs",
+ "test-skip",
  "thiserror 2.0.18",
  "ttf-parser",
  "xfa-dom-resolver",
@@ -4633,6 +4637,7 @@ dependencies = [
  "pdfluent-lopdf",
  "pdfluent-sign",
  "png 0.17.16",
+ "test-skip",
  "tokio",
  "tracing",
  "zip 7.2.0",
@@ -4752,6 +4757,7 @@ dependencies = [
  "sha2 0.10.9",
  "signature",
  "spki",
+ "test-skip",
  "thiserror 2.0.18",
  "ureq 2.12.1",
 ]
@@ -7171,6 +7177,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-skip"
+version = "1.0.0"
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9158,6 +9168,7 @@ dependencies = [
  "pdfluent-sign",
  "serde",
  "serde_json",
+ "test-skip",
  "wasm-bindgen",
  "wasm-bindgen-test",
  "web-sys",

@@ -27,6 +27,7 @@
 // that file travels with the copy you received, which a URL does not.
 
 use std::path::{Path, PathBuf};
+use test_skip::skip_test;
 
 /// Crates whose source ends up inside the WASM bundle.
 const WASM_CRATES: &[&str] = &[
@@ -80,12 +81,7 @@ fn workspace_crates_dir() -> PathBuf {
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        eprintln!(
-            "SKIPPED (not a pass): precondition not met at {}:{}",
-            file!(),
-            line!()
-        );
-        return;
+        skip_test!("precondition not met at {}:{}", file!(), line!())
     };
     for entry in entries.flatten() {
         let path = entry.path();
