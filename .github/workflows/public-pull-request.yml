@@ -34,6 +34,15 @@ name: Public pull request
 
 on:
   pull_request:
+  # And on the default branch of the public repository, for a reason that is
+  # about branch protection rather than about coverage: a status check can only
+  # be REQUIRED once GitHub has seen that context reported on that repository,
+  # and a check that only ever runs on a pull request has never been reported at
+  # the moment somebody wants to require it. The standalone `commit-identity.yml`
+  # on all four public repositories carries the same pair of triggers, which is
+  # why that context is requirable there today.
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -76,7 +85,11 @@ jobs:
 
   sign-off:
     name: Every commit carries a sign-off
-    if: ${{ github.event.repository.private == false }}
+    # Pull requests only: the range this reads is the pull request's own commits
+    # (`github.event.pull_request.base.sha`), and on a push there is no such
+    # range -- the job would ask an empty range a question and answer it
+    # confidently.
+    if: ${{ github.event.repository.private == false && github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
