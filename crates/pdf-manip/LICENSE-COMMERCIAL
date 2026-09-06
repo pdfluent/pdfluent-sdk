@@ -1,12 +1,18 @@
 PDFluent Commercial Licence
 ===========================
 
-Version 2.0 — 31 August 2026
+Version 3.0 — 6 September 2026
 Innovation Trigger B.V., trading as PDFluent, Netherlands.
 
-This licence replaces the PDFluent Commercial License v1.0 of 2 May 2026, which
-described a product with licence keys, tiers and an expiring evaluation. None of
-those exist. This text describes what the software actually is.
+This licence replaces version 2.0 of 31 August 2026, which described the same
+rights sold as a perpetual licence through a signed order form. The rights are
+unchanged. What changed on 6 September 2026 is how the licence is bought and how
+long it runs: four self-service prices, yearly, bought on the website in a
+minute. Version 1.0 of 2 May 2026, which described licence keys, tiers and an
+expiring evaluation, described a product that no longer exists.
+
+Licences granted under version 2.0 or earlier were perpetual for the versions
+they named and remain so. Nothing in this text withdraws or replaces them.
 
 
 1. Why this licence exists
@@ -30,9 +36,12 @@ features. You are buying the right not to publish your own source.
 2. What you get
 ---------------
 
-On payment of the agreed fee, PDFluent grants the licensee a non-exclusive,
-worldwide, perpetual licence to use, modify and distribute the PDFluent software
-in the licensee's own products, without the obligations of the AGPL.
+On payment of the fee, PDFluent grants the licensee a non-exclusive, worldwide
+licence, for the term in section 8, to use, modify and distribute the PDFluent
+software in the licensee's own products, without the obligations of the AGPL.
+What the licensee conveyed to its own customers during the term stays covered
+after it: the term bounds which releases may be taken under this licence, never
+how long what was already shipped may be used.
 
 Specifically:
 
@@ -43,8 +52,40 @@ Specifically:
   d. Deployment in environments without network access. Nothing in the software
      contacts a server, so this needs no permission and costs nothing extra.
 
-Perpetual means the version you licensed does not stop working, ever. There is
-no mechanism by which it could: see section 5.
+The scope of one licence and its price are in section 2a below. Nothing in the
+software distinguishes a licensed build from an unlicensed one, so nothing stops
+working when a licence ends: see sections 5 and 8.
+
+
+2a. The four prices
+-------------------
+
+All yearly, in euro, excluding VAT, bought at https://pdfluent.com/sdk/pricing
+and cancellable at any time in the billing portal there.
+
+  Commercial      999   per organisation. Grants b and c, and a for a product
+                        the licensee does not sell PDF functionality from.
+                        Unlimited developers.
+  OEM Startup   2,499   per product. Grants a, b and c without that limit, for
+                        an organisation whose revenue is below EUR 1,000,000,
+                        declared by the licensee at the time of purchase. Above
+                        that threshold the OEM price applies from the next
+                        renewal.
+  OEM           9,999   per product. The same grants, every other organisation.
+  Priority      4,999   Not a licence. A support subscription: a reply within
+  support               one working day, on working days. Section 6 otherwise
+                        applies.
+
+The rule that decides Commercial from OEM, which is the only distinction
+between them that matters:
+
+  If your customers pay you for PDF functionality that PDFluent provides — a
+  conversion API, a PDF/A service, an OCR service, hosted PDF tooling — that is
+  OEM, not Commercial.
+
+Building PDF handling into your own product is Commercial. Selling PDF handling
+to your customers is OEM. A licence covers one organisation or one named
+product, as stated above; a second product is a second licence.
 
 
 3. What is not covered
@@ -72,7 +113,7 @@ the branding.
 5. What this licence does not contain, and why
 ----------------------------------------------
 
-No telemetry, no licence key, and no expiry on a paid licence.
+No telemetry, no licence key, and no check of any kind in the software.
 
 Stated accurately rather than aspirationally: until 6 September 2026 the build
 still carried tier checks from the previous model, so an unlicensed binary
@@ -87,20 +128,29 @@ can be removed by anyone who has the code, in minutes, so such a check would
 only ever inconvenience the people who intended to pay. The obligation here is
 contractual, and it is enforceable in the ordinary way.
 
-Consequently there is nothing to install, nothing to renew, and nothing that can
-break in production because a file expired or a server was unreachable.
+Consequently there is nothing to install, nothing to activate, and nothing that
+can break in production because a file expired or a server was unreachable. A
+licence that lapses is a change in what the licensee may do, never a change in
+what the software does.
 
-What a licensee receives is a countersigned agreement, an invoice, and an entry
-in PDFluent's licence register. Those are the deliverables.
+What a licensee receives is the order confirmation issued at purchase and a
+licence document naming the licensee, the licence, the product where one
+applies, and the term. Those two together are the licence, and they are the
+deliverables. A signed order form is available for a licensee whose procurement
+requires one; it is not the ordinary route and it changes nothing about the
+rights.
 
 
 6. Support and updates
 ----------------------
 
 This licence grants rights to the software. It is not a support contract and
-does not promise updates, response times or fixes. Where those are agreed they
-are written in a separate order form or services agreement, which prevails over
-this section.
+does not promise response times or fixes. Every release published during the
+term may be taken under it, which is what a licensee is buying when they renew.
+
+A response time is promised only where priority support is bought (section 2a),
+or where a separate services agreement says so; either prevails over this
+section.
 
 
 7. Warranty and liability
@@ -120,11 +170,18 @@ intentional misconduct or gross negligence.
 8. Term and termination
 -----------------------
 
-The licence is perpetual and terminates only on a material breach that the
-licensee has not remedied within 30 days of written notice. On termination the
-licensee must stop distributing the software under this licence; rights already
-granted to the licensee's own customers for versions already shipped are not
-affected.
+The licence runs for the term paid for and renews yearly until the licensee
+cancels. Cancellation takes effect at the end of the paid term.
+
+When the term ends, the licensee's rights under section 2 end with it. Nothing
+breaks: no release stops working, nothing already shipped is affected, and no
+code in the software consults this agreement. What ends is the right to convey
+or operate releases under this licence rather than under the AGPL. Rights
+already granted to the licensee's own customers for versions already shipped are
+not affected, and neither is anything the licensee shipped during the term.
+
+The licence also terminates on a material breach that the licensee has not
+remedied within 30 days of written notice.
 
 
 9. Law and forum
@@ -138,9 +195,15 @@ without prejudice to any mandatory consumer or statutory forum.
 10. The agreement
 -----------------
 
-The licensee, the licensed scope, the fee and any agreed support are recorded in
-an order form signed by both parties. That order form and this text together are
-the agreement. Where they conflict, the order form prevails.
+For a self-service purchase, the agreement is this text together with the order
+confirmation and the licence document described in section 5. Those record the
+licensee, the licensed scope, the product where one applies, the term and the
+fee. Where they conflict with this text, they prevail for the facts they state.
+
+Where a licensee's procurement requires a signed order form, the licensee, the
+licensed scope, the fee and any agreed support are recorded in one signed by
+both parties, and that form and this text together are the agreement. Where they
+conflict, the order form prevails.
 
 The template is `docs/licensing/order-form.md`. It is a template and not an
 agreement: an order form binds only once it is filled in and signed by both

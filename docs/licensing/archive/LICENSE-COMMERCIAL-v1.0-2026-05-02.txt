@@ -1,249 +1,212 @@
-PDFluent Commercial License
-Version 1.0
-Effective: 2026-05-02
+PDFluent Commercial Licence
+===========================
 
-Copyright (c) 2026 Innovation Trigger BV (operating as PDFluent).
-All rights reserved.
+Version 3.0 — 6 September 2026
+Innovation Trigger B.V., trading as PDFluent, Netherlands.
 
-IMPORTANT — READ CAREFULLY. This is a legal agreement between you ("Licensee")
-and Innovation Trigger BV, a private limited company organized under the laws
-of the Netherlands and operating under the trade name "PDFluent" ("PDFluent",
-"we", "us"). By installing, copying, downloading, or otherwise using the
-Software, you agree to be bound by the terms of this License. If you do not
-agree, do not install or use the Software.
+This licence replaces version 2.0 of 31 August 2026, which described the same
+rights sold as a perpetual licence through a signed order form. The rights are
+unchanged. What changed on 6 September 2026 is how the licence is bought and how
+long it runs: four self-service prices, yearly, bought on the website in a
+minute. Version 1.0 of 2 May 2026, which described licence keys, tiers and an
+expiring evaluation, described a product that no longer exists.
 
-This License governs the use of all Rust crates published by PDFluent that
-reference this LICENSE file in their Cargo manifest. PDFluent also publishes
-separate crates under permissive open-source licenses (MIT or Apache-2.0);
-those crates are NOT governed by this License and may be used under their
-respective open-source terms. See the NOTICE file for the list of crates
-covered by each license.
+Licences granted under version 2.0 or earlier were perpetual for the versions
+they named and remain so. Nothing in this text withdraws or replaces them.
 
-Note: this License is separate from the license for the PDFluent desktop
-editor application. A license to use the PDFluent editor, including a free
-one, does not grant any rights under this License. If you are embedding,
-linking against, or programmatically calling the Software described below,
-this License applies regardless of whether you also use the editor. See
-https://pdfluent.com/sdk/pricing for SDK licensing options.
 
-----------------------------------------------------------------------------
+1. Why this licence exists
+--------------------------
 
-1. DEFINITIONS
+PDFluent is published under the GNU AGPLv3 (LICENSE-AGPL). That is the
+default, and it is the complete product: no feature is withheld, no key is
+required, nothing expires.
 
-   "Software" means the source code, compiled object code, binary artefacts,
-   and accompanying documentation of the PDFluent crates that reference this
-   LICENSE file.
+The AGPL asks something in return. If you convey the software, or let users
+interact with a modified version over a network, you must offer those users the
+corresponding source under the same licence. For many organisations that is
+fine. For some it is impossible — because the surrounding product is closed, or
+a customer contract forbids it, or the legal department will not accept a
+copyleft obligation in a shipped binary.
 
-   "Production Use" means any use of the Software in connection with the
-   operation of a business or for the benefit of a third party, including
-   without limitation: (a) processing data of customers, clients, or other
-   third parties; (b) integration into a commercial product, service, or
-   internal business application; (c) deployment in a production environment.
+This licence is the alternative for exactly that case. You are not buying
+features. You are buying the right not to publish your own source.
 
-   "Evaluation Use" means use of the Software solely for the purpose of
-   evaluating its suitability for Production Use, including in development,
-   testing, demonstration, and non-public staging environments. Evaluation
-   Use does not include any form of Production Use.
 
-   "Valid License" means a current and active license entitlement issued by
-   PDFluent or an authorized reseller, identified by an Ed25519-signed
-   license key file or by other written commercial terms agreed with
-   PDFluent.
+2. What you get
+---------------
 
-   "Authorized Use" means the scope of Production Use granted under a Valid
-   License, including the number of developers, locations, products, and
-   deployment configurations described in the commercial terms applicable to
-   that Valid License.
+On payment of the fee, PDFluent grants the licensee a non-exclusive, worldwide
+licence, for the term in section 8, to use, modify and distribute the PDFluent
+software in the licensee's own products, without the obligations of the AGPL.
+What the licensee conveyed to its own customers during the term stays covered
+after it: the term bounds which releases may be taken under this licence, never
+how long what was already shipped may be used.
 
-----------------------------------------------------------------------------
+Specifically:
 
-2. EVALUATION GRANT
+  a. Distribution of the software as part of a compiled product, without
+     supplying source to the recipients.
+  b. Operation as a network service, without the AGPL section 13 obligation.
+  c. Internal use of any kind.
+  d. Deployment in environments without network access. Nothing in the software
+     contacts a server, so this needs no permission and costs nothing extra.
 
-   Subject to compliance with this License, PDFluent grants Licensee a
-   non-exclusive, non-transferable, worldwide, royalty-free license to:
+The scope of one licence and its price are in section 2a below. Nothing in the
+software distinguishes a licensed build from an unlicensed one, so nothing stops
+working when a licence ends: see sections 5 and 8.
 
-   (a) install and use the Software for Evaluation Use; and
 
-   (b) make a reasonable number of internal copies of the Software for the
-       sole purpose of supporting Evaluation Use.
+2a. The four prices
+-------------------
 
-   The Software, when used without a Valid License, may produce output that
-   contains identifying markers indicating that the output was generated by
-   an unlicensed copy of the Software (including but not limited to a
-   "Producer" string in PDF metadata and a one-time warning emitted to
-   standard error). Licensee shall not remove, modify, suppress, or
-   circumvent these markers, nor any license-enforcement mechanism within
-   the Software.
+All yearly, in euro, excluding VAT, bought at https://pdfluent.com/sdk/pricing
+and cancellable at any time in the billing portal there.
 
-----------------------------------------------------------------------------
+  Commercial      999   per organisation. Grants b and c, and a for a product
+                        the licensee does not sell PDF functionality from.
+                        Unlimited developers.
+  OEM Startup   2,499   per product. Grants a, b and c without that limit, for
+                        an organisation whose revenue is below EUR 1,000,000,
+                        declared by the licensee at the time of purchase. Above
+                        that threshold the OEM price applies from the next
+                        renewal.
+  OEM           9,999   per product. The same grants, every other organisation.
+  Priority      4,999   Not a licence. A support subscription: a reply within
+  support               one working day, on working days. Section 6 otherwise
+                        applies.
 
-3. PRODUCTION GRANT
+The rule that decides Commercial from OEM, which is the only distinction
+between them that matters:
 
-   Production Use of the Software is permitted ONLY when Licensee holds a
-   Valid License covering the intended use. The scope of Production Use
-   permitted is determined by the Valid License and by the commercial terms
-   referenced therein. The current commercial terms, including pricing,
-   tiers, add-ons, and definitions of permitted use, are published at:
+  If your customers pay you for PDF functionality that PDFluent provides — a
+  conversion API, a PDF/A service, an OCR service, hosted PDF tooling — that is
+  OEM, not Commercial.
 
-       https://pdfluent.com/terms
-       https://pdfluent.com/pricing
+Building PDF handling into your own product is Commercial. Selling PDF handling
+to your customers is OEM. A licence covers one organisation or one named
+product, as stated above; a second product is a second licence.
 
-   Production Use exceeding the Authorized Use of the applicable Valid
-   License is a material breach of this License.
 
-----------------------------------------------------------------------------
+3. What is not covered
+----------------------
 
-4. RESTRICTIONS
+Several components in the repository are forks of third-party open-source
+projects and remain under their own permissive licences. They are not PDFluent's
+to relicense and need no licence from PDFluent. `NOTICE` records which they are;
+`docs/licensing/boundary.toml` is the machine-readable version.
 
-   Except as expressly permitted by this License or by a separately
-   negotiated written agreement with PDFluent, Licensee shall not:
+This licence covers the components on PDFluent's side of that boundary.
 
-   (a) use the Software in Production Use without a Valid License;
-
-   (b) remove, disable, alter, or circumvent any license-enforcement,
-       watermarking, telemetry, or attribution mechanism contained in the
-       Software;
 
-   (c) redistribute, publish, sell, sublicense, lease, rent, or otherwise
-       make the Software available to any third party, except under a
-       separately purchased OEM Redistribution add-on as described in the
-       commercial terms;
+4. Attribution
+--------------
 
-   (d) reverse engineer, decompile, or disassemble the Software, except to
-       the limited extent that such activity is expressly permitted by
-       applicable law notwithstanding this restriction;
-
-   (e) modify the Software with the intent of, or in a manner that has the
-       effect of, evading any restriction in this License;
-
-   (f) remove, obscure, or alter any copyright, trademark, attribution, or
-       other proprietary notices contained in the Software or its
-       documentation; or
+Documents produced by the software carry "PDFluent" in the PDF `/Producer` entry
+and in XMP metadata. Under this licence you may remove or replace that string in
+your build. So may an AGPL licensee: the attribution term that once required
+that string to be preserved was withdrawn with the move to AGPL-3.0-only, and
+nothing replaced it. What a commercial licence changes is the copyleft, not
+the branding.
 
-   (g) redistribute, sublicense, expose, or offer the Software as a
-       standalone SDK, library, API, platform, service, or substantially
-       similar substitute for PDFluent, except as expressly permitted under
-       an OEM Redistribution add-on.
-
-   For clarity, restriction (g) is intended to prevent re-packaging or
-   re-offering the Software (in whole or in substantial part) as a competing
-   PDF SDK or service. It does not restrict Licensee from using the Software
-   inside its own application, product, or service that delivers
-   functionality beyond what the Software itself provides.
 
-----------------------------------------------------------------------------
+5. What this licence does not contain, and why
+----------------------------------------------
 
-5. RESERVATION OF RIGHTS
+No telemetry, no licence key, and no check of any kind in the software.
 
-   The Software is licensed, not sold. Title, ownership, and all
-   intellectual property rights in and to the Software remain at all times
-   with PDFluent and its licensors. All rights not expressly granted under
-   this License are reserved by PDFluent.
+Stated accurately rather than aspirationally: until 6 September 2026 the build
+still carried tier checks from the previous model, so an unlicensed binary
+reported `Tier::Trial` and refused some capabilities. Those checks are gone
+(issue #226). No code in the software reads a key, refuses a capability, or
+marks output, and `scripts/ci/no_licence_key_in_a_binding.py` refuses a change
+that puts one back. It was never a condition of this licence — a commercial
+licensee's rights come from this agreement, not from a check in the binary.
 
-   Feedback, suggestions, or improvements that Licensee voluntarily provides
-   to PDFluent regarding the Software may be used by PDFluent without
-   restriction, without obligation of confidentiality, and without
-   compensation to Licensee.
+This is deliberate, not an omission. Published source means any technical check
+can be removed by anyone who has the code, in minutes, so such a check would
+only ever inconvenience the people who intended to pay. The obligation here is
+contractual, and it is enforceable in the ordinary way.
 
-----------------------------------------------------------------------------
+Consequently there is nothing to install, nothing to activate, and nothing that
+can break in production because a file expired or a server was unreachable. A
+licence that lapses is a change in what the licensee may do, never a change in
+what the software does.
 
-6. THIRD-PARTY COMPONENTS
+What a licensee receives is the order confirmation issued at purchase and a
+licence document naming the licensee, the licence, the product where one
+applies, and the term. Those two together are the licence, and they are the
+deliverables. A signed order form is available for a licensee whose procurement
+requires one; it is not the ordinary route and it changes nothing about the
+rights.
 
-   The Software may include or depend upon third-party components,
-   including upstream open-source crates from which certain PDFluent crates
-   are derived. Such components remain subject to their respective licenses,
-   which are reproduced in the THIRD_PARTY_LICENSES.txt file accompanying
-   the Software. Nothing in this License is intended to limit or override
-   any rights granted under those third-party licenses with respect to those
-   third-party components.
 
-----------------------------------------------------------------------------
+6. Support and updates
+----------------------
 
-7. NO WARRANTY
+This licence grants rights to the software. It is not a support contract and
+does not promise response times or fixes. Every release published during the
+term may be taken under it, which is what a licensee is buying when they renew.
 
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND
-   NON-INFRINGEMENT. PDFLUENT DOES NOT WARRANT THAT THE SOFTWARE WILL MEET
-   LICENSEE'S REQUIREMENTS, OPERATE WITHOUT INTERRUPTION, OR BE FREE OF
-   ERRORS OR DEFECTS.
+A response time is promised only where priority support is bought (section 2a),
+or where a separate services agreement says so; either prevails over this
+section.
 
-----------------------------------------------------------------------------
 
-8. LIMITATION OF LIABILITY
+7. Warranty and liability
+-------------------------
 
-   TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL
-   PDFLUENT OR ITS CONTRIBUTORS BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
-   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING BUT NOT LIMITED
-   TO PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES, LOSS OF USE, DATA, OR
-   PROFITS, OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THE
-   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+The software is provided "as is", without warranty of any kind, express or
+implied, including but not limited to the warranties of merchantability, fitness
+for a particular purpose and non-infringement.
 
-   PDFLUENT'S TOTAL CUMULATIVE LIABILITY UNDER OR IN CONNECTION WITH THIS
-   LICENSE SHALL NOT EXCEED THE GREATER OF (i) THE FEES PAID BY LICENSEE TO
-   PDFLUENT UNDER THE APPLICABLE VALID LICENSE IN THE TWELVE (12) MONTHS
-   IMMEDIATELY PRECEDING THE EVENT GIVING RISE TO LIABILITY, OR (ii) ONE
-   HUNDRED EUROS (€100).
+To the maximum extent permitted by applicable law, PDFluent's aggregate
+liability under or in connection with this licence shall not exceed the fees
+paid by the licensee for it. Nothing in this licence excludes or limits
+liability that cannot lawfully be excluded or limited, including liability for
+intentional misconduct or gross negligence.
 
-----------------------------------------------------------------------------
 
-9. TERMINATION
+8. Term and termination
+-----------------------
 
-   This License is effective until terminated. This License terminates
-   automatically and without notice if Licensee fails to comply with any
-   term of this License. Upon termination, Licensee shall cease all use of
-   the Software, destroy all copies in its possession or control, and, on
-   request, certify such destruction in writing to PDFluent.
+The licence runs for the term paid for and renews yearly until the licensee
+cancels. Cancellation takes effect at the end of the paid term.
 
-   Sections 4 (Restrictions), 5 (Reservation of Rights), 7 (No Warranty),
-   8 (Limitation of Liability), 10 (Governing Law), and 11 (Entire
-   Agreement) survive any termination of this License.
+When the term ends, the licensee's rights under section 2 end with it. Nothing
+breaks: no release stops working, nothing already shipped is affected, and no
+code in the software consults this agreement. What ends is the right to convey
+or operate releases under this licence rather than under the AGPL. Rights
+already granted to the licensee's own customers for versions already shipped are
+not affected, and neither is anything the licensee shipped during the term.
 
-----------------------------------------------------------------------------
+The licence also terminates on a material breach that the licensee has not
+remedied within 30 days of written notice.
 
-10. GOVERNING LAW AND JURISDICTION
 
-    This License shall be governed by and construed in accordance with the
-    laws of the Netherlands, excluding its conflict-of-laws provisions and
-    the United Nations Convention on Contracts for the International Sale
-    of Goods. The courts of Amsterdam, the Netherlands, shall have
-    exclusive jurisdiction over any dispute arising from or in connection
-    with this License, except that PDFluent may seek injunctive relief in
-    any court of competent jurisdiction to protect its intellectual
-    property rights.
+9. Law and forum
+----------------
 
-----------------------------------------------------------------------------
+This licence is governed by the laws of the Netherlands. Disputes are submitted
+to the competent court in the district where PDFluent has its registered seat,
+without prejudice to any mandatory consumer or statutory forum.
 
-11. ENTIRE AGREEMENT
 
-    This License, together with any Valid License terms and any commercial
-    terms expressly incorporated by reference, constitutes the entire
-    agreement between Licensee and PDFluent with respect to the Software
-    and supersedes all prior or contemporaneous communications,
-    representations, or agreements, whether oral or written. No
-    modification or amendment of this License shall be effective unless in
-    writing and signed by an authorized representative of PDFluent.
+10. The agreement
+-----------------
 
-----------------------------------------------------------------------------
+For a self-service purchase, the agreement is this text together with the order
+confirmation and the licence document described in section 5. Those record the
+licensee, the licensed scope, the product where one applies, the term and the
+fee. Where they conflict with this text, they prevail for the facts they state.
 
-CONTACT
+Where a licensee's procurement requires a signed order form, the licensee, the
+licensed scope, the fee and any agreed support are recorded in one signed by
+both parties, and that form and this text together are the agreement. Where they
+conflict, the order form prevails.
 
-    Innovation Trigger BV
-    Operating as PDFluent
-    Email: hello@pdfluent.com
-    Web:   https://pdfluent.com
+The template is `docs/licensing/order-form.md`. It is a template and not an
+agreement: an order form binds only once it is filled in and signed by both
+parties.
 
-For commercial terms, pricing, evaluation policies, trial keys, and OEM
-licensing options, visit https://pdfluent.com/pricing.
-
-----------------------------------------------------------------------------
-
-NOTE ON HISTORICAL VERSIONS
-
-Versions of PDFluent crates published to crates.io prior to 2026-05-02
-under the MIT license remain available under the MIT license. This License
-applies to versions published on or after that date that reference this
-LICENSE file in their Cargo manifest. See CHANGELOG.md for the version
-boundary.
+Contact: sales@pdfluent.com
