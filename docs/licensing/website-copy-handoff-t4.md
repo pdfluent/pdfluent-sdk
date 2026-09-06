@@ -1,5 +1,14 @@
 # Website copy for #226 and #227 — prepared by t3, to be applied by t4
 
+> **Superseded on 06-09-2026 (#227 decided, #349 built).** The strings below
+> were correct for the model of 31-08-2026: four perpetual tiers from €699 with
+> a licence request rather than a checkout. The offer is now four yearly
+> self-service buttons — €999, €2,499, €9,999 and a €4,999 support add-on — and
+> the pricing page was rewritten around them. This file stays as the record of
+> what was handed over that day; do not apply it. The offer is in
+> [`offer.toml`](offer.toml), and the website reads its own copy from
+> `src/config/plans.ts`.
+
 t3 owns licence terms; the website is t4's repository. This file is the handoff:
 the decisions are made, the replacement strings are written, and t4 applies them.
 Nothing here has been edited on the site by t3.
