@@ -1,0 +1,62 @@
+name: Commit identity
+
+# Two halves, and the second one exists because the first was already green while
+# the address sat in eight tracked files as ordinary text. The commit fields and
+# the tree leak independently, so they are checked independently.
+#
+# Every step carries `if: ${{ !cancelled() }}`: a failure in one says nothing
+# about whether the next would pass, and a step that never ran looks exactly like
+# a step that passed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  commit-identity:
+    name: No commit publishes a personal address
+    runs-on: ubuntu-latest
+    env:
+      EMAIL: 10383561+jasperdew@users.noreply.github.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Without the base commit there is no range to read, and `git log
+          # <base>..<head>` over a shallow clone prints nothing and exits 0 --
+          # the exact state this guard exists to refuse, dressed as a pass.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # `EMAIL`, and not a git config, because the test fixture seals the
+      # environment: GIT_* dropped, GIT_CONFIG_NOSYSTEM=1, GIT_CONFIG_GLOBAL
+      # pointed at an empty file. A --global or --system identity is invisible
+      # there by design. EMAIL is not a GIT_ variable, so it survives, and git
+      # falls back to it.
+      #
+      # Without one, the guard's --pending path calls `git var GIT_AUTHOR_IDENT`
+      # and dies: a crash where a verdict belongs. It passes on a laptop because
+      # git derives an address from the user and the hostname -- measured here,
+      # macOS answers with the owner's real name and `user@host.home`. So those
+      # cases were reporting the developer's machine, not this repository, and on
+      # a runner whose hostname has no domain there is nothing to report.
+      # The tests first. This guard's job is to find nothing on almost every run,
+      # so green means nothing until it has proved it can go red.
+      - name: The identity guard refuses what it should, and only that
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_commits_use_the_noreply_alias.py
+      - name: Every commit this change adds is authored by the noreply alias
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/commits_use_the_noreply_alias.py
+      - name: The tree guard finds a planted term and spares the innocent
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_no_personal_address_in_the_tree.py
+      # The lowered floor that stood here is gone, and it had to go twice over.
+      # It was written for a repository of eight files, and this one now tracks
+      # a few thousand; and the guard reads its floor from a constant, never
+      # from the environment, so `MINIMUM_BESTANDEN` in a workflow configured
+      # nothing at all. The floor that applies is the guard's own 500.
+      - name: No tracked file carries an address we decided not to publish
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/no_personal_address_in_the_tree.py
