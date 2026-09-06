@@ -135,6 +135,19 @@ ALLOWED: dict[str, str] = {
         "HAYRO_CLONE, and test_fork_divergence.py runs in CI"
     ),
 
+    # It needs a tracker token AND this repository's history at the same time,
+    # and no runner has both: `gh` is not on the self-hosted runner, and a
+    # fork's pull request must never carry a token that reads a private tracker.
+    # It stands in scripts/ci/local_ci_gate.sh, which is where a terminal closes
+    # a story and where both halves are present, and reports SKIPPED (not a
+    # pass) on a machine without access. The same reason is written down from
+    # the other side in docs/GATES_REACHABLE_FROM_A_PULL_REQUEST.toml, and its
+    # test runs on every pull request.
+    "a_closed_story_names_a_landed_sha.py": (
+        "needs a tracker token and this repository's history at once; runs in "
+        "scripts/ci/local_ci_gate.sh, and its test runs in CI"
+    ),
+
     "does_this_already_exist.py": (
         "asked by a person before starting a story, not by a job afterwards; "
         "step zero in CLAUDE.md, and test_does_this_already_exist.py runs in CI"

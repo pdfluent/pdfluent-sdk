@@ -35,6 +35,9 @@ import unittest
 REPO = pathlib.Path(__file__).resolve().parents[2]
 GUARD = REPO / "scripts" / "ci" / "fork_divergence.py"
 
+sys.path.insert(0, str(REPO / "scripts" / "ci"))
+from fixture_env import sealed_env  # noqa: E402
+
 
 def run(**env_extra) -> tuple[int, str]:
     env = dict(os.environ, **env_extra)
@@ -64,7 +67,12 @@ class ForkDivergence(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as td:
             clone = pathlib.Path(td)
-            subprocess.run(["git", "init", "-q", str(clone)], check=True)
+            # `sealed_env()`: without it this `init` inherits the caller's
+            # GIT_DIR, and inside a hook that points at the real repository. A
+            # fixture set `core.bare = true` on it that way on 25-08-2026 and
+            # every worktree stopped working.
+            subprocess.run(["git", "init", "-q", str(clone)], check=True,
+                           env=sealed_env(cwd=clone))
             code, output = run(HAYRO_CLONE=str(clone))
         self.assertEqual(code, 1, output)
         self.assertIn("The clone is broken", output)

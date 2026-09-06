@@ -466,6 +466,18 @@ run diagcattst python3 scripts/ci/test_every_diagnostic_code_is_documented.py
 run signoff   python3 scripts/ci/every_commit_since_the_cutoff_is_signed.py
 run signofftst python3 scripts/ci/test_every_commit_since_the_cutoff_is_signed.py
 run signoffcut python3 scripts/ci/test_signoff_respects_the_cutoff.py
+# And the same question about the tracker rather than about the code: a story is
+# closed with a commit master actually has. Seven were closed on a branch that
+# was later written off, each naming a real sha that was never an ancestor of
+# anything, and the tracker said seven things were done that the product did not
+# have (#348).
+#
+# HERE and not in a workflow, for the reason mirrordrift and checkouts are here:
+# it needs `gh` with a token for the tracker AND this repository's history, and
+# an Actions workspace has neither. It degrades to SKIPPED (not a pass) on a
+# machine without access, so it can never refuse a run it did not judge.
+run closedstory python3 scripts/ci/a_closed_story_names_a_landed_sha.py
+run closedstoryt python3 scripts/ci/test_a_closed_story_names_a_landed_sha.py
 run prstale   python3 scripts/ci/pr_staleness.py
 run prstaletst python3 scripts/ci/test_pr_staleness.py
 run sweep     python3 scripts/ci/test_sweep_spares_the_claimed_instance.py
