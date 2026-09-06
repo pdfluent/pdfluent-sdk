@@ -60,6 +60,41 @@ pub use pdf_manip::unicode_font;
 #[cfg(feature = "async-tokio")]
 pub mod async_io;
 pub mod compliance;
+
+/// PDF/A profiles and validation reports — an alias for [`compliance`].
+///
+/// `pdfa` is the name our own documentation uses and the better one for what
+/// this holds; `compliance` stays because it is what the module has been called
+/// since 1.0 and removing it would break every caller. See
+/// `docs/API_CONTRACT.md`.
+///
+/// The verb lives on the document: [`document::PdfDocument::validate_pdfa`] and
+/// [`document::PdfDocument::convert_to_pdfa`]. This module holds the nouns.
+pub mod pdfa {
+    pub use crate::compliance::*;
+}
+
+/// Optical character recognition.
+///
+/// The trait and the backends live in `pdf-engine`, which the facade already
+/// depends on; this is the name they were missing here.
+///
+/// **The facade wires up no backend.** That is deliberate (decision of
+/// 19-08-2026): a plain `pdfluent` dependency must not drag in system libraries
+/// or download models. Bring your own [`ocr::OcrBackend`], or enable one of
+/// `pdf-engine`'s features and use the backend it exposes.
+pub mod ocr {
+    pub use pdf_engine::ocr::{OcrBackend, OcrError, OcrResult, OcrWord};
+}
+
+/// Annotation types.
+///
+/// [`document::PdfDocument::annotations`] already returned these; they had no
+/// name in the facade, so an example could not spell out what it got back.
+pub mod annotation {
+    pub use crate::structure::AnnotationInfo;
+}
+
 pub mod decoration;
 pub mod diagnostics;
 pub mod document;

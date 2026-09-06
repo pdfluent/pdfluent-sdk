@@ -43,7 +43,10 @@ const CONTRACT: &[(&str, &str)] = &[
     ("acroform.pdf", "two AcroForm fields"),
     ("acroform-multiselect.pdf", "a multi-select choice list"),
     ("encrypted.pdf", "encrypted; only the refusal can be tested"),
-    ("malformed.pdf", "a broken cross-reference table, on purpose"),
+    (
+        "malformed.pdf",
+        "a broken cross-reference table, on purpose",
+    ),
     ("multi-page.pdf", "fifty pages, for pagination"),
     ("pdfa-2b.pdf", "claims PDF/A-2b and is NOT"),
     ("scanned.pdf", "no text layer, for the OCR route"),
