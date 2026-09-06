@@ -399,6 +399,17 @@ def accuracy_axis(report: dict | None, why: str) -> dict:
 # A run
 # ---------------------------------------------------------------------------
 def git_commit(repo: pathlib.Path) -> str:
+    """The commit this run measured.
+
+    It is the commit the two example binaries were built from, recorded so the
+    measurement can be checked out again. One honest limit: a run taken on a
+    branch names that branch's commit, and a rebase before landing gives the
+    same content a new name -- so a run measured mid-review can end up naming a
+    commit that no longer resolves. Master takes fast-forwards only, so a run
+    taken after the last rebase keeps its name through the landing. Nothing here
+    rewrites the field afterwards: a measurement edited by hand is the defect
+    this whole programme exists to remove.
+    """
     proc = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
                           capture_output=True, text=True)
     return proc.stdout.strip() if proc.returncode == 0 else ""
