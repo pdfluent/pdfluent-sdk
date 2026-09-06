@@ -1,0 +1,126 @@
+# What a pull request from a stranger runs (#232, #233).
+#
+# THE ONLY WORKFLOW HERE THAT A FORK'S PULL REQUEST CAN REACH
+#
+# Every other workflow in this directory is either self-hosted or push-only
+# (#333): measured on 06-09-2026, none of the 34 carries a `pull_request`
+# trigger, and the public repository this tree seeds has no self-hosted runner
+# to offer. So on the day `pdfluent/pdfluent-sdk` receives its first outside
+# pull request, the whole of what stands between that change and `main` is what
+# is written below -- and a branch protection rule can only require a check that
+# some workflow actually produces.
+#
+# WHY THE JOBS ARE NAMED THE WAY THEY ARE
+#
+# A required status check is matched by the job's `name`, not by the file or the
+# job id. `No commit publishes a personal address` is the name the four public
+# repositories already report green today, from the standalone
+# `commit-identity.yml` each of them carries. The seeding replaces
+# `pdfluent/pdfluent-sdk`'s history wholesale (`scripts/release/seed_public_repo.sh
+# --replace`), so that file and the check behind it disappear from that
+# repository the moment it is seeded -- unless the name travels in this tree.
+# It does, from here, spelled identically, so the requirement set in
+# `docs/PUBLIC_BRANCH_PROTECTION.toml` keeps pointing at something that runs.
+#
+# WHY IT COSTS THIS REPOSITORY NOTHING
+#
+# `github.event.repository.private == false` is false here and stays false for
+# as long as `pdfluent/engine` is private, so both jobs are skipped and no
+# hosted minute is billed -- the rule from #333, kept as a condition on the
+# thing itself rather than as a promise. It is the visibility and not the
+# repository name because the reason is the visibility: hosted Actions are free
+# on a public repository and metered on a private one.
+name: Public pull request
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-pull-request-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  commit-identity:
+    name: No commit publishes a personal address
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    env:
+      EMAIL: 10383561+jasperdew@users.noreply.github.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Without the base commit there is no range to read, and `git log
+          # <base>..<head>` over a shallow clone prints nothing and exits 0 --
+          # the exact state this guard exists to refuse, dressed as a pass.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The tests first. These guards' job is to find nothing on almost every
+      # run, so green means nothing until they have proved they can go red.
+      - name: The identity guard refuses what it should, and only that
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_commits_use_the_noreply_alias.py
+      - name: Every commit this change adds is authored by the noreply alias
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/commits_use_the_noreply_alias.py
+      - name: The tree guard finds a planted term and spares the innocent
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_no_personal_address_in_the_tree.py
+      - name: No tracked file carries an address we decided not to publish
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/no_personal_address_in_the_tree.py
+
+  sign-off:
+    name: Every commit carries a sign-off
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: The sign-off gate bites, in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_commit_since_the_cutoff_is_signed.py
+      - name: The sign-off gate leaves history before the cutoff alone
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_signoff_respects_the_cutoff.py
+      - name: Every commit written since the DCO carries a matching sign-off
+        if: ${{ !cancelled() }}
+        # The base sha arrives through `env:` rather than pasted into the
+        # script: a ref is caller-supplied and a `${{ }}` expansion is textual,
+        # so the value would become part of the program instead of an argument
+        # to it.
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # The cutoff is a MOMENT and not a commit, so a checkout without that
+          # commit can still establish what the rule covers. It is the author
+          # date of the commit carrying out the owner's decision on #316, and
+          # the comparison is strictly `>`: nothing written before it is
+          # certified retroactively.
+          CUT_AT=1788420644
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --no-tags --quiet --unshallow || git fetch --no-tags --quiet --deepen=200 || true
+          fi
+          # `--no-merges`, because on a pull_request event HEAD is the synthetic
+          # merge commit GitHub builds from base and head. It has a generated
+          # message, can never carry a sign-off, and demanding one from it makes
+          # a check nobody can turn green.
+          NA=$(git log --no-merges --format='%H %at' "${BASE}..HEAD" \
+               | awk -v c="${CUT_AT}" '$2 > c {print $1}')
+          if [ -z "${NA}" ]; then
+            echo "::notice::No commit in this pull request was written after the DCO landed; sign-off not required."
+            exit 0
+          fi
+          echo "${NA}" | while read -r sha; do
+            [ -n "$sha" ] || continue
+            python3 scripts/ci/licence_signoff.py "${sha}~1..${sha}"
+          done

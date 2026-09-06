@@ -3,9 +3,12 @@
 Pure Rust PDF/A SDK with WASM bindings and experimental, feature-gated XFA support.
 
 ![Crates.io](https://img.shields.io/crates/v/pdfluent)
-![License](https://img.shields.io/badge/license-PDFluent%20Commercial-blue)
+![License](https://img.shields.io/badge/license-AGPL--3.0--only%20OR%20Commercial-blue)
 
-See [SETUP.md](SETUP.md) for contributor onboarding.
+The engine, the language bindings and the guards that gate them are in this one
+repository. [SETUP.md](SETUP.md) is the contributor onboarding,
+[CHANGELOG.md](CHANGELOG.md) is what changed and when, and
+<https://pdfluent.com> is the product around it.
 
 ## Cookbook
 
@@ -67,14 +70,59 @@ fn main() -> Result<()> {
 - **Python** — PyO3 bindings (separate crate)
 - **C FFI** — pdf-capi for C/C++ integration
 
+## Build and test
+
+Rust 1.94.0, pinned in [`rust-toolchain.toml`](rust-toolchain.toml) so `rustup`
+installs it on the first `cargo` call. The default feature set needs no system
+library beyond a C toolchain.
+
+```
+cargo build -p pdfluent            # the SDK crate
+cargo test  -p pdfluent
+cargo fmt --all --check
+cargo clippy --workspace -- -D warnings
+```
+
+`cargo build --workspace` builds the bindings and the tools around the SDK as
+well, which is what CI does and what takes the time.
+
+Default features: `signing`, `pdfa`, `redaction`, `font-subset`. XFA sits behind
+the `xfa-flatten` feature, is experimental and is not production-supported.
+
+## Contributing
+
+Sign off every commit — `git commit -s` — and read
+[CONTRIBUTING.md](CONTRIBUTING.md) before the first one: it says what the
+sign-off certifies, what it does not, and which contributions need a CLA that
+does not exist yet. A pull request here runs two checks and both must pass: no
+commit publishes a personal address, and every commit written since the DCO
+landed carries a matching `Signed-off-by`.
+
+Security reports do not go in a public issue. [SECURITY.md](SECURITY.md) says
+where they go.
+
+## How the measurements are made
+
+Every figure PDFluent publishes carries a claim ID, and the method behind those
+figures — the axes, the readers and their versions, the machine class, and what
+counts as a failure — is written up at
+<https://pdfluent.com/benchmarks/how-we-measure>. It deliberately carries no
+figure of its own. This README carries none either.
+
 ## License
 
-PDFluent crates are commercially licensed (see [LICENSE](LICENSE)); a few
-dependencies are separately available under MIT or Apache-2.0 (see
-[NOTICE](NOTICE)).
+PDFluent is available under two licences, at your option: the **GNU AGPLv3**, or
+the **PDFluent Commercial Licence**. See [LICENSE](LICENSE) — the AGPL is the
+default and needs no key, no permission and nothing from us. The commercial
+licence exists for buyers who cannot publish their own source; it is what
+[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing) sells.
+
+Some dependencies are separately available under MIT or Apache-2.0, including
+the forked crates this repository carries; [NOTICE](NOTICE) says which is which,
+per crate.
 
 **Is the SDK covered by the free PDFluent editor license?** No. The PDFluent
-desktop editor is free to use, including at work, but that license covers
-the application itself. Embedding, linking, or calling this SDK (or any of
-its crates or language bindings) from your own software requires a separate
-SDK license. See [pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing).
+desktop editor is free to use, including at work, but that license covers the
+application itself. Embedding, linking, or calling this SDK (or any of its
+crates or language bindings) from your own software is covered by the two
+licences above.

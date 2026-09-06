@@ -1,0 +1,12 @@
+# Review assignment (#233).
+#
+# One maintainer, so one line -- and it is here rather than nowhere because a
+# CODEOWNERS file is what makes a review request arrive instead of a pull
+# request sitting unread. The day there is a second maintainer, this is the file
+# that splits by directory; until then a per-path table would be four ways of
+# writing the same name.
+#
+# It assigns a reviewer. It does not require one: `require_code_owner_reviews`
+# is off in docs/PUBLIC_BRANCH_PROTECTION.toml, because with a single account a
+# review requirement is a lock whose key is in the same pocket.
+* @jasperdew

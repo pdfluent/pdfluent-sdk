@@ -126,3 +126,16 @@ jobs:
       - name: The published tree names no path outside itself
         if: ${{ !cancelled() }}
         run: bash scripts/ci/public_snapshot_audit.sh
+      # The API half cannot run here: reading another repository's protection
+      # needs `administration:read`, which GITHUB_TOKEN cannot hold at all
+      # (measured on #290, same wall every_label_has_a_runner.py hit). So this
+      # runs the half that is honest on a runner -- the register against the
+      # workflows in this tree -- and says so in its own output. The half that
+      # reads the four repositories runs in scripts/ci/local_ci_gate.sh, where
+      # `gh` has a keyring.
+      - name: The protection guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_public_repos_are_protected.py
+      - name: Every required check is a job a pull request here reports
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/public_repos_are_protected.py --tree-only
