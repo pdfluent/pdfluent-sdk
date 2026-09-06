@@ -482,8 +482,22 @@ run signoffcut python3 scripts/ci/test_signoff_respects_the_cutoff.py
 # HERE and not in a workflow, for the reason mirrordrift and checkouts are here:
 # it needs `gh` with a token for the tracker AND this repository's history, and
 # an Actions workspace has neither. It degrades to SKIPPED (not a pass) on a
-# machine without access, so it can never refuse a run it did not judge.
-run closedstory python3 scripts/ci/a_closed_story_names_a_landed_sha.py
+# machine without access, so it can never speak about a run it did not judge.
+#
+# ADVISORY, and this is the same owner decision as `groen` above (#331). What it
+# watches is the TRACKER, which is not in anybody's push: it fired on its own
+# landing run over #227, closed by another terminal minutes earlier, and refused
+# a landing that had nothing to do with it. That is the shape that closed master
+# four times in 24 hours -- a queue stopped by somebody else's state.
+#
+# What is given up is real: a closure without a sha now goes unnoticed until
+# somebody reads this output or the next run of the check. What is not given up
+# is the measurement, which is the half that was missing entirely -- the seven
+# closures of #348 stood for two weeks with nothing looking at them at all.
+echo "--- closed stories (advisory; the tracker is not in this push) ---"
+python3 scripts/ci/a_closed_story_names_a_landed_sha.py 2>&1 | sed 's/^/  /' || true
+# Its test stays a hard gate. That watches this repository's own code, which IS
+# in the push, and it is the half that can be broken here.
 run closedstoryt python3 scripts/ci/test_a_closed_story_names_a_landed_sha.py
 run prstale   python3 scripts/ci/pr_staleness.py
 run prstaletst python3 scripts/ci/test_pr_staleness.py
