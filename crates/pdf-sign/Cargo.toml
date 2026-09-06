@@ -41,3 +41,6 @@ lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = fals
 [features]
 default = []
 tsa = ["ureq"]
+
+[dev-dependencies]
+test-skip = { path = "../test-skip" }

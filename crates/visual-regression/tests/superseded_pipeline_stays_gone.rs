@@ -47,6 +47,11 @@ fn repository() -> PathBuf {
 
 fn text_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
+        // Announced rather than swallowed. An unreadable directory here means
+        // this walk scanned less of the tree than the caller believes, and a
+        // test that asserts "the pipeline is gone" over a tree it could not
+        // read is green for the wrong reason.
+        eprintln!("SKIPPED (not a pass): {} could not be read", dir.display());
         return;
     };
     for entry in entries.flatten() {

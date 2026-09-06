@@ -9,8 +9,9 @@
 // dead. Allow that — features are external knobs.
 #![allow(dead_code, unused_imports)]
 
-#[cfg(not(target_arch = "wasm32"))]
 use pdf_engine::{OcrBackend, OcrError};
+#[cfg(not(target_arch = "wasm32"))]
+use test_skip::skip_test;
 
 #[cfg(feature = "ocr-aws")]
 use pdf_engine::AwsTextractBackend;
@@ -25,12 +26,7 @@ use pdf_engine::MistralOcrBackend;
 #[test]
 fn mistral_env_live_smoke() {
     if std::env::var_os("MISTRAL_API_KEY").is_none() {
-        eprintln!(
-            "SKIPPED (not a pass): precondition not met at {}:{}",
-            file!(),
-            line!()
-        );
-        return;
+        skip_test!("precondition not met at {}:{}", file!(), line!())
     }
 
     let backend = MistralOcrBackend::from_env().expect("Mistral backend from env");

@@ -1,0 +1,9 @@
+[package]
+name = "test-skip"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The skip_test! macro, so the announcing shape of a skip is the shorter one"
+
+[dependencies]

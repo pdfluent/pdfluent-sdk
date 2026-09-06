@@ -33,6 +33,7 @@
 //! which corpus it was pointed at.
 
 use std::path::PathBuf;
+use test_skip::skip_test;
 
 /// How many documents in the CI corpus still lose their separators.
 ///
@@ -86,11 +87,10 @@ fn corpus() -> Option<PathBuf> {
 #[test]
 fn no_document_loses_its_spaces_while_keeping_its_letters() {
     let Some(dir) = corpus() else {
-        eprintln!(
-            "SKIPPED (not a pass): no corpus directory. Set PDFA_WORD_SEPARATOR_CORPUS, \
+        skip_test!(
+            "no corpus directory. Set PDFA_WORD_SEPARATOR_CORPUS, \
              CI_CORPUS_DIR or PDFLUENT_CORPUS to a directory of PDFs."
-        );
-        return;
+        )
     };
 
     let mut paden: Vec<PathBuf> = std::fs::read_dir(&dir)

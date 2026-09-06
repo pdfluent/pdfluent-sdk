@@ -34,6 +34,7 @@ use pdf_manip::text_edit::{
 use pdf_manip::unicode_font::UnicodeFont;
 use std::io::Write;
 use std::process::Command;
+use test_skip::skip_test;
 
 const VERAPDF_CANDIDATES: [&str; 4] = [
     "/usr/local/bin/verapdf",
@@ -53,10 +54,6 @@ fn verapdf() -> Option<String> {
         }
     }
     None
-}
-
-fn skip(reason: &str) {
-    eprintln!("SKIPPED (not a pass): {reason}");
 }
 
 fn host_font() -> Option<Vec<u8>> {
@@ -198,8 +195,7 @@ fn replace_unicode(pdf: &[u8], source: &str, replacement: &str, font: UnicodeFon
 #[test]
 fn our_pdfa_conversion_is_accepted_by_verapdf() {
     if verapdf().is_none() {
-        skip("veraPDF not installed");
-        return;
+        skip_test!("veraPDF not installed")
     }
     let mut doc = make_doc("Hello world");
     let mut buf = Vec::new();
@@ -219,18 +215,15 @@ fn our_pdfa_conversion_is_accepted_by_verapdf() {
 #[test]
 fn a_unicode_replacement_keeps_the_file_pdfa_conformant() {
     if verapdf().is_none() {
-        skip("veraPDF not installed");
-        return;
+        skip_test!("veraPDF not installed")
     }
     let Some(data) = host_font() else {
-        skip("no host font with Unicode coverage");
-        return;
+        skip_test!("no host font with Unicode coverage")
     };
     let font = UnicodeFont::from_bytes(data).expect("font parses");
     let replacement = "Γειά σου Κόσμε";
     if !font.covers(replacement) {
-        skip("host font does not cover Greek");
-        return;
+        skip_test!("host font does not cover Greek")
     }
 
     let mut doc = make_doc("Hello world");
@@ -264,8 +257,7 @@ fn a_unicode_replacement_keeps_the_file_pdfa_conformant() {
 #[test]
 fn the_validator_rejects_a_file_that_is_not_pdfa() {
     if verapdf().is_none() {
-        skip("veraPDF not installed");
-        return;
+        skip_test!("veraPDF not installed")
     }
     let mut doc = make_doc("Hello world");
     let mut buf = Vec::new();
@@ -287,8 +279,7 @@ fn the_validator_rejects_a_file_that_is_not_pdfa() {
 #[test]
 fn a_cff_replacement_keeps_the_file_pdfa_conformant() {
     if verapdf().is_none() {
-        skip("veraPDF not installed");
-        return;
+        skip_test!("veraPDF not installed")
     }
     let candidates = [
         "/System/Library/Fonts/Supplemental/STIXGeneral.otf",
@@ -305,15 +296,13 @@ fn a_cff_replacement_keeps_the_file_pdfa_conformant() {
         }
     }
     let Some(data) = cff else {
-        skip("no CFF-flavoured OpenType font on this host");
-        return;
+        skip_test!("no CFF-flavoured OpenType font on this host")
     };
     let font = UnicodeFont::from_bytes(data).expect("CFF font parses");
     // Above Latin-1, so the Unicode route is actually taken.
     let replacement = "Γειά σου";
     if !font.covers(replacement) {
-        skip("CFF font on this host does not cover Greek");
-        return;
+        skip_test!("CFF font on this host does not cover Greek")
     }
 
     let mut doc = make_doc("Hello world");

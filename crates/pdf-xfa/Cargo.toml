@@ -50,3 +50,6 @@ xfa-js-sandboxed = ["dep:rquickjs"]
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[dev-dependencies]
+test-skip = { path = "../test-skip" }

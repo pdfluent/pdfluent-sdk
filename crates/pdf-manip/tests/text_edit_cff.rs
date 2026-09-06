@@ -25,14 +25,11 @@ use pdf_manip::text_edit::{
 use pdf_manip::unicode_font::UnicodeFont;
 use std::io::Write;
 use std::process::Command;
+use test_skip::skip_test;
 
 /// Above Latin-1, so the original font cannot represent it and the Unicode
 /// route is actually taken.
 const SAMPLE: &str = "Γειά σου";
-
-fn skip(reason: &str) {
-    eprintln!("SKIPPED (not a pass): {reason}");
-}
 
 /// A CFF-flavoured OpenType font (magic `OTTO`).
 ///
@@ -138,8 +135,7 @@ fn descendant_of(doc: &Document) -> Option<Dictionary> {
 #[test]
 fn a_cff_font_is_accepted_instead_of_refused() {
     let Some((path, data)) = cff_font() else {
-        skip("no CFF-flavoured OpenType font on this host");
-        return;
+        skip_test!("no CFF-flavoured OpenType font on this host")
     };
     UnicodeFont::from_bytes(data)
         .unwrap_or_else(|e| panic!("{path} should be embeddable now, got: {e}"));
@@ -148,13 +144,11 @@ fn a_cff_font_is_accepted_instead_of_refused() {
 #[test]
 fn a_cff_font_gets_a_cidfonttype0_descendant_with_fontfile3() {
     let Some((_, data)) = cff_font() else {
-        skip("no CFF-flavoured OpenType font on this host");
-        return;
+        skip_test!("no CFF-flavoured OpenType font on this host")
     };
     let font = UnicodeFont::from_bytes(data).expect("font parses");
     if !font.covers(SAMPLE) {
-        skip("CFF font on this host lacks Latin coverage");
-        return;
+        skip_test!("CFF font on this host lacks Latin coverage")
     }
     let saved = replace("Hello world", SAMPLE, font);
     let doc = Document::load_mem(&saved).expect("reopen");
@@ -189,20 +183,17 @@ fn a_cff_font_gets_a_cidfonttype0_descendant_with_fontfile3() {
 #[test]
 fn text_written_with_a_cff_font_can_be_read_back_out() {
     let Some((_, data)) = cff_font() else {
-        skip("no CFF-flavoured OpenType font on this host");
-        return;
+        skip_test!("no CFF-flavoured OpenType font on this host")
     };
     let font = UnicodeFont::from_bytes(data).expect("font parses");
     let replacement = SAMPLE;
     if !font.covers(replacement) {
-        skip("CFF font on this host lacks Latin coverage");
-        return;
+        skip_test!("CFF font on this host lacks Latin coverage")
     }
     let saved = replace("Hello world", replacement, font);
 
     let Ok(bin) = which("pdftotext") else {
-        skip("pdftotext not available");
-        return;
+        skip_test!("pdftotext not available")
     };
     let path = std::env::temp_dir().join(format!("pdfluent-cff-{}.pdf", std::process::id()));
     std::fs::File::create(&path)

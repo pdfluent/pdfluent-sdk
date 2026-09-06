@@ -99,6 +99,7 @@ name = "table_dump"
 required-features = ["spike"]
 
 [dev-dependencies]
+test-skip = { path = "../test-skip" }
 image = { workspace = true }
 lopdf = { workspace = true }
 serde_json = { workspace = true }

@@ -105,6 +105,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
+test-skip = { path = "../test-skip" }
 zip = { version = "7", default-features = false, features = ["deflate"] }
 # Bootstrap tests run as integration tests under tests/web_examples/.
 # Form-mutation integration tests (3C-1 / #1245) construct small in-memory

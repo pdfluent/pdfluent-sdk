@@ -222,6 +222,12 @@ side = "ours"
 publish_false = true
 
 [[crate]]
+name = "test-skip"
+dir = "crates/test-skip"
+side = "internal"
+publish_false = true
+
+[[crate]]
 name = "visual-regression"
 dir = "crates/visual-regression"
 side = "internal"

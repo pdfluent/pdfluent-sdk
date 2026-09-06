@@ -19,6 +19,7 @@ thiserror.workspace = true
 flate2 = "1"
 
 [dev-dependencies]
+test-skip = { path = "../test-skip" }
 tempfile = "3"
 # pdf-font CMap parser for the M8-REDACT-03 stub-compatibility smoke test.
 # Used only in tests to verify that the stub /ToUnicode CMap we produce on
