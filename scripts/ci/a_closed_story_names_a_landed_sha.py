@@ -38,6 +38,23 @@ The difference between "no code was needed here" and "the code never landed
 anywhere" is the whole subject, so it is written down rather than inferred from
 the absence of a sha.
 
+IT REPORTS, IT DOES NOT REFUSE
+
+Advisory in scripts/ci/local_ci_gate.sh, by owner decision on the same grounds
+as the never-green guard (#331). What it watches is the TRACKER, and the tracker
+is not in anybody's push: on its first run it fired over an issue another
+terminal had closed twenty minutes earlier and refused a landing that had
+nothing to do with it. A queue stopped by somebody else's state is the shape
+that closed master four times in one day.
+
+What that gives up is real and is said rather than implied: a closure without a
+sha now goes unnoticed until somebody reads this output. What it does not give
+up is the measurement, which is the half that was missing entirely -- the seven
+closures above stood for two weeks with nothing looking at them at all.
+
+Its TEST is a hard gate. That watches this repository's own code, which is in
+the push, and it is the half that can be broken here.
+
 WITHOUT ACCESS IT SAYS SO
 
 Reading the tracker needs `gh` and a token, and comparing against master needs

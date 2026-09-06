@@ -79,26 +79,6 @@ so a new block cannot reach a reader before the compiler here has seen it.
 """
 
 [[exempt]]
-gate = "a_closed_story_names_a_landed_sha.py"
-why = """
-Its subject is the tracker, not the change. It reads the closed issues of
-pdfluent/pdfluent-internal and asks whether the sha each closure names is an
-ancestor of master here -- so it needs a tracker token AND this repository's
-history at the same time. A pull-request runner has neither: `gh` is not on the
-self-hosted runner, and a fork's pull request must never carry a token that can
-read a private tracker.
-
-It stands in the local gate, which is where a terminal closes a story, and where
-both halves are present. Without access it reports SKIPPED (not a pass) rather
-than a clean bill, so it can never approve a run it did not judge.
-
-What CAN be judged in a pull request runs there: test_a_closed_story_names_a_landed_sha.py
-builds a repository and a `gh` in a temporary directory and holds the guard to
-the case that looks right -- a real commit, present in the repository, that
-master never took. That is the shape all seven closures in #348 had.
-"""
-
-[[exempt]]
 gate = "origin_is_the_source_in_every_checkout.py"
 why = """
 Its subject is the machine, not the change. It asks which repository `origin`

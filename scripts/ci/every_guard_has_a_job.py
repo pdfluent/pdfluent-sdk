@@ -144,8 +144,9 @@ ALLOWED: dict[str, str] = {
     # the other side in docs/GATES_REACHABLE_FROM_A_PULL_REQUEST.toml, and its
     # test runs on every pull request.
     "a_closed_story_names_a_landed_sha.py": (
-        "needs a tracker token and this repository's history at once; runs in "
-        "scripts/ci/local_ci_gate.sh, and its test runs in CI"
+        "needs a tracker token and this repository's history at once; ADVISORY "
+        "in scripts/ci/local_ci_gate.sh because the tracker is not in anybody's "
+        "push, and its test runs as a hard gate in CI"
     ),
 
     "does_this_already_exist.py": (
