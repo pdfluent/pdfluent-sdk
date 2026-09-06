@@ -193,8 +193,19 @@ fn group_into_lines(blocks: &[TextBlock]) -> Vec<Line> {
 /// What distinguishes a column from an accidental word position is recurrence:
 /// text beginning at (nearly) the same x on several lines. An x that appears on
 /// one line only is a word.
+///
+/// Two lines or 30% was still too little, and the end-to-end test said so: a
+/// grid of four rows by two columns came back with six columns. In a real table
+/// a cell holds words, and every word starts at its own x. Those word positions
+/// shift only a few points from row to row, so within [`TABLE_X_TOLERANCE`] two
+/// of them keep landing together -- which already satisfied the old threshold.
+///
+/// What separates a column from a word is therefore not *that* the x recurs but
+/// *how often*: a column start recurs on nearly every line, a word position does
+/// not. Hence 75%. Lower lets word positions through; much higher loses tables
+/// in which a cell is occasionally empty.
 const MIN_COLUMN_LINES: usize = 2;
-const MIN_COLUMN_SUPPORT_PERCENT: usize = 30;
+const MIN_COLUMN_SUPPORT_PERCENT: usize = 75;
 
 /// The x-positions that behave as a column, ordered left to right.
 fn column_positions(lines: &[Line]) -> Vec<f64> {
@@ -225,10 +236,14 @@ fn column_positions(lines: &[Line]) -> Vec<f64> {
         }
     }
 
-    let threshold = std::cmp::max(
-        MIN_COLUMN_LINES,
-        lines.len() * MIN_COLUMN_SUPPORT_PERCENT / 100,
-    );
+    // Rounded up, not down.
+    //
+    // At three lines `3 * 75 / 100` gave two, so a word position that happened
+    // to coincide on two of the three lines still counted as a column. On a
+    // small table every line is evidence, and the requirement must not evaporate
+    // through integer division.
+    let required = (lines.len() * MIN_COLUMN_SUPPORT_PERCENT).div_ceil(100);
+    let threshold = std::cmp::max(MIN_COLUMN_LINES, required);
     let mut positions: Vec<f64> = candidates
         .into_iter()
         .filter(|&(_, support)| support >= threshold)

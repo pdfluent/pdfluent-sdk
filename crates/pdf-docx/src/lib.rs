@@ -211,6 +211,105 @@ mod tests {
         Some(content)
     }
 
+    /// A content stream for a grid of `rows` x `columns` cells, in which every
+    /// cell holds several separate words.
+    ///
+    /// The separate words are the whole point. A fixture whose cells are a
+    /// single block at exactly one x per column passes even when the detection
+    /// counts every x as a column -- there are then precisely as many x-values
+    /// as columns, and the test measures nothing. That is what the first
+    /// version of this test looked like, and the mutation "every x is a column"
+    /// simply survived it.
+    ///
+    /// Real tables do not look like that. A cell carries words, and each word
+    /// starts at its own x. What separates a column from a word is that the
+    /// column x recurs on several lines and the word x does not, so the word
+    /// spacing here shifts a little per row: the second and third word x-values
+    /// then do not coincide between rows.
+    fn grid_content(rows: usize, columns: usize) -> Vec<u8> {
+        let mut ops = String::from("BT\n/F1 11 Tf\n");
+        for r in 0..rows {
+            for c in 0..columns {
+                let column_x = 60.0 + (c as f64) * 130.0;
+                let y = 700.0 - (r as f64) * 24.0;
+                // Three words per cell. The first sits on the column x -- that
+                // is what makes a column a column. The other two shift per row,
+                // so they can never become a second column.
+                let shift = 4.0 + (r as f64) * 3.0;
+                for w in 0..3usize {
+                    let x = column_x + (w as f64) * (18.0 + shift);
+                    let text = match w {
+                        0 => format!("R{r}C{c}"),
+                        1 => format!("w{r}{c}b"),
+                        _ => format!("w{r}{c}c"),
+                    };
+                    ops.push_str(&format!("1 0 0 1 {x:.1} {y:.1} Tm\n({text}) Tj\n"));
+                }
+            }
+        }
+        ops.push_str("ET\n");
+        ops.into_bytes()
+    }
+
+    /// How many columns the DOCX declares for its first table.
+    fn columns_in_docx(docx: &[u8]) -> usize {
+        let xml = read_zip_entry(docx, "word/document.xml").expect("word/document.xml");
+        xml.matches("<w:gridCol").count()
+    }
+
+    /// A four-column table must come back with four columns, not twenty-two.
+    ///
+    /// The old column detection took every x-position it met, so a table got
+    /// roughly one column per word. The file was valid and opened cleanly; the
+    /// layout was unusable. See #161.
+    ///
+    /// The grid is the comparison: four columns in, four out. Without putting
+    /// those two numbers side by side, "the table looks better" is an opinion.
+    #[test]
+    fn a_table_keeps_the_column_count_of_the_original() {
+        for columns in [2usize, 3, 4, 5] {
+            let doc = make_test_pdf(&grid_content(4, columns));
+            let docx = pdf_to_docx(&doc).expect("conversion succeeds");
+
+            let found = columns_in_docx(&docx);
+            assert_eq!(
+                found, columns,
+                "a grid of 4 rows x {columns} columns came back with {found} columns"
+            );
+        }
+    }
+
+    /// And the content must sit in the right cell, not merely in the right count.
+    ///
+    /// A table with the right number of columns in which everything landed in
+    /// the first cell counts just as well as a table -- and is just as unusable.
+    #[test]
+    fn the_cells_sit_in_the_column_they_belong_to() {
+        let doc = make_test_pdf(&grid_content(3, 4));
+        let docx = pdf_to_docx(&doc).expect("conversion succeeds");
+        let xml = read_zip_entry(&docx, "word/document.xml").expect("word/document.xml");
+
+        assert_eq!(columns_in_docx(&docx), 4);
+
+        // Every cell appears exactly once.
+        for r in 0..3 {
+            for c in 0..4 {
+                let text = format!("R{r}C{c}");
+                assert_eq!(
+                    xml.matches(&text).count(),
+                    1,
+                    "cell {text} appears {} time(s)",
+                    xml.matches(&text).count()
+                );
+            }
+        }
+
+        // And in the right order: R0C0 before R0C1, R0C3 before R1C0.
+        let at = |needle: &str| xml.find(needle).unwrap_or(usize::MAX);
+        assert!(at("R0C0") < at("R0C1"), "the columns are out of order");
+        assert!(at("R0C3") < at("R1C0"), "the rows are out of order");
+    }
+
     fn zip_file_names(data: &[u8]) -> Vec<String> {
         let cursor = std::io::Cursor::new(data);
         let archive = zip::ZipArchive::new(cursor).unwrap();
