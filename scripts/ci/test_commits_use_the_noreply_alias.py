@@ -47,6 +47,13 @@ from commits_use_the_noreply_alias import (  # noqa: E402
 VOOR_CUTOVER = "2026-01-15T09:00:00+01:00"
 NA_CUTOVER = "2026-12-01T12:00:00+01:00"
 
+# The name the fixture's own repositories commit under. It has to be configured,
+# and it has to be a name no account carries: with `user.name` unset, git fills
+# it in from the machine's password entry, so the fixture's identity becomes
+# whoever is running it -- and a name the owner's account could also produce
+# would let that leak back in unnoticed.
+ZANDBAK_NAAM = "fixture, not the machine"
+
 ACCEPT = [
     ("the account's own alias", ALIAS),
     ("the login-only noreply form", "jasperdew@users.noreply.github.com"),
@@ -116,6 +123,26 @@ def _rev(wd: Path, ref: str) -> str:
     return _git(wd, "rev-parse", ref).stdout.strip()
 
 
+def _identiteit(wd: Path) -> None:
+    """Give the sandbox repository an author of its own.
+
+    `sealed_env` empties the global config so the developer's `user.name` and
+    `user.email` cannot reach a fixture -- and git then falls back to the
+    machine's password entry for the NAME, which on a laptop is the owner's full
+    name and on a hosted runner is nothing at all. So a repository configured
+    with `user.email` alone has no complete identity there: `git var
+    GIT_AUTHOR_IDENT` fails with "Author identity unknown", and every `--pending`
+    case that depends on it fails with it -- green on macOS, red on every Linux
+    runner. Measured 06-09-2026 on `pdfluent/pdfluent-sdk`, whose `main` reports
+    this test under a required check.
+
+    The email is configured too, so the pair is complete from the start; the
+    cases that are ABOUT an address set their own over it.
+    """
+    _git(wd, "config", "user.name", ZANDBAK_NAAM)
+    _git(wd, "config", "user.email", ALIAS)
+
+
 def _run(wd: Path, *args: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     # GITHUB_EVENT_PATH would send the guard at this run's own event payload
     # instead of at the fixture, and GITHUB_HEAD_REF/GITHUB_REF_NAME would tell
@@ -138,6 +165,19 @@ def einde_tot_eind(fouten: list[str]) -> None:
         if _git(wd, "init", "--initial-branch=master", ".").returncode != 0:
             fouten.append("could not create the fixture repository")
             return
+        _identiteit(wd)
+
+        # And the identity it now answers with is that one, not this machine's.
+        # This is the case that goes red if `_identiteit` stops configuring a
+        # name: on Linux `git var` fails outright, and on macOS it succeeds with
+        # the account holder's full name -- which is not ZANDBAK_NAAM either.
+        ident = _git(wd, "var", "GIT_AUTHOR_IDENT")
+        if ident.returncode != 0 or not ident.stdout.startswith(ZANDBAK_NAAM):
+            fouten.append(
+                "the fixture repository does not commit under its own identity, "
+                "so git answered with the machine's: "
+                + (ident.stdout.strip() or ident.stderr.strip()[:120])
+            )
 
         _commit(wd, ALIAS, "chore: the first commit")
         basis = _rev(wd, "HEAD")
@@ -290,6 +330,7 @@ def dichtstbijzijnde_basis(fouten: list[str]) -> None:
         if _git(wd, "init", "--initial-branch=master", ".").returncode != 0:
             fouten.append("could not create the base fixture")
             return
+        _identiteit(wd)
 
         _commit(wd, ALIAS, "chore: one")
         ver = _rev(wd, "HEAD")
