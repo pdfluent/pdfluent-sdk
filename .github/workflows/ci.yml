@@ -332,6 +332,24 @@ jobs:
       - name: Does this already exist keeps its three answers apart
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_does_this_already_exist.py
+      # LC7: the fork line a Rust reader actually sees. The guard reads the
+      # provenance table rather than a list of its own, so a new fork turns it
+      # red without anybody remembering to update it; its test proves that a
+      # mention below the fold is not enough, which is the whole of #219.
+      - name: Every forked crate names its upstream in its README
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_fork_names_its_upstream.py
+      - name: The fork-notice guard bites, and above the fold
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_fork_names_its_upstream.py
+      # LC5: the divergence measurement. The measurement itself needs a 900 MB
+      # clone of upstream and runs by hand; what runs here is the half that can
+      # be wrong in silence -- no clone reported as no divergence, a guessed
+      # fork point reported as a measured one, an empty table reported as a
+      # clean one.
+      - name: The divergence measurement says when it did not measure
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_fork_divergence.py
       # Same family, one layer down: `timeout 30 ... || true` threw the exit
       # code away, so a render the timeout killed -- which writes nothing to
       # stderr -- was scored as a clean page by the crash guard.
