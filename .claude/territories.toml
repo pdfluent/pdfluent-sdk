@@ -336,6 +336,19 @@ uitgezonderd = [
   ".github/workflows/visual-regression.yml",
   "scripts/ci/persistent_builds_check_their_build_dir.py",
   "scripts/ci/test_seed_public_repo.py",
+  # ON LOAN from t2, 06-09-2026, under the standing rule for a guard that blocks
+  # everyone on something outside the pull request. #222 put base64 key material
+  # on the private term list so the seeding would redact a PEM body out of the
+  # published history; `geen_interne_zaken.py` compiled every list line as a
+  # regular expression, so a line beginning with `+` raised inside
+  # `alle_regels()` and took the seeding, the message guard and the tree guard
+  # with it -- and the lines that did compile would have matched nothing at all.
+  #
+  # EXPIRY: back to t2 the moment this lands. The loan covers how a list line is
+  # turned into an alternative, its test, and the two registrations of that
+  # test, and nothing else in either file.
+  "scripts/ci/geen_interne_zaken.py",
+  "scripts/ci/test_the_term_list_is_literal.py",
   # Same reason and the same ticket: the publication guard and its test are
   # t3's, and they live under scripts/ci because that is where the gate finds
   # guards, not because they are CI wiring. (#222)
