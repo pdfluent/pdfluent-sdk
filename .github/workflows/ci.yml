@@ -325,6 +325,13 @@ jobs:
       - name: The skip lint reads a bail-out a macro performs
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_the_skip_lint_reads_a_returning_macro.py
+      # The tool a person runs before starting a story. It cannot run as a job
+      # -- see its ALLOWED entry -- but the three answers it has to keep apart
+      # ("nothing is open", "nothing matches", "I could not look") are ordinary
+      # Python and are tested here over a fake `gh`.
+      - name: Does this already exist keeps its three answers apart
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_does_this_already_exist.py
       # Same family, one layer down: `timeout 30 ... || true` threw the exit
       # code away, so a render the timeout killed -- which writes nothing to
       # stderr -- was scored as a clean page by the crash guard.
