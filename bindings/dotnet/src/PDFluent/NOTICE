@@ -64,7 +64,7 @@ The AGPL is the complete product; no feature is withheld and nothing expires.
 It asks that you offer your users the corresponding source under the same
 licence if you convey the software or let them use a modified version over a
 network. The commercial licence is the alternative for anyone who cannot do
-that. See https://pdfluent.com/pricing.
+that. See https://pdfluent.com/sdk/pricing.
 
   pdfluent             — the unified facade SDK
   pdf-engine           — orchestration and document model
@@ -109,10 +109,13 @@ install is the whole product, under the AGPLv3.
 What an evaluation ends with is a choice of licence rather than an expiry:
 the AGPL and its obligation to offer your users the corresponding source, or
 the commercial licence, which removes that obligation. The commercial route
-is a signed order form (LICENSE-COMMERCIAL §10); write to sales@pdfluent.com.
+is self-service and yearly -- Commercial EUR 999 per organisation, OEM Startup
+EUR 2,499 and OEM EUR 9,999 per product (LICENSE-COMMERCIAL §2a). Nothing is
+delivered but an order confirmation and a licence document; there is no key.
+Questions before buying: sales@pdfluent.com.
 
   Licensing: https://pdfluent.com/docs/licensing
-  Pricing:   https://pdfluent.com/pricing
+  Pricing:   https://pdfluent.com/sdk/pricing
   Terms:     https://pdfluent.com/terms
 
 ============================================================================
