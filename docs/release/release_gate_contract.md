@@ -42,12 +42,16 @@ Gates execute in order. A gate that emits P0 findings aborts the sequence.
 | Check | Stop-the-line |
 |---|---|
 | SPDX expression in manifest `license` field (or `license-file` for proprietary) | yes |
-| SPDX matches policy for crate type (fork → `MIT OR Apache-2.0`; proprietary → `SEE LICENSE IN LICENSE`) | yes |
+| SPDX matches policy for crate type (fork → `MIT OR Apache-2.0`; ours → `AGPL-3.0-only OR LicenseRef-PDFluent-Commercial`) | yes |
 | `license-file` resolves to an existing file | yes |
 
 **Policy:**
 - Forked open-source code (hayro/* crates): `MIT OR Apache-2.0`
-- PDFluent-authored crates: `SEE LICENSE IN LICENSE` (PDFluent Commercial License)
+- PDFluent-authored crates: `AGPL-3.0-only OR LicenseRef-PDFluent-Commercial`
+- npm and NuGet cannot carry a LicenseRef expression, so they point at a file
+  instead: `SEE LICENSE IN LICENSE-OFFER` and `<PackageLicenseFile>LICENSE-OFFER</PackageLicenseFile>`.
+  `LICENSE` is the AGPL text and nothing else (#349), so it is not the pointer's
+  target — a pointer to it would publish half the offer.
 - Mixed: use `license-file`; never omit the actual text
 
 ---

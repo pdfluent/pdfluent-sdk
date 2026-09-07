@@ -116,7 +116,15 @@ FORKS = _forks()
 
 # --- the AGPL text itself ----------------------------------------------------
 
-AGPL = REPO / "LICENSE-AGPL"
+# LICENSE holds the AGPL and nothing else (#349). Until 07-09-2026 it held our
+# two-licence explanation and the FSF text sat beside it in LICENSE-AGPL, which
+# had two costs. GitHub, crates.io and every licence scanner read LICENSE, saw
+# prose that was not a licence they knew, and reported the repository as
+# `NOASSERTION` -- the AGPL half of the offer was invisible to exactly the
+# readers who look it up. And a reader who opened LICENSE could not tell where
+# our words stopped and the FSF's began. The explanation now lives in README's
+# Licence section, where prose belongs and no scanner mistakes it for a grant.
+AGPL = REPO / "LICENSE"
 
 # Pinned to the FSF's own publication at https://www.gnu.org/licenses/agpl-3.0.txt,
 # fetched 31-08-2026. Cross-checked word for word against SPDX's stored
@@ -206,7 +214,7 @@ def eigen_refs_zijn_gedefinieerd(cargo_paden: list[str]) -> list[str]:
     return uit
 
 # Every shipped copy of a licence text, and where it must be identical to.
-KOPIEEN = ("LICENSE", "LICENSE-AGPL", "LICENSE-COMMERCIAL")
+KOPIEEN = ("LICENSE", "LICENSE-COMMERCIAL", "LICENSE-OFFER")
 KOPIE_MAPPEN = ("crates/*", "bindings/java", "bindings/dotnet/src/PDFluent")
 
 
@@ -218,6 +226,11 @@ def kopieen_zijn_gelijk() -> list[str]:
     refuses capabilities -- and thirty per-crate copies kept the false sentence.
     A crates.io tarball would then have carried LICENSE saying no enforcement
     exists and LICENSE-COMMERCIAL saying it does, in one package.
+
+    Since #349 the two names that used to hold the same AGPL text -- LICENSE and
+    LICENSE-AGPL -- are one. Two names for one text is this same hazard with the
+    drift built in: nothing here compared them, so they could have differed in
+    thirty-one tarballs at once.
 
     Copying legal text into thirty directories is the design; nothing here can
     change that today. What can change is whether a copy may quietly differ.
@@ -252,7 +265,14 @@ def kopieen_zijn_gelijk() -> list[str]:
     return uit
 
 def agpl_is_onaangeroerd() -> list[str]:
-    """The AGPL text is byte-for-byte the one we pinned."""
+    """LICENSE is byte-for-byte the AGPL text we pinned, and nothing else.
+
+    This is the whole of the guarantee the file makes. Adding a line to it --
+    a copyright header, a note about the commercial half, a wrapper sentence --
+    is as much a failure here as deleting a clause, and on purpose: what makes
+    `AGPL-3.0-only` a true statement about this repository is that the file
+    named in it is the licence and not a document that contains one.
+    """
     if not AGPL.is_file():
         return [f"{AGPL.name} is missing; the AGPL half of the dual licence has no text"]
     rauw = AGPL.read_bytes()
@@ -263,9 +283,10 @@ def agpl_is_onaangeroerd() -> list[str]:
     return [f"{AGPL.name} hashes to {echt[:16]}…, pinned is {AGPL_SHA256[:16]}… "
             f"({woorden} words, expected {AGPL_WOORDEN}). An edited GPL is not the "
             "GPL: it loses compatibility with every other GPL work and the case "
-            "law that interprets it, and it still reads like a licence. If the FSF "
-            "published a new text, diff it deliberately and move the pin in the "
-            "same commit"]
+            "law that interprets it, and it still reads like a licence. Nothing of "
+            "ours belongs in this file -- the two-licence explanation is README's "
+            "Licence section. If the FSF published a new text, diff it deliberately "
+            "and move the pin in the same commit"]
 
 
 def lees(pad: pathlib.Path) -> str:

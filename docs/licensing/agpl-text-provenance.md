@@ -1,4 +1,9 @@
-# Where LICENSE-AGPL came from, and how we know it is unaltered
+# Where the AGPL text in `LICENSE` came from, and how we know it is unaltered
+
+Until 07-09-2026 this text lived in `LICENSE-AGPL`, beside a `LICENSE` that held
+our two-licence explanation. Since #349 there is one AGPL text and it is
+`LICENSE` itself; the explanation is README's Licence section. Everything below
+is about the same bytes, under the name they now have.
 
 ## Source
 
@@ -69,11 +74,14 @@ happens to say.
 
 ## Our own terms are not in this file
 
-Nothing of ours is inside `LICENSE-AGPL`, and the hash is what keeps it that way.
+Nothing of ours is inside `LICENSE`, and the hash is what keeps it that way.
+That is also why the two-licence explanation moved to the README rather than
+being folded into the top of this file: prose above a licence is still prose
+inside the file a reader — or a scanner — takes for the grant.
 
 Until 01-09-2026 there was a §7(b) attribution requirement, held in a separate
 `LICENSE-ADDITIONAL-TERMS` file precisely because section 7 is what allows a term
 to be added without touching the licence text. The owner dropped that term on
 01-09-2026 and the file is gone. The reasoning for keeping it out of
-`LICENSE-AGPL` is unchanged and is why this page still exists: an edited GPL is
+the licence file is unchanged and is why this page still exists: an edited GPL is
 not the GPL. There is simply no additional term left to keep out.

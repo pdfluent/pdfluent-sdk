@@ -7,7 +7,11 @@ Governed by `docs/release/PUBLISH_PROTOCOL.md`. Audit report goes to `benchmarks
 - [ ] `git status --porcelain` empty.
 - [ ] All publish-bound commits are on the publish branch.
 - [ ] `package.json` `name`, `version`, `description`, `license`, `repository`, `homepage` populated.
-- [ ] `license` field uses a valid SPDX expression (e.g. `MIT`, `Apache-2.0`, `MIT OR Apache-2.0`) or `SEE LICENSE IN LICENSE`.
+- [ ] `license` field uses a valid SPDX expression (e.g. `MIT`, `Apache-2.0`, `MIT OR Apache-2.0`)
+      or `SEE LICENSE IN LICENSE-OFFER`, and every file that pointer leads to is in `files`
+      (`LICENSE-OFFER`, `LICENSE`, `LICENSE-COMMERCIAL`). npm rejects a LicenseRef expression,
+      so the pointer is the offer's only spelling on this channel — and a pointer to a file
+      the tarball omits states nothing.
 - [ ] `private` is not `true` unless this is an internal-only package.
 - [ ] Version is **new** — `npm view <pkg>@<version>` returns 404.
 - [ ] `files` (or `.npmignore`) explicitly enumerates what ships — never rely on default-include for production packages.

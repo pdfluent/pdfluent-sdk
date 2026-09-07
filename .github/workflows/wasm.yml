@@ -47,10 +47,14 @@ jobs:
       - name: Build WASM package
         run: wasm-pack build crates/xfa-wasm --target web --release
 
-      - name: Ship LICENSE beside the manifest
-        # `license: SEE LICENSE IN LICENSE` is a promise about a file. Without
-        # this copy the published package makes that promise and omits the file.
-        run: cp LICENSE crates/xfa-wasm/pkg/LICENSE
+      - name: Ship the licence files beside the manifest
+        # `license: SEE LICENSE IN LICENSE-OFFER` is a promise about a file, and
+        # LICENSE-OFFER names two more. Without these copies the published
+        # package makes the promise and omits every file it points at.
+        run: |
+          cp LICENSE-OFFER crates/xfa-wasm/pkg/LICENSE-OFFER
+          cp LICENSE crates/xfa-wasm/pkg/LICENSE
+          cp LICENSE-COMMERCIAL crates/xfa-wasm/pkg/LICENSE-COMMERCIAL
 
       - name: Patch npm package metadata
         # wasm-pack regenerates package.json from Cargo.toml metadata.
@@ -66,8 +70,9 @@ jobs:
             // npm's validate-npm-package-license rejects a LicenseRef expression
             // (validForNewPackages: false), so the npm channels use npm's own
             // route for a non-SPDX offer. The compound expression is the first
-            // line of the LICENSE file shipped beside it.
-            pkg.license = 'SEE LICENSE IN LICENSE';
+            // line of the LICENSE-OFFER file shipped beside it; LICENSE itself
+            // is the AGPL text and nothing else (#349).
+            pkg.license = 'SEE LICENSE IN LICENSE-OFFER';
             pkg.licenseUrl = 'https://pdfluent.com/terms';
             pkg.homepage = 'https://pdfluent.com';
             pkg.repository = { type: 'git', url: 'https://github.com/pdfluent/pdfluent-sdk' };

@@ -13,8 +13,13 @@ unlock.
 
 ## The two licences
 
-PDFluent is published under the **GNU AGPLv3** (`LICENSE-AGPL`). That is the
-default and it is the complete product.
+PDFluent is published under the **GNU AGPLv3**. That is the default and it is
+the complete product. Since 7 September 2026 (#349) `LICENSE` holds that text
+and nothing else — verbatim from the FSF, guarded by hash — and the explanation
+of the two-licence offer lives in README's Licence section instead. Until then
+`LICENSE` held the explanation and the FSF text sat beside it in `LICENSE-AGPL`;
+that second file is gone, and every scanner that reads `LICENSE` now sees the
+AGPL rather than prose it cannot classify.
 
 The AGPL asks something back: if you convey the software, or let users interact
 with a modified version over a network, you must offer those users the

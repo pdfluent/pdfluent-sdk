@@ -43,7 +43,7 @@ d = json.loads(pkg_path.read_text(encoding="utf-8"))
 # Identity
 d["name"]    = "@pdfluent/sdk-wasm"
 d["version"] = version
-d["license"] = "SEE LICENSE IN LICENSE"
+d["license"] = "SEE LICENSE IN LICENSE-OFFER"
 d["homepage"] = "https://pdfluent.com"
 d["description"] = "PDFluent browser SDK — find and replace PDF text programmatically while preserving fonts and layout, plus edit, annotate, redact, sign and validate PDFs (including XFA), entirely client-side via WASM."
 d["author"] = "Innovation Trigger BV <team@pdfluent.com>"
@@ -83,8 +83,8 @@ PY
 
 # Verify expected fields are present and absent
 ok=1
-required='"@pdfluent/sdk-wasm" '"$VERSION"' SEE LICENSE IN LICENSE pdfluent.com'
-for s in "@pdfluent/sdk-wasm" "$VERSION" "SEE LICENSE IN LICENSE" "https://pdfluent.com"; do
+required='"@pdfluent/sdk-wasm" '"$VERSION"' SEE LICENSE IN LICENSE-OFFER pdfluent.com'
+for s in "@pdfluent/sdk-wasm" "$VERSION" "SEE LICENSE IN LICENSE-OFFER" "https://pdfluent.com"; do
     if ! grep -q -F "$s" "$PKG_JSON"; then
         echo "  MISSING: $s" >&2
         ok=0
@@ -103,11 +103,21 @@ for forbidden in "${forbidden_list[@]}"; do
         ok=0
     fi
 done
-# The LICENSE file must carry the dual offer -- `SEE LICENSE IN LICENSE` in the
-# manifest is a pointer, and it is only true if the file says what it points at.
-LIC="$PKG_DIR/LICENSE"
+# LICENSE-OFFER must carry the dual offer -- `SEE LICENSE IN LICENSE-OFFER` in
+# the manifest is a pointer, and it is only true if the file says what it points
+# at. LICENSE and LICENSE-COMMERCIAL are the two texts it names, so a package
+# that omits either resolves the offer to half of itself (#349).
+LIC="$PKG_DIR/LICENSE-OFFER"
 if ! grep -q "PDFluent is available under two licences" "$LIC" 2>/dev/null; then
-    echo "  LICENSE missing or does not state the dual offer: $LIC" >&2
+    echo "  LICENSE-OFFER missing or does not state the dual offer: $LIC" >&2
+    ok=0
+fi
+if ! grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" "$PKG_DIR/LICENSE" 2>/dev/null; then
+    echo "  LICENSE missing or is not the AGPL text: $PKG_DIR/LICENSE" >&2
+    ok=0
+fi
+if ! grep -q "PDFluent Commercial Licence" "$PKG_DIR/LICENSE-COMMERCIAL" 2>/dev/null; then
+    echo "  LICENSE-COMMERCIAL missing: $PKG_DIR/LICENSE-COMMERCIAL" >&2
     ok=0
 fi
 
