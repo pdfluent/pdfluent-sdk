@@ -34,9 +34,10 @@ GIT = shutil.which("git") or "git"
 sys.path.insert(0, str(HERE))
 from fixture_env import sealed_env  # noqa: E402
 
-# FLOOR: cases >= 14 -- this file is the specification of what the boundary
-# refuses, and a shortened list is a quietly narrowed boundary.
-FLOOR_CASES = 14
+# FLOOR: cases >= 19 -- this file is the specification of what the boundary
+# refuses, and a shortened list is a quietly narrowed boundary. Raised from 14
+# with the five LICENSE-is-the-AGPL cases (#349).
+FLOOR_CASES = 19
 
 fails: list[str] = []
 ran = 0
@@ -57,7 +58,7 @@ VASTE_BESTANDEN = [
     "docs/UPSTREAM_FORKS.toml",
     "docs/LICENSE_POLICY.toml",
     "docs/release/canonical_licenses.toml",
-    "LICENSE", "LICENSE-AGPL", "LICENSE-COMMERCIAL",
+    "LICENSE", "LICENSE-COMMERCIAL", "LICENSE-OFFER",
     "Cargo.toml",  # the virtual workspace root: no [package], must be skipped
 ]
 
@@ -160,12 +161,12 @@ with tempfile.TemporaryDirectory(prefix="boundary-") as _td:
 
     r = geval(td, basis, "npm MIT",
               herschrijf("crates/pdf-node/package.json",
-                         '"license": "SEE LICENSE IN LICENSE"', '"license": "MIT"'))
+                         '"license": "SEE LICENSE IN LICENSE-OFFER"', '"license": "MIT"'))
     rood("crates/pdf-node/package.json declares MIT", r, "crates/pdf-node/package.json")
 
     r = geval(td, basis, "csproj expression",
               herschrijf("bindings/dotnet/src/PDFluent/PDFluent.csproj",
-                         "<PackageLicenseFile>LICENSE</PackageLicenseFile>",
+                         "<PackageLicenseFile>LICENSE-OFFER</PackageLicenseFile>",
                          "<PackageLicenseExpression>MIT</PackageLicenseExpression>"))
     rood("PDFluent.csproj swaps the licence file for MIT", r,
          "bindings/dotnet/src/PDFluent/PDFluent.csproj")
@@ -270,6 +271,50 @@ with tempfile.TemporaryDirectory(prefix="boundary-") as _td:
                          'manifest = "crates/pdf-node/package.json"\nside = "internal"'))
     rood("pdf-node booked internal while the policy lists it as ours", r,
          "own_packages", "crates/pdf-node/package.json")
+
+    # --- 19..23. LICENSE is the AGPL and nothing else (#349).
+    #
+    # `agpl_is_onaangeroerd` has pinned the FSF text by hash since 31-08-2026
+    # and no case here had ever made it fire, so it was indistinguishable from
+    # a check of nothing. It matters more now than it did: the text moved out
+    # of LICENSE-AGPL into LICENSE itself, which is the file crates.io, GitHub
+    # and every licence scanner reads, and the file our own two-licence
+    # explanation used to occupy. The mutations below are the two ways it can
+    # go wrong -- terms changed, and our prose creeping back in on top -- plus
+    # the file vanishing.
+    #
+    # Each of the first two changes ONE word and leaves the word count at 5535,
+    # which is the whole argument for a hash: nothing structural sees them.
+    r = geval(td, basis, "agpl permissions to restrictions",
+              herschrijf("LICENSE", "Additional permissions", "Additional restrictions",
+                         count=3))
+    rood("LICENSE turns an AGPL permission into a restriction", r, "LICENSE", "pinned is")
+
+    r = geval(td, basis, "agpl may to must",
+              herschrijf("LICENSE", "You may convey", "You must convey", count=4))
+    rood("LICENSE turns a permission into an obligation", r, "LICENSE", "pinned is")
+
+    # The regression this ticket exists to prevent: the explanation that lived
+    # in LICENSE until 07-09-2026 gets prepended again, and the file stops being
+    # the licence a scanner thinks it is reading.
+    def onze_tekst_erboven(root: pathlib.Path) -> None:
+        p = root / "LICENSE"
+        p.write_text("PDFluent is available under two licences, at your option.\n\n"
+                     + p.read_text(encoding="utf-8"), encoding="utf-8")
+    r = geval(td, basis, "our prose above the agpl", onze_tekst_erboven)
+    rood("LICENSE gains our own two-licence notice above the AGPL", r,
+         "LICENSE", "pinned is")
+
+    # Bytes are bytes: a trailing newline is not a change to the terms and is
+    # still a different file from the one the FSF publishes.
+    r = geval(td, basis, "agpl trailing newline",
+              lambda root: (root / "LICENSE").write_text(
+                  (root / "LICENSE").read_text(encoding="utf-8") + "\n", encoding="utf-8"))
+    rood("LICENSE gains one trailing newline", r, "LICENSE", "pinned is")
+
+    r = geval(td, basis, "agpl gone",
+              lambda root: (root / "LICENSE").unlink())
+    rood("LICENSE is deleted", r, "LICENSE", "missing")
 
 # The real tree, in place: the gate is green on master, and this file has to
 # know that too -- a suite that only ever sees fixtures cannot tell a repository

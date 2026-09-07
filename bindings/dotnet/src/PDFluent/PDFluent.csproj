@@ -24,7 +24,7 @@
          licence its validator cannot name, and LICENSE opens with the canonical
          SPDX expression, so the offer is still stated in full.
          Declared in docs/LICENSE_POLICY.toml [channel_representation]. -->
-    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageLicenseFile>LICENSE-OFFER</PackageLicenseFile>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageProjectUrl>https://pdfluent.com</PackageProjectUrl>
     <RepositoryUrl>https://github.com/pdfluent/pdfluent-sdk</RepositoryUrl>
@@ -41,7 +41,7 @@
   <!-- Package-bundled metadata files -->
   <ItemGroup>
     <None Include="LICENSE" Pack="true" PackagePath="" />
-    <None Include="LICENSE-AGPL" Pack="true" PackagePath="" />
+    <None Include="LICENSE-OFFER" Pack="true" PackagePath="" />
     <None Include="LICENSE-COMMERCIAL" Pack="true" PackagePath="" />
     <None Include="README.md" Pack="true" PackagePath="" />
   </ItemGroup>

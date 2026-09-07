@@ -1,5 +1,10 @@
+> **Superseded twice: 01-09-2026 and 07-09-2026.** Since #349 `LICENSE` holds the
+> AGPL text verbatim and nothing else, `LICENSE-AGPL` is gone, and the
+> two-licence explanation is README's Licence section. The paragraph below
+> records the intermediate state, in which `LICENSE` held that explanation.
+>
 > **Superseded, 01-09-2026.** The state this page describes is resolved. `LICENSE`
-> now holds the dual notice rather than the v1.0 commercial licence (the v1.0 text
+> then held the dual notice rather than the v1.0 commercial licence (the v1.0 text
 > is archived at `docs/licensing/archive/LICENSE-COMMERCIAL-v1.0-2026-05-02.txt`),
 > the crates declare `license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"`
 > instead of `license-file`, and

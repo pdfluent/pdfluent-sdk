@@ -16,6 +16,8 @@
     "index.mjs",
     "index.d.ts",
     "LICENSE",
+    "LICENSE-COMMERCIAL",
+    "LICENSE-OFFER",
     "README.md"
   ],
   "napi": {
@@ -62,7 +64,7 @@
     "napi",
     "pdfluent"
   ],
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "SEE LICENSE IN LICENSE-OFFER",
   "licenseUrl": "https://pdfluent.com/terms",
   "repository": {
     "type": "git",

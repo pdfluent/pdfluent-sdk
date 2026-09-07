@@ -145,18 +145,85 @@ where an image in our README comes from.
 
 ## Licence
 
-PDFluent is available under two licences, at your option: the **GNU AGPLv3**, or
-the **PDFluent Commercial Licence**. See [LICENSE](LICENSE) — the AGPL is the
-default and needs no key, no permission and nothing from us. The commercial
-licence exists for buyers who cannot publish their own source; it is what
-[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing) sells.
+PDFluent is available under two licences, at your option:
 
-Some dependencies are separately available under MIT or Apache-2.0, including
-the forked crates this repository carries; [NOTICE](NOTICE) says which is which,
-per crate.
+| file | what it is |
+|---|---|
+| [LICENSE](LICENSE) | the GNU Affero General Public License, version 3 — the FSF's text, verbatim |
+| [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL) | the PDFluent Commercial Licence |
+
+`SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-PDFluent-Commercial`
+
+Choose either. You do not need permission to choose the first.
+
+`LICENSE` holds nothing but the AGPL itself, and that is deliberate: a licence
+file with our explanation wrapped around it is not the AGPL, and neither a
+reader nor a licence scanner can tell how much of what they are reading is the
+FSF's. The explanation is here instead, where prose belongs, and
+`scripts/ci/license_boundary.py` fails the build if `LICENSE` moves by one byte
+from the text pinned at
+[`docs/licensing/agpl-text-provenance.md`](docs/licensing/agpl-text-provenance.md).
+
+### Which one you want
+
+The AGPL is the default. No key is required to receive it, nothing expires, and
+the rights it grants are not conditional on anything we do.
+
+It asks something in return: if you convey the software, or let users interact
+with a modified version over a network, you must offer those users the
+corresponding source under the same licence.
+
+If that is impossible for you — a closed surrounding product, a customer
+contract, a legal department that will not accept copyleft in a shipped
+binary — the commercial licence is the alternative. Under it you are not buying
+features. You are buying the right not to publish your own source. It is what
+[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing) sells; enquiries go
+to <sales@pdfluent.com>.
+
+**What the build currently does, stated plainly, because the licence file
+previously said otherwise.** As of 1 September 2026 the compiled SDK still
+contains tier checks left over from the proprietary model: with no licence key
+it runs as `Tier::Trial`, and some capabilities — rendering, redaction,
+conversion — return `FeatureNotInTier`. Text edits add an "Edited with PDFluent
+trial" annotation.
+
+Those checks do not limit the rights the AGPL grants. You have the source and
+the freedom to modify it, so you may remove them, and you need no permission
+from us to do so. But a licence that says "no enforcement of any kind" while the
+binary refuses features is a false statement, and it was one. Removal of the
+enforcement is tracked as issue #199; until that lands, this paragraph is the
+accurate description and the sentence it replaced was not.
+
+### Not everything here is ours to license
+
+Several crates in this repository are forks of third-party open-source projects
+and remain under their own permissive licences. They are not PDFluent's to
+relicense and need no licence from PDFluent.
+
+| file | what it holds |
+|---|---|
+| [NOTICE](NOTICE) | which crates, and under what |
+| [`docs/licensing/boundary.toml`](docs/licensing/boundary.toml) | the same thing, machine-readable |
+| [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt) | attribution for everything we ship |
+
+`scripts/ci/license_boundary.py` fails the build if a crate stops agreeing with
+the side of that boundary it is recorded on.
 
 **Is the SDK covered by the free PDFluent editor licence?** No. The PDFluent
 desktop editor is free to use, including at work, but that licence covers the
 application itself. Embedding, linking, or calling this SDK (or any of its
 crates or language bindings) from your own software is covered by the two
 licences above.
+
+### History
+
+Until 1 September 2026 `LICENSE` held the PDFluent Commercial License v1.0 of
+2 May 2026, and that was the only licence offered. It described licence keys,
+tiers and an expiring evaluation, none of which exist. It is kept, unaltered, at
+[`docs/licensing/archive/LICENSE-COMMERCIAL-v1.0-2026-05-02.txt`](docs/licensing/archive/LICENSE-COMMERCIAL-v1.0-2026-05-02.txt),
+because versions published under it are still out there and a licensee is
+entitled to read the terms they agreed to.
+
+From 1 September 2026 `LICENSE` carried the two-licence explanation above and
+the AGPL text sat beside it in `LICENSE-AGPL`. Since 7 September 2026 there is
+one AGPL text, in `LICENSE`, and this section is the explanation.
