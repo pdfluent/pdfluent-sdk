@@ -134,14 +134,11 @@ is what changed and when, and <https://pdfluent.com> is the product around it.
 
 ---
 
-[![Star pdfluent/pdfluent-sdk on GitHub](https://star-prompt-worker.lnmput.workers.dev/badge?repo=pdfluent%2Fpdfluent-sdk)](https://github.com/pdfluent/pdfluent-sdk)
-
-**External assets in this README.** The badges come from `img.shields.io` and
-the star reminder above from `star-prompt-worker.lnmput.workers.dev`, the free
-tier of starme.dev. Both are third-party hosts serving an image into this page;
-neither is code, neither runs anything in your clone, and both can be removed
-without touching the build. They are listed here so nobody has to wonder later
-where an image in our README comes from.
+**External assets in this README.** The badges come from `img.shields.io`, a
+third-party host serving an image into this page. It is not code, it runs
+nothing in your clone, and it can be removed without touching the build. It is
+listed here so nobody has to wonder later where an image in our README comes
+from.
 
 ## Licence
 
