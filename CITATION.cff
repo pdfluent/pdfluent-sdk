@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+title: PDFluent
+message: >-
+  If you use PDFluent in work you publish, cite it with the metadata below.
+type: software
+authors:
+  - name: Innovation Trigger B.V.
+    website: https://pdfluent.com
+repository-code: https://github.com/pdfluent/pdfluent-sdk
+url: https://pdfluent.com
+abstract: >-
+  A pure-Rust PDF SDK: rendering, text and data extraction, document
+  manipulation, AcroForm and experimental XFA form handling, PAdES signatures,
+  redaction, and PDF/A validation and conversion. Bindings for Python, Node.js,
+  .NET, Java, C and WebAssembly.
+keywords:
+  - pdf
+  - pdf-a
+  - rust
+  - document-processing
+  - digital-signature
+# The SPDX field takes one identifier and this project is offered under two:
+# the AGPL is the default, and the commercial licence is what pdfluent.com sells.
+# `license-url` points at the file that states both, so the metadata is not read
+# as "AGPL only".
+license: AGPL-3.0-only
+license-url: https://github.com/pdfluent/pdfluent-sdk/blob/main/LICENSE
+version: 1.0.0

@@ -1,32 +1,51 @@
-# PDFluent SDK
+# PDFluent
 
-Pure Rust PDF/A SDK with WASM bindings and experimental, feature-gated XFA support.
+**A pure-Rust PDF SDK: render, extract, edit, sign, redact, and validate PDF/A — from Rust, Python, Node.js, .NET, Java, C, or the browser.**
 
-![Crates.io](https://img.shields.io/crates/v/pdfluent)
-![License](https://img.shields.io/badge/license-AGPL--3.0--only%20OR%20Commercial-blue)
+[![crates.io](https://img.shields.io/crates/v/pdfluent?label=crates.io&color=111111)](https://crates.io/crates/pdfluent)
+[![PyPI](https://img.shields.io/pypi/v/pdfluent?label=PyPI&color=111111)](https://pypi.org/project/pdfluent/)
+[![npm](https://img.shields.io/npm/v/%40pdfluent%2Fnode?label=npm&color=111111)](https://www.npmjs.com/package/@pdfluent/node)
+[![NuGet](https://img.shields.io/nuget/v/PDFluent?label=NuGet&color=111111)](https://www.nuget.org/packages/PDFluent)
+[![Maven Central](https://img.shields.io/maven-central/v/com.pdfluent/pdfluent?label=Maven&color=111111)](https://central.sonatype.com/artifact/com.pdfluent/pdfluent)
+[![Licence](https://img.shields.io/badge/licence-AGPL--3.0--only%20OR%20Commercial-111111)](LICENSE)
+[![Public pull request](https://img.shields.io/github/actions/workflow/status/pdfluent/pdfluent-sdk/public-pull-request.yml?branch=main&label=checks&color=111111)](https://github.com/pdfluent/pdfluent-sdk/actions/workflows/public-pull-request.yml)
 
-The engine, the language bindings and the guards that gate them are in this one
-repository. [SETUP.md](SETUP.md) is the contributor onboarding,
-[CHANGELOG.md](CHANGELOG.md) is what changed and when, and
-<https://pdfluent.com> is the product around it.
+[Share on X](https://x.com/intent/tweet?text=PDFluent%20%E2%80%94%20a%20pure-Rust%20PDF%20SDK%20with%20bindings%20for%20Python%2C%20Node.js%2C%20.NET%2C%20Java%2C%20C%20and%20WebAssembly&url=https%3A%2F%2Fgithub.com%2Fpdfluent%2Fpdfluent-sdk) ·
+[Share on LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fgithub.com%2Fpdfluent%2Fpdfluent-sdk)
 
-## Cookbook
+## Install
 
-Ten recipes with the explanation around them: <https://pdfluent.com/cookbook/>.
+```bash
+cargo add pdfluent                  # Rust
+pip install pdfluent                # Python
+npm install @pdfluent/node          # Node.js
+npm install @pdfluent/sdk-wasm      # Browser (WebAssembly)
+dotnet add package PDFluent         # .NET
+```
 
-Every block on that page is one of the `// site:<name>` markers in
-[`crates/pdfluent/examples/site_snippets.rs`](crates/pdfluent/examples/site_snippets.rs),
-which CI compiles, and each recipe links back to it. An example that stops
-building breaks the build rather than a reader's first attempt (#164, #247).
+```xml
+<!-- Java (Maven) -->
+<dependency>
+  <groupId>com.pdfluent</groupId>
+  <artifactId>pdfluent</artifactId>
+</dependency>
+```
+
+C and C++ link against `pdf-capi`; [SETUP.md](SETUP.md) has the header and the
+build flags.
+
+## In thirty seconds
 
 ```rust
 use pdfluent::prelude::*;
 
 fn main() -> Result<()> {
     let doc = PdfDocument::open("input.pdf")?;
+
     for page in doc.pages() {
         println!("{}", page.text()?);
     }
+
     let report = doc.validate_pdfa(PdfAProfile::A2b)?;
     if report.is_compliant() {
         println!("PDF/A-2B ✓");
@@ -35,40 +54,46 @@ fn main() -> Result<()> {
 }
 ```
 
----
+[QUICKSTART.md](QUICKSTART.md) is the same five minutes in each language, and
+<https://pdfluent.com/cookbook/> has ten recipes with the explanation around
+them. Every block on that page is a `// site:<name>` marker in
+[`crates/pdfluent/examples/site_snippets.rs`](crates/pdfluent/examples/site_snippets.rs),
+which CI compiles — an example that stops building breaks the build rather than
+a reader's first attempt (#164, #247).
 
-## Features
+## How it compares
 
-### XFA Forms (experimental, feature-gated — not production-supported)
-- **XFA 3.3 feature set** — dynamic forms with scriptable calculations (experimental, behind the `xfa` feature gate)
-- **Font embedding pipeline** — automatic resolution of embedded, system, and fallback fonts
-- **Image embedding** — JPEG/PNG XObjects with alpha transparency via SMask
-- **Layout engine** — positioned, flowed (tb/lr-tb), and table layouts with pagination
-- **FormCalc interpreter** — 90+ built-in functions for form calculations
-- **SOM path resolution** — `xfa.form.subform[3].field[*]` expressions
+The axes, the readers and their versions, the machine class, and what counts as
+a failure are written up at
+<https://pdfluent.com/benchmarks/how-we-measure>. Every figure PDFluent
+publishes carries a claim ID and points back to that method. That page
+deliberately carries no figure of its own, and neither does this README.
 
-### PDF Rendering
-- **Pure Rust rasterizer** — vello_cpu for memory-safe rendering
-- **Multi-format output** — PNG, JPEG, PDF (rasterized)
-- **SSIM quality metrics** — visual comparison against Adobe Reader ground truth
+## What is in here
 
-### PDF/A Compliance
-- **PDF/A-1a, A-2a, A-3a** — ZUGFeRD/Factur-X invoice support
-- **Font embedding** — automatic embedding with subsetting
-- **Color space normalization** — OutputIntent injection
-- **Metadata repair** — XMP writer integration
+The engine, the language bindings and the guards that gate them are in this one
+repository.
 
-### Document Manipulation
-- **Page operations** — merge, split, insert, delete, rearrange
-- **Encryption** — AES-256 PDF 2.0 encryption/decryption
-- **Content editing** — find-and-replace text in content streams
-- **Watermarks** — text and image overlay
+**Rendering.** A pure-Rust rasterizer (vello_cpu) to PNG, JPEG or a rasterized
+PDF, with SSIM comparison against a reference renderer.
 
-### WASM & Bindings
-- **WebAssembly** — runs in browser via the `@pdfluent/sdk-wasm` npm package
-- **Node.js** — napi-rs bindings
-- **Python** — PyO3 bindings (separate crate)
-- **C FFI** — pdf-capi for C/C++ integration
+**Text and data.** Extraction with position information, find-and-replace in
+content streams, OCR over scanned pages.
+
+**Forms.** AcroForm fill, flatten and read-back across every binding. XFA is
+experimental and feature-gated behind `xfa-flatten`: dynamic layout, a FormCalc
+interpreter with 90+ built-ins, and SOM path resolution
+(`xfa.form.subform[3].field[*]`). It is not production-supported.
+
+**Documents.** Merge, split, insert, delete and rearrange pages; AES-256 (PDF
+2.0) encryption; watermarks; redaction that removes the content rather than
+covering it.
+
+**PDF/A.** Validation and conversion for A-1, A-2 and A-3, including ZUGFeRD and
+Factur-X invoices, with font embedding and subsetting, OutputIntent injection
+and XMP metadata repair.
+
+**Signatures.** PAdES signing and verification.
 
 ## Build and test
 
@@ -86,10 +111,13 @@ cargo clippy --workspace -- -D warnings
 `cargo build --workspace` builds the bindings and the tools around the SDK as
 well, which is what CI does and what takes the time.
 
-Default features: `signing`, `pdfa`, `redaction`, `font-subset`. XFA sits behind
-the `xfa-flatten` feature, is experimental and is not production-supported.
+Default features: `signing`, `pdfa`, `redaction`, `font-subset`.
 
 ## Contributing
+
+Issues labelled [`good first issue`](https://github.com/pdfluent/pdfluent-sdk/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+and [`help wanted`](https://github.com/pdfluent/pdfluent-sdk/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+are the ones we would most like a hand with.
 
 Sign off every commit — `git commit -s` — and read
 [CONTRIBUTING.md](CONTRIBUTING.md) before the first one: it says what the
@@ -101,15 +129,21 @@ landed carries a matching `Signed-off-by`.
 Security reports do not go in a public issue. [SECURITY.md](SECURITY.md) says
 where they go.
 
-## How the measurements are made
+[SETUP.md](SETUP.md) is the contributor onboarding, [CHANGELOG.md](CHANGELOG.md)
+is what changed and when, and <https://pdfluent.com> is the product around it.
 
-Every figure PDFluent publishes carries a claim ID, and the method behind those
-figures — the axes, the readers and their versions, the machine class, and what
-counts as a failure — is written up at
-<https://pdfluent.com/benchmarks/how-we-measure>. It deliberately carries no
-figure of its own. This README carries none either.
+---
 
-## License
+[![Star pdfluent/pdfluent-sdk on GitHub](https://star-prompt-worker.lnmput.workers.dev/badge?repo=pdfluent%2Fpdfluent-sdk)](https://github.com/pdfluent/pdfluent-sdk)
+
+**External assets in this README.** The badges come from `img.shields.io` and
+the star reminder above from `star-prompt-worker.lnmput.workers.dev`, the free
+tier of starme.dev. Both are third-party hosts serving an image into this page;
+neither is code, neither runs anything in your clone, and both can be removed
+without touching the build. They are listed here so nobody has to wonder later
+where an image in our README comes from.
+
+## Licence
 
 PDFluent is available under two licences, at your option: the **GNU AGPLv3**, or
 the **PDFluent Commercial Licence**. See [LICENSE](LICENSE) — the AGPL is the
@@ -121,8 +155,8 @@ Some dependencies are separately available under MIT or Apache-2.0, including
 the forked crates this repository carries; [NOTICE](NOTICE) says which is which,
 per crate.
 
-**Is the SDK covered by the free PDFluent editor license?** No. The PDFluent
-desktop editor is free to use, including at work, but that license covers the
+**Is the SDK covered by the free PDFluent editor licence?** No. The PDFluent
+desktop editor is free to use, including at work, but that licence covers the
 application itself. Embedding, linking, or calling this SDK (or any of its
 crates or language bindings) from your own software is covered by the two
 licences above.
