@@ -2,9 +2,9 @@
 
 OCR integration for PDFluent — bring your own recognizer, we do the PDF.
 
-This crate is part of the [PDFluent](https://pdfluent.com) commercial Rust PDF SDK.
+This crate is part of [PDFluent](https://pdfluent.com), a pure-Rust PDF SDK. Source: <https://github.com/pdfluent/pdfluent-sdk>.
 
-**Free for evaluation. Production use requires a valid license.**
+**AGPL-3.0 or a commercial licence**, at your option — see the Licence section below.
 
 ## What it does
 
@@ -34,7 +34,7 @@ equivalent:
 optional angle classification. Handles English, Latin scripts, Chinese, Japanese,
 Korean and Arabic. It uses `ort` with `load-dynamic`, so ONNX Runtime is loaded as
 a shared library at run time rather than compiled in, and the model weights are
-downloaded once (detection is ~2.3 MB for V3, ~84 MB for V5) and cached in the OS
+downloaded once (tens of megabytes for the current detection model) and cached in the OS
 cache directory. After that first fetch it runs entirely offline, in-process, with
 no cloud calls.
 
@@ -103,7 +103,7 @@ let engine = pdf_ocr::TesseractEngine::new("eng", None)?;
 
 Constructing a PaddleOCR engine does not download anything. If the weights are not
 in `model_dir` you get an error naming the missing files and the directory they
-belong in — not a silent ~84 MB transfer from a host you did not choose.
+belong in — not a silent transfer of tens of megabytes from a host you did not choose.
 
 If you do want this crate to fetch them, say so and pin what you expect:
 
@@ -131,17 +131,18 @@ default.
 
 For the full signature, see <https://pdfluent.com/docs>.
 
-## Licensing
+## Licence
 
-- Free for evaluation, development, and testing
-- Production use requires a valid PDFluent commercial license
-- Redistribution requires the OEM Redistribution add-on
-
-See [LICENSE](LICENSE) for full terms, or visit <https://pdfluent.com/terms>.
+AGPL-3.0 or a commercial licence, at your option. The AGPL is the default and
+the complete product: there is no licence key, no activation call and no tier,
+and every feature works in every build. If you cannot accept the copyleft
+obligation, the commercial licence is sold yearly and self-service at
+[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing), in four options: Commercial (per
+organisation), OEM Startup and OEM (per product), and Priority support (an
+add-on). The two texts are `LICENSE` and `LICENSE-COMMERCIAL` in this crate.
 
 ## Links
 
 - Main crate: <https://crates.io/crates/pdfluent>
 - Documentation: <https://pdfluent.com/docs>
-- Trial: <https://pdfluent.com/trial>
-- Pricing: <https://pdfluent.com/pricing>
+- Pricing: <https://pdfluent.com/sdk/pricing>

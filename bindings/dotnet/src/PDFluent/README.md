@@ -1,6 +1,8 @@
-# XFA PDF SDK for .NET
+# PDFluent for .NET
 
-C# bindings for the XFA PDF engine via P/Invoke over the C API.
+[Source on GitHub](https://github.com/pdfluent/pdfluent-sdk) · [Documentation](https://pdfluent.com/docs) · [Report an issue](https://github.com/pdfluent/pdfluent-sdk/issues)
+
+C# bindings for the PDFluent PDF engine via P/Invoke over the C API.
 
 ## Requirements
 
@@ -88,42 +90,6 @@ catch (PdfException ex)
 }
 ```
 
-## License Activation
-
-The SDK runs in Trial mode by default; output is marked via `/Producer`
-metadata. Activate a license to unlock the paid-tier capability set.
-
-```csharp
-using PDFluent;
-
-// Activate from a key string
-Licensing.ActivateKey("tier:enterprise");
-
-// Or read the key from a UTF-8 text file
-Licensing.ActivateFile("/path/to/key.lic");
-
-// Inspect the current status (always succeeds; defaults to Trial)
-LicenseStatus s = Licensing.Status;
-Console.WriteLine(s.Tier);            // LicenseTier.Enterprise
-Console.WriteLine(s.Source);          // LicenseSource.Explicit / EnvVar / Default
-Console.WriteLine(s.OutputIsMarked);  // false
-
-LicenseTier t = Licensing.EffectiveTier;  // shortcut
-```
-
-The `PDFLUENT_LICENSE_KEY` environment variable is honoured automatically.
-
-**Behavior to be aware of:**
-
-- The active tier is **process-global and set-once**. Re-activating with
-  the same key is a no-op. Re-activating with a different tier raises
-  `InvalidOperationException`; restart the process to switch tiers.
-- Invalid keys raise `PdfException` with
-  `PdfStatus.ErrorInvalidLicense`.
-- Missing license files raise `FileNotFoundException` /
-  `IOException`.
-- The key string is never logged or stored beyond the call.
-
 ## NuGet Package
 
 The project generates a NuGet package with native library bundling per platform:
@@ -153,9 +119,19 @@ The project generates a NuGet package with native library bundling per platform:
 | `GetMetadata(string)` | Get metadata value |
 | `Dispose()` | Free native resources |
 
+## Licence
+
+AGPL-3.0 or a commercial licence, at your option. The AGPL is the default and
+the complete product: there is no licence key, no activation call and no tier,
+and every feature works in every build. If you cannot accept the copyleft
+obligation, the commercial licence is sold yearly and self-service at
+[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing), in four options: Commercial (per
+organisation), OEM Startup and OEM (per product), and Priority support (an
+add-on). The two texts are `LICENSE` and `LICENSE-COMMERCIAL` in this package.
+
 ## Links
 
 - **Documentation:** <https://pdfluent.com/docs>
-- **Pricing:** <https://pdfluent.com/pricing>
+- **Pricing:** <https://pdfluent.com/sdk/pricing>
 - **PDFluent editor** (source-available): <https://github.com/pdfluent/pdfluent>. The free desktop app this SDK powers.
 - Built by [Innovation Trigger BV](https://pdfluent.com)

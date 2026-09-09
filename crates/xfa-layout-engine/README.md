@@ -2,9 +2,9 @@
 
 XFA layout engine — page break logic, positioning, content flow for XFA forms. **Experimental — part of the XFA stack.**
 
-This crate is part of the [PDFluent](https://pdfluent.com) commercial Rust PDF SDK.
+This crate is part of [PDFluent](https://pdfluent.com), a pure-Rust PDF SDK. Source: <https://github.com/pdfluent/pdfluent-sdk>.
 
-**Free for evaluation. Production use requires a valid license.**
+**AGPL-3.0 or a commercial licence**, at your option — see the Licence section below.
 
 ## What it does
 
@@ -18,13 +18,15 @@ Experimental — XFA support is under active development. See [`pdf-xfa`](https:
 
 Most users do not depend on this crate directly. Use the [`pdfluent`](https://crates.io/crates/pdfluent) facade.
 
-## Licensing
+## Licence
 
-- Free for evaluation, development, and testing
-- Production use requires a valid PDFluent commercial license
-- Redistribution requires the OEM Redistribution add-on
-
-See [LICENSE](LICENSE) for full terms, or visit <https://pdfluent.com/terms>.
+AGPL-3.0 or a commercial licence, at your option. The AGPL is the default and
+the complete product: there is no licence key, no activation call and no tier,
+and every feature works in every build. If you cannot accept the copyleft
+obligation, the commercial licence is sold yearly and self-service at
+[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing), in four options: Commercial (per
+organisation), OEM Startup and OEM (per product), and Priority support (an
+add-on). The two texts are `LICENSE` and `LICENSE-COMMERCIAL` in this crate.
 
 ## Links
 

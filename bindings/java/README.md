@@ -1,6 +1,8 @@
-# XFA PDF SDK for Java
+# PDFluent for Java
 
-Java bindings for the XFA PDF engine via JNI.
+[Source on GitHub](https://github.com/pdfluent/pdfluent-sdk) · [Documentation](https://pdfluent.com/docs) · [Report an issue](https://github.com/pdfluent/pdfluent-sdk/issues)
+
+Java bindings for the PDFluent PDF engine via JNI.
 
 ## Requirements
 
@@ -70,7 +72,7 @@ try (PdfDocument doc = PdfDocument.openWithPassword(data, "secret")) {
 
 The SDK loads its native libraries (`libpdfluent_java` for the JNI
 `PdfluentDocument` path and `libpdf_capi` for the JNA-based
-`PdfDocument` + `PdfluentLicensing` path) in this order:
+`PdfDocument` path) in this order:
 1. `java.library.path` (e.g. `-Djava.library.path=/path/to/dir`)
 2. `PDFLUENT_NATIVE_LIB` env var (JNI lib) or `PDFLUENT_CAPI_LIB` env var (C ABI lib)
 3. Classpath extraction (bundled in JAR at `/native/<arch>/`)
@@ -78,55 +80,6 @@ The SDK loads its native libraries (`libpdfluent_java` for the JNI
 A failure to locate either library throws
 `com.pdfluent.PdfluentNativeLoadException` (code
 `E-ENV-MISSING-DEPENDENCY`) with every search location that was tried.
-
-## License Activation
-
-The SDK runs in Trial mode by default; output is marked via `/Producer`
-metadata. Activate a license to unlock the paid-tier capability set.
-
-```java
-import com.pdfluent.PdfluentLicensing;
-
-// Activate from a key string
-PdfluentLicensing.activateKey("tier:enterprise");
-
-// Or read the key from a UTF-8 text file (may throw IOException)
-PdfluentLicensing.activateFile("/path/to/key.lic");
-
-// Inspect the current status (always succeeds; defaults to Trial)
-PdfluentLicensing.LicenseStatus s = PdfluentLicensing.status();
-System.out.println(s.tier);            // Tier.ENTERPRISE
-System.out.println(s.source);          // Source.EXPLICIT / ENV_VAR / DEFAULT
-System.out.println(s.outputIsMarked);  // false
-
-PdfluentLicensing.Tier t = PdfluentLicensing.effectiveTier();  // shortcut
-```
-
-The `PDFLUENT_LICENSE_KEY` environment variable is honoured automatically.
-
-**Behavior to be aware of:**
-
-- The active tier is **process-global and set-once**. Re-activating with
-  the same key is a no-op. Re-activating with a different tier throws
-  `IllegalStateException`; restart the JVM to switch tiers.
-- Invalid keys throw `com.pdfluent.PdfluentLicenseException`. The exception
-  carries the canonical C8 error code via `getCode()` — one of
-  `E-LICENSE-INVALID`, `E-LICENSE-FEATURE-NOT-IN-TIER`, or
-  `E-LICENSE-CAPABILITY-NOT-COMPILED`. Branch on the code instead of parsing
-  the message string:
-
-  ```java
-  try {
-      PdfluentLicensing.activateKey(badKey);
-  } catch (PdfluentLicenseException e) {
-      if ("E-LICENSE-INVALID".equals(e.getCode())) {
-          // tell the user the key is malformed
-      }
-  }
-  ```
-
-- Missing license files throw `java.io.IOException`.
-- The key string is never logged or stored beyond the call.
 
 ## API Reference
 
@@ -170,9 +123,19 @@ text, a radio export name, a choice option, or a bool-ish checkbox state.
 Hierarchical names (`"parent.child"`) are resolved through `/Kids`. Read-only
 fields throw `PdfluentException`.
 
+## Licence
+
+AGPL-3.0 or a commercial licence, at your option. The AGPL is the default and
+the complete product: there is no licence key, no activation call and no tier,
+and every feature works in every build. If you cannot accept the copyleft
+obligation, the commercial licence is sold yearly and self-service at
+[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing), in four options: Commercial (per
+organisation), OEM Startup and OEM (per product), and Priority support (an
+add-on). The two texts are `LICENSE` and `LICENSE-COMMERCIAL` in this package.
+
 ## Links
 
 - **Documentation:** <https://pdfluent.com/docs>
-- **Pricing:** <https://pdfluent.com/pricing>
+- **Pricing:** <https://pdfluent.com/sdk/pricing>
 - **PDFluent editor** (source-available): <https://github.com/pdfluent/pdfluent>. The free desktop app this SDK powers.
 - Built by [Innovation Trigger BV](https://pdfluent.com)
