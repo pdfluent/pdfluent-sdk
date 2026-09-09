@@ -4,7 +4,7 @@ AcroForm engine for PDF interactive forms — parse, fill, inspect, and export
 form data.  Powers the form layer of the [PDFluent](https://pdfluent.com) Rust
 SDK and all language bindings.
 
-**Free for evaluation. Production use requires a valid license.**
+**AGPL-3.0 or a commercial licence**, at your option — see the Licence section below.
 
 ## What it does
 
@@ -59,7 +59,7 @@ convergent behaviour of pdfium, mupdf, and pdf.js:
 | Font resources | Self-contained `/Resources` with explicit `WinAnsiEncoding` — never references `/DR` fonts (which carry PDFDocEncoding Differences that remap characters) |
 | `/NeedAppearances` | Set `true` only for non-WinAnsi values (Cyrillic, CJK, …); stale `/AP` removed in that case |
 | Read-only | Rejected at set-time (`WritebackError::ReadOnly`) — the SDK has no UI layer, so this is the only enforceable point |
-| Inline `/AcroForm` | Promoted to an indirect object before mutation (92% of real-world corpora use inline `/AcroForm`) |
+| Inline `/AcroForm` | Promoted to an indirect object before mutation (most real-world documents keep `/AcroForm` inline) |
 | Hierarchical names | Resolved through `/Kids` recursion, not top-level-only |
 
 ## API Reference
@@ -134,18 +134,19 @@ pub struct FormFieldModel {
   generated appearances (Helvetica unless `/DA` names a Times/Courier variant).
 - **Widget rotation** (`/MK /R`): not yet applied in generated appearances.
 
-## Licensing
+## Licence
 
-- Free for evaluation, development, and testing
-- Production use requires a valid PDFluent commercial license
-- Redistribution requires the OEM Redistribution add-on
-
-See [LICENSE](LICENSE) for full terms, or visit <https://pdfluent.com/terms>.
+AGPL-3.0 or a commercial licence, at your option. The AGPL is the default and
+the complete product: there is no licence key, no activation call and no tier,
+and every feature works in every build. If you cannot accept the copyleft
+obligation, the commercial licence is sold yearly and self-service at
+[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing), in four options: Commercial (per
+organisation), OEM Startup and OEM (per product), and Priority support (an
+add-on). The two texts are `LICENSE` and `LICENSE-COMMERCIAL` in this crate.
 
 ## Links
 
 - Main crate: <https://crates.io/crates/pdfluent>
 - Documentation: <https://pdfluent.com/docs>
-- Trial: <https://pdfluent.com/trial>
-- Pricing: <https://pdfluent.com/pricing>
+- Pricing: <https://pdfluent.com/sdk/pricing>
 - Changelog: [CHANGELOG.md](CHANGELOG.md)

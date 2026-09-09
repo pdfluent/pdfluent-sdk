@@ -1,13 +1,19 @@
 # pdfluent
 
-**PDFluent is a commercial Rust PDF SDK.**
+[Source on GitHub](https://github.com/pdfluent/pdfluent-sdk) · [Documentation](https://pdfluent.com/docs) · [Report an issue](https://github.com/pdfluent/pdfluent-sdk/issues)
 
-**Free for evaluation. A valid license is required for production use.**
+**A pure-Rust PDF SDK: render, extract, edit, sign, redact, and validate PDF/A.**
+
+**AGPL-3.0 or a commercial licence**, at your option — see the Licence section below.
 
 [![crates.io](https://img.shields.io/crates/v/pdfluent.svg)](https://crates.io/crates/pdfluent)
-[![Commercial License](https://img.shields.io/badge/license-PDFluent%20Commercial-blue.svg)](https://pdfluent.com/terms)
+[![Licence](https://img.shields.io/badge/licence-AGPL--3.0--only%20OR%20Commercial-111111)](https://github.com/pdfluent/pdfluent-sdk/blob/main/LICENSE)
 
-A pure-Rust PDF SDK with XFA, PDF/A, digital signatures, redaction, text extraction, forms, and a WebAssembly target. Designed as a modern alternative to iText, Apryse/PDFTron, PDFBox, and Foxit — without the JVM, without C++ memory unsafety, without "Contact Sales" pricing.
+PDF/A validation and conversion, digital signatures, redaction, text extraction,
+AcroForm fill and flatten, page manipulation, encryption, and a WebAssembly
+target, with XFA behind a feature flag. The default build is pure Rust with no
+C or C++ dependency (claim A07): no JVM to run, no native library to ship, and a
+price list you can read without talking to sales.
 
 ---
 
@@ -43,12 +49,18 @@ For more, see <https://pdfluent.com/docs>.
 
 ## Status
 
-**Beta software — public API is stabilizing.**
+From 1.0.0 the public API follows semantic versioning: a breaking change means
+a new major version.
 
-- Public API surface is frozen for `1.0.0-beta.x` but may receive small breaking changes before `1.0.0`.
-- Not all features are fully complete; capability-gated via Cargo features.
-- **XFA support is still under active development.** `xfa-flatten` is feature-gated and not yet ready for general production use; see the changelog for current XFA fidelity status.
-- PDF/A, digital signatures, redaction, AcroForm fill/flatten, and text extraction have completed quality gates and are production-grade.
+- PDF/A validation and conversion, digital signatures, redaction, AcroForm fill
+  and flatten, and text extraction are the supported surface, each behind the
+  Cargo feature named below.
+- **XFA is experimental.** `xfa-flatten` is feature-gated and not part of what
+  the release supports; see the changelog for its current state.
+- Rendering fidelity, PDF/A conversion and text extraction are measured on
+  fixed corpora against readers that are not ours, and every published figure
+  carries a claim ID at <https://pdfluent.com/benchmarks/how-we-measure>. This
+  README repeats none of them.
 
 ## Capability features
 
@@ -56,7 +68,7 @@ Default: `signing`, `pdfa`, `redaction`.
 
 | Feature | Enables |
 |---|---|
-| `signing` (default) | PAdES B-LT / B-LTA digital signatures, CMS verification |
+| `signing` (default) | PAdES B-B / B-T / B-LT digital signatures, CMS verification. B-LTA is not implemented |
 | `pdfa` (default) | PDF/A-1b/2b/3b validation and conversion |
 | `redaction` (default) | Content redaction (search-based and region-based) |
 | `ocr-tesseract` | reserved, no effect — see OCR below |
@@ -99,20 +111,21 @@ PDFluent for everything after that: merging, page operations, compression,
 watermarks, encryption, signing, PDF/A conversion, redaction. That combination is
 well supported and is what we recommend.
 
-## Licensing
+## Licence
 
-- **Free** for evaluation, development, testing, and demonstration. The unlicensed SDK is fully functional; output carries an "unlicensed evaluation" marker (Producer string in PDF metadata + a one-time stderr warning).
-- **Production use requires a valid PDFluent commercial license.** Tiered pricing from Lite to Unlimited plus Enterprise; see [pdfluent.com/pricing](https://pdfluent.com/pricing).
-- **OEM redistribution** (embedding the SDK in software you distribute to third parties) requires the OEM Redistribution add-on.
-
-See the `LICENSE` file in this crate, or read the full commercial terms at <https://pdfluent.com/terms>.
+AGPL-3.0 or a commercial licence, at your option. The AGPL is the default and
+the complete product: there is no licence key, no activation call and no tier,
+and every feature works in every build. If you cannot accept the copyleft
+obligation, the commercial licence is sold yearly and self-service at
+[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing), in four options: Commercial (per
+organisation), OEM Startup and OEM (per product), and Priority support (an
+add-on). The two texts are `LICENSE` and `LICENSE-COMMERCIAL` in this crate.
 
 ## Links
 
 - **Documentation:** <https://pdfluent.com/docs>
-- **30-day evaluation key** (full features, no output watermark): <https://pdfluent.com/trial>
-- **Pricing:** <https://pdfluent.com/pricing>
-- **Commercial terms:** <https://pdfluent.com/terms>
+- **Pricing:** <https://pdfluent.com/sdk/pricing>
+- **Commercial terms:** <https://github.com/pdfluent/pdfluent-sdk/blob/main/LICENSE-COMMERCIAL>
 - **Support:** <https://pdfluent.com/support>
 - **PDFluent editor** (source-available): <https://github.com/pdfluent/pdfluent>. The free desktop app this SDK powers.
 

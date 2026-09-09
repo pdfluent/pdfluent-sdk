@@ -2,9 +2,9 @@
 
 PDF content extraction — text with positions, images, and full-text search.
 
-This crate is part of the [PDFluent](https://pdfluent.com) commercial Rust PDF SDK.
+This crate is part of [PDFluent](https://pdfluent.com), a pure-Rust PDF SDK. Source: <https://github.com/pdfluent/pdfluent-sdk>.
 
-**Free for evaluation. Production use requires a valid license.**
+**AGPL-3.0 or a commercial licence**, at your option — see the Licence section below.
 
 ## What it does
 
@@ -12,7 +12,7 @@ Extracts text content from PDFs with positional metadata (bounding boxes, fonts,
 
 ## Status
 
-Beta. Production-grade for text extraction (≥95% match vs Poppler on the 20K-PDF benchmark corpus).
+Text extraction is measured against two independent readers on a fixed corpus. The figures are published with a claim ID at <https://pdfluent.com/benchmarks/how-we-measure>; none are repeated here.
 
 ## Usage
 
@@ -24,17 +24,18 @@ use pdfluent::prelude::*;
 
 For low-level access, see <https://pdfluent.com/docs>.
 
-## Licensing
+## Licence
 
-- Free for evaluation, development, and testing
-- Production use requires a valid PDFluent commercial license
-- Redistribution requires the OEM Redistribution add-on
-
-See [LICENSE](LICENSE) for full terms, or visit <https://pdfluent.com/terms>.
+AGPL-3.0 or a commercial licence, at your option. The AGPL is the default and
+the complete product: there is no licence key, no activation call and no tier,
+and every feature works in every build. If you cannot accept the copyleft
+obligation, the commercial licence is sold yearly and self-service at
+[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing), in four options: Commercial (per
+organisation), OEM Startup and OEM (per product), and Priority support (an
+add-on). The two texts are `LICENSE` and `LICENSE-COMMERCIAL` in this crate.
 
 ## Links
 
 - Main crate: <https://crates.io/crates/pdfluent>
 - Documentation: <https://pdfluent.com/docs>
-- Trial: <https://pdfluent.com/trial>
-- Pricing: <https://pdfluent.com/pricing>
+- Pricing: <https://pdfluent.com/sdk/pricing>
