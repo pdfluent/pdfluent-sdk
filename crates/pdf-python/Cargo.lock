@@ -1644,7 +1644,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-font"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.6"
 dependencies = [
  "brotli",
  "log",
@@ -1653,7 +1653,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-interpret"
-version = "0.5.8"
+version = "0.5.9"
 dependencies = [
  "bitflags 2.13.1",
  "kurbo 0.13.1",
@@ -1755,7 +1755,7 @@ version = "1.0.0"
 
 [[package]]
 name = "pdf-syntax"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "flate2",
  "log",
@@ -1824,11 +1824,11 @@ dependencies = [
 
 [[package]]
 name = "pdfluent-ccitt"
-version = "0.2.2"
+version = "0.2.3"
 
 [[package]]
 name = "pdfluent-cff"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "pdfluent-extract"
