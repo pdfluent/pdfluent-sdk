@@ -32,11 +32,39 @@ All notable changes to PDFluent are documented here.
   `scripts/ci/no_licence_key_in_a_binding.py` refuses a change that puts a key
   check back.
 
-## [1.0.0] — 2026-08-23
+## [1.0.0] — 2026-09-16
 
 General availability. Every binding channel moves to `1.0.0`; the crates.io
 graph stays deliberately heterogeneous (upstream forks keep their `0.x` tracks),
 which is the topologically-proven publish set rather than an inconsistency.
+
+Published on 2026-09-16 to crates.io (32 crates), PyPI, npm (`@pdfluent/node`
+with its six platform packages, and `@pdfluent/sdk-wasm`), NuGet and Maven
+Central. Each channel was checked afterwards by installing it from the registry
+into an empty project and calling it.
+
+**The `v1.0.0` tag moved, and this says what it used to point at.** It was
+created on 2026-08-23 and nothing was ever published from it. It now points at
+the commit the release went out from, so it names what is on the registries
+rather than a candidate from three weeks earlier. If you fetched the tag between
+those dates you still have the old object locally: `git fetch --tags --force`
+replaces it. The date on this heading is the publication date for the same
+reason.
+
+**Five of the vendored forks moved a patch version, and no code changed with
+them:** `pdf-syntax` 0.5.6 → 0.5.7, `pdf-interpret` 0.5.8 → 0.5.9,
+`pdfluent-ccitt` 0.2.2 → 0.2.3, `pdf-font` 1.0.0-beta.5 → 1.0.0-beta.6 and
+`pdfluent-cff` 0.2.1 → 0.2.2. crates.io was already serving those five version
+numbers with different content, and a version there can never be replaced. So
+publishing against them would either have failed every dependent's verification
+build — which is how it was found — or, where the API happened to match,
+succeeded and handed a reader the older code with nothing anywhere saying so.
+
+**Tests and examples no longer travel in `pdf-engine`, `pdf-manip`,
+`pdf-redact` and `pdfluent-sign`.** They read fixtures from this repository that
+are not in a published `.crate`, so they could not build from one; what they did
+carry into it was a path into a tree the reader does not have. `pdfluent` and
+`pdf-xfa` had kept them out since they were first published.
 
 Four of the fixes below could not be caught by validating the output. A file can
 lose most of its text and still pass PDF/A validation, because what is gone
