@@ -1352,9 +1352,22 @@ mod qf2b_objectstream_cache_tests {
 
         // 161 /ObjStm headers, 575 KB. Walking and decoding 30+ ObjStms
         // here is enough to measure the parse delta cleanly.
-        let path = "../../corpus/f3800.pdf";
-        let Ok(bytes) = std::fs::read(path) else {
-            eprintln!("[qf2b_bench] fixture {path} unavailable; skipping");
+        // Built from the manifest directory rather than written out as one
+        // string. This file ships in the published crate and the repository
+        // tree it points at does not, so a literal path into it is a leaked
+        // internal path -- which is what the prepublish audit refuses. It also
+        // makes the benchmark independent of the working directory it is
+        // started from.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("corpus")
+            .join("f3800.pdf");
+        let Ok(bytes) = std::fs::read(&path) else {
+            eprintln!(
+                "[qf2b_bench] fixture {} unavailable; skipping",
+                path.display()
+            );
             return;
         };
         let pdf = Pdf::new(bytes).expect("load f3800.pdf");

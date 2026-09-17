@@ -9043,17 +9043,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "xfa-golden-tests"
-version = "1.0.0"
-dependencies = [
- "image",
- "pdf-engine",
- "pdfluent-lopdf",
- "thiserror 2.0.18",
- "xfa-layout-engine",
-]
-
-[[package]]
 name = "xfa-js-sandboxed"
 version = "1.0.0"
 dependencies = [

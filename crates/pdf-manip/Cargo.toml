@@ -14,7 +14,12 @@ description = "PDF manipulation: pages, encryption, watermarks, optimization, bo
 # it cannot run from a published crate. Keep the reason generic: naming the
 # internal directory here would put that path straight back into the packaged
 # manifest, which is what the prepublish audit flags.
-exclude = ["tests/ga_integration_tests.rs"]
+# Tests and examples do not travel. They read fixtures from the repository, which are not in
+# the tarball -- so they cannot build outside this workspace, and what they do
+# carry into a published crate is a path into a tree the reader does not have.
+# `pdfluent` and `pdf-xfa` have kept them out for that reason since they were
+# first published; this one had not.
+exclude = ["tests/", "examples/"]
 
 [dependencies]
 regex = "1"
