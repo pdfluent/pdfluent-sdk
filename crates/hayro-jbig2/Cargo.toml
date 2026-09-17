@@ -17,7 +17,7 @@ default = ["std"]
 std = []
 
 [dependencies]
-hayro-ccitt = { package = "pdfluent-ccitt", path = "../hayro-ccitt", version = "=0.2.2" }
+hayro-ccitt = { package = "pdfluent-ccitt", path = "../hayro-ccitt", version = "=0.2.3" }
 
 [lints.clippy]
 too_many_arguments = "allow"

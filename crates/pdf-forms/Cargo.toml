@@ -21,7 +21,7 @@ categories = ["parser-implementations"]
 include = ["src/**/*", "LICENSE", "README.md", "CHANGELOG.md", "LICENSE-COMMERCIAL"]
 
 [dependencies]
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.6" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.7" }
 thiserror = { workspace = true }
 log = "0.4"
 
