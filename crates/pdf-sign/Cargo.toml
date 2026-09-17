@@ -11,6 +11,12 @@ homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 keywords = ["pdf", "signature", "pades", "cms", "pkcs7"]
 categories = ["authentication", "cryptography"]
+# Tests do not travel. They read fixtures from the repository, which are not in
+# the tarball -- so they cannot build outside this workspace, and what they do
+# carry into a published crate is a path into a tree the reader does not have.
+# `pdfluent` and `pdf-xfa` have kept them out for that reason since they were
+# first published; this one had not.
+exclude = ["tests/"]
 
 [dependencies]
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.7" }
