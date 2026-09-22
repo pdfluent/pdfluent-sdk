@@ -131,6 +131,10 @@ where they go.
 
 [SETUP.md](SETUP.md) is the contributor onboarding, [CHANGELOG.md](CHANGELOG.md)
 is what changed and when, and <https://pdfluent.com> is the product around it.
+Runnable examples in Rust, Python, Node.js and a browser/WASM demo live in
+[`pdfluent/examples`](https://github.com/pdfluent/examples). This engine also
+ships inside [`pdfluent/pdfluent`](https://github.com/pdfluent/pdfluent), the
+free desktop editor.
 
 ---
 
@@ -205,6 +209,10 @@ relicense and need no licence from PDFluent.
 
 `scripts/ci/license_boundary.py` fails the build if a crate stops agreeing with
 the side of that boundary it is recorded on.
+
+The rendering path is built on [`hayro`](https://github.com/pdfluent/hayro),
+Laurenz Stampfl's pure-Rust PDF interpreter — mirrored under the PDFluent
+org, unmodified license terms as recorded in NOTICE above.
 
 **Is the SDK covered by the free PDFluent editor licence?** No. The PDFluent
 desktop editor is free to use, including at work, but that licence covers the
