@@ -62,7 +62,11 @@
     "signature",
     "rust",
     "napi",
-    "pdfluent"
+    "pdfluent",
+    "typescript",
+    "types",
+    "esm",
+    "nodejs"
   ],
   "license": "SEE LICENSE IN LICENSE-OFFER",
   "licenseUrl": "https://pdfluent.com/terms",
