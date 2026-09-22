@@ -234,8 +234,6 @@ Between each: stop, run the channel's smoke, run `ledger_verify.py
 
 ## 6. Cross-references
 
-- `docs/release/FIRST_BETA_OPERATOR_RUNBOOK.md` — full per-channel
-  runbook; §1 of this plan is the single-session subset.
 - `docs/release/RELEASE_TRAIN_MATRIX.md` — per-channel matrix.
 - `docs/release/ROLLBACK_PROCEDURE.md` — what to do if anything goes
   wrong mid-train.
