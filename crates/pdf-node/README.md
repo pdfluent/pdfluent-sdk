@@ -21,6 +21,30 @@ Pre-built binaries are provided for:
 
 ## Quick start
 
+Full TypeScript definitions (`index.d.ts`) ship in the package — no `@types/`
+install, nothing hand-written to fall out of sync with the native binding.
+The `exports` map resolves the same typings for both module systems:
+`import` gets the ESM build, `require` gets CommonJS.
+
+```ts
+import { PdfDocument } from '@pdfluent/node';
+import { readFileSync } from 'node:fs';
+
+const doc: PdfDocument = PdfDocument.open(readFileSync('document.pdf'));
+
+console.log(`Pages: ${doc.pageCount}`);
+console.log(`Title: ${doc.info().title}`);
+
+// Extract text from page 0
+const text: string = doc.extractText(0);
+console.log(text);
+
+// Save after mutations
+doc.save('output.pdf');
+```
+
+### JavaScript (CommonJS)
+
 ```js
 const { PdfDocument } = require('@pdfluent/node');
 const fs = require('fs');
