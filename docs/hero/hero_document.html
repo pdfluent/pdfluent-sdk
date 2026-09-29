@@ -1,0 +1,139 @@
+<!doctype html>
+<!--
+  Copyright (c) 2026 Innovation Trigger B.V.
+
+  PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+  the PDFluent Commercial Licence. See the LICENSE file in this repository --
+  that file travels with the copy you received, which a URL does not.
+
+  The document in the left panel of the README hero image.
+
+  It is written here, in this repository, on purpose. The fixtures we ship are
+  bare test pages that make the engine look worse than it is, and the corpus
+  that holds real documents cannot be published. A page we author ourselves is
+  the only one that is both representative and ours to publish outright.
+
+  Everything on it is invented, and none of it is anybody's data: "Example
+  Customer B.V." is not a company, the account number and the VAT number belong
+  to no one, and the page says SAMPLE at the top so a reader who meets it out of
+  context cannot take it for a real statement. The IBAN line is what the right
+  panel redacts, which is why it is there at all.
+
+  Printed to PDF by headless Chrome; see crates/pdfluent/examples/readme_hero.rs.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PDFluent sample statement</title>
+<style>
+  @page { size: 297mm 210mm; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    width: 297mm; height: 210mm;
+    padding: 16mm 18mm;
+    font-family: "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif;
+    font-size: 9.5pt; line-height: 1.5; color: #111; background: #fff;
+    display: flex; flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+  }
+  .sample {
+    align-self: flex-start; margin-bottom: 7mm;
+    border: 1px solid #111; padding: 1mm 3mm;
+    font-size: 7pt; letter-spacing: .18em; text-transform: uppercase;
+  }
+  header { display: flex; justify-content: space-between; align-items: flex-start; }
+  .mark { font-size: 17pt; font-weight: 700; letter-spacing: -.02em; }
+  .mark span { font-weight: 300; color: #555; }
+  .issuer { text-align: right; font-size: 8pt; color: #555; line-height: 1.7; }
+  h1 { font-size: 12pt; font-weight: 600; margin: 10mm 0 1mm; letter-spacing: .01em; }
+  .sub { color: #555; font-size: 8.5pt; margin: 0 0 7mm; }
+  .parties { display: flex; gap: 14mm; margin-bottom: 8mm; }
+  .parties section { flex: 1; }
+  .label { font-size: 6.8pt; letter-spacing: .16em; text-transform: uppercase; color: #777; }
+  .parties p { margin: 1.5mm 0 0; }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left; font-size: 6.8pt; letter-spacing: .16em; text-transform: uppercase;
+    color: #777; font-weight: 400; padding-bottom: 2mm; border-bottom: 1px solid #111;
+  }
+  td { padding: 2.6mm 0; border-bottom: 1px solid #e2e2e2; vertical-align: top; }
+  td.n, th.n { text-align: right; white-space: nowrap; }
+  .item { font-weight: 500; }
+  .item small { display: block; font-weight: 400; color: #666; font-size: 8pt; }
+  tfoot td { border-bottom: none; padding: 1.6mm 0; color: #555; }
+  tfoot tr.total td { border-top: 1px solid #111; padding-top: 3mm; color: #111; font-weight: 600; font-size: 11pt; }
+  footer { margin-top: auto; padding-top: 9mm; display: flex; justify-content: space-between; gap: 12mm; font-size: 8pt; color: #555; }
+  footer b { color: #111; font-weight: 500; }
+</style>
+</head>
+<body>
+  <div class="sample">Sample document</div>
+
+  <header>
+    <div class="mark">PDF<span>luent</span></div>
+    <div class="issuer">
+      Innovation Trigger B.V.<br>
+      Amsterdam, Netherlands<br>
+      VAT NL000099998B57
+    </div>
+  </header>
+
+  <h1>Statement of account</h1>
+  <p class="sub">Number PL-2026-0417 &nbsp;·&nbsp; Issued 7 September 2026 &nbsp;·&nbsp; Due 7 October 2026</p>
+
+  <div class="parties">
+    <section>
+      <div class="label">Billed to</div>
+      <p>Example Customer B.V.<br>Keizersgracht 1<br>1015 CJ Amsterdam</p>
+    </section>
+    <section>
+      <div class="label">Reference</div>
+      <p>Purchase order EX-4471<br>Contact: accounts payable<br>Terms: net 30</p>
+    </section>
+    <section>
+      <div class="label">Payment</div>
+      <p>IBAN NL02ABNA0123456789<br>BIC ABNANL2A<br>Innovation Trigger B.V.</p>
+    </section>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Item</th>
+        <th class="n">Qty</th>
+        <th class="n">Unit</th>
+        <th class="n">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="item">PDFluent SDK — Commercial licence
+          <small>One organisation, 7 Sep 2026 to 6 Sep 2027</small></td>
+        <td class="n">1</td>
+        <td class="n">&euro; 999.00</td>
+        <td class="n">&euro; 999.00</td>
+      </tr>
+      <tr>
+        <td class="item">Priority support
+          <small>One business day response, 12 months</small></td>
+        <td class="n">1</td>
+        <td class="n">&euro; 4,999.00</td>
+        <td class="n">&euro; 4,999.00</td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr><td colspan="3" class="n">Subtotal</td><td class="n">&euro; 5,998.00</td></tr>
+      <tr><td colspan="3" class="n">VAT 21%</td><td class="n">&euro; 1,259.58</td></tr>
+      <tr class="total"><td colspan="3" class="n">Total due</td><td class="n">&euro; 7,257.58</td></tr>
+    </tfoot>
+  </table>
+
+  <footer>
+    <div><b>Retention.</b> This statement is archived as PDF/A-1B. The archived
+      copy is the record; this one is a working print.</div>
+    <div><b>Questions?</b> Quote PL-2026-0417 in any correspondence about this
+      statement.</div>
+  </footer>
+</body>
+</html>

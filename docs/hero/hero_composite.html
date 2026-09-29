@@ -1,0 +1,96 @@
+<!doctype html>
+<!--
+  Copyright (c) 2026 Innovation Trigger B.V.
+
+  PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+  the PDFluent Commercial Licence. See the LICENSE file in this repository --
+  that file travels with the copy you received, which a URL does not.
+
+  The frame of the README hero image: two panels, a caption under each.
+
+  It is a template, not a page. crates/pdfluent/examples/readme_hero.rs
+  substitutes four placeholders and prints the result to PDF, which PDFluent
+  then renders to docs/readme-hero.png:
+
+    {{BEFORE_PNG}}   file URL of the left panel  (the printed statement)
+    {{AFTER_PNG}}    file URL of the right panel (after the SDK touched it)
+    {{VERDICT}}      what validate_pdfa() actually returned on this run
+    {{CANVAS_W}}     canvas width in CSS pixels
+    {{CANVAS_H}}     canvas height in CSS pixels
+    {{PAGE_SIZE}}    the same canvas in inches, for @page
+
+  The canvas is substituted rather than written here because it has to agree in
+  three places at once -- @page, the body box, and the dpi the hero is rendered
+  at. Three literals that must match is three chances to drift; one constant in
+  the generator is none.
+
+  The verdict is substituted rather than written here because a caption that is
+  typed by hand is a caption that can be wrong. This one says what the run said.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PDFluent — what it does</title>
+<style>
+  @page { size: {{PAGE_SIZE}}; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    width: {{CANVAS_W}}px; height: {{CANVAS_H}}px; padding: 38px 42px 32px;
+    display: flex; flex-direction: column;
+    font-family: "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif;
+    color: #111; background: #fff;
+    -webkit-font-smoothing: antialiased;
+  }
+  .row { display: flex; align-items: stretch; gap: 26px; flex: 1; min-height: 0; }
+  .panel { flex: 1 1 0; display: flex; flex-direction: column; min-width: 0; }
+  .step {
+    font-size: 10px; letter-spacing: .2em; text-transform: uppercase;
+    color: #777; margin-bottom: 9px;
+  }
+  .shot {
+    flex: 1; min-height: 0; border: 1px solid #d8d8d8; background: #fff;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+  }
+  .shot img { max-width: 100%; max-height: 100%; display: block; }
+  .cap { margin-top: 11px; font-size: 13px; line-height: 1.45; }
+  .cap b { font-weight: 600; }
+  .cap span { color: #666; }
+  .arrow {
+    align-self: center; font-size: 26px; color: #111; flex: 0 0 auto;
+    padding-bottom: 34px;
+  }
+  footer {
+    margin-top: 26px; padding-top: 14px; border-top: 1px solid #111;
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 12px; color: #666;
+  }
+  footer b { color: #111; font-weight: 600; font-size: 14px; letter-spacing: -.01em; }
+  footer b span { font-weight: 300; color: #555; }
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="panel">
+      <div class="step">Input</div>
+      <div class="shot"><img src="{{BEFORE_PNG}}" alt="A printed statement, before PDFluent touched it"></div>
+      <div class="cap"><b>A statement, printed to PDF.</b>
+        <span>Authored as HTML, printed by headless Chrome.</span></div>
+    </div>
+
+    <div class="arrow">&rarr;</div>
+
+    <div class="panel">
+      <div class="step">After PDFluent</div>
+      <div class="shot"><img src="{{AFTER_PNG}}" alt="The same statement after redaction, watermarking and PDF/A conversion"></div>
+      <div class="cap"><b>Bank details redacted, watermarked, archived.</b>
+        <span>{{VERDICT}}</span></div>
+    </div>
+  </div>
+
+  <footer>
+    <b>PDF<span>luent</span></b>
+    <div>Both panels rendered by PDFluent's own rasterizer — so is this image.</div>
+  </footer>
+</body>
+</html>
