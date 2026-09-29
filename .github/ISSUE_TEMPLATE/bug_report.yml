@@ -50,7 +50,22 @@ body:
     attributes:
       label: Version
       description: The crate or package version, or the commit you built.
-      placeholder: "1.0.0-beta.17"
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: binding
+    attributes:
+      label: Binding
+      options:
+        - Rust
+        - Python
+        - Node.js
+        - Browser (WebAssembly)
+        - .NET
+        - Java
+        - C API
     validations:
       required: true
 
