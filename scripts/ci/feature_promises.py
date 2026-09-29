@@ -191,7 +191,7 @@ def main() -> None:
         for feature, impl in unreachable:
             print(f"    {feature:22} zit alleen in {impl}")
         print("  Een klant die de facade gebruikt, krijgt deze niet zonder de crate")
-        print("  er handmatig bij te zetten. Zie docs/SYSTEM_MAP.md.")
+        print("  er handmatig bij te zetten.")
 
     print("-" * 72)
     print(f"  {len(PROMISES) - len(missing)}/{len(PROMISES)} beloften hebben een test")
