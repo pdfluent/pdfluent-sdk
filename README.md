@@ -8,6 +8,7 @@
 [![NuGet](https://img.shields.io/nuget/v/PDFluent?label=NuGet&color=111111)](https://www.nuget.org/packages/PDFluent)
 [![Maven Central](https://img.shields.io/maven-central/v/com.pdfluent/pdfluent?label=Maven&color=111111)](https://central.sonatype.com/artifact/com.pdfluent/pdfluent)
 [![Licence](https://img.shields.io/badge/licence-AGPL--3.0--only%20OR%20Commercial-111111)](LICENSE)
+[![Discussions](https://img.shields.io/badge/discussions-ask%20a%20question-111111?logo=github)](https://github.com/pdfluent/pdfluent-sdk/discussions)
 [![Public pull request](https://img.shields.io/github/actions/workflow/status/pdfluent/pdfluent-sdk/public-pull-request.yml?branch=main&label=checks&color=111111)](https://github.com/pdfluent/pdfluent-sdk/actions/workflows/public-pull-request.yml)
 
 [Share on X](https://x.com/intent/tweet?text=PDFluent%20%E2%80%94%20a%20pure-Rust%20PDF%20SDK%20with%20bindings%20for%20Python%2C%20Node.js%2C%20.NET%2C%20Java%2C%20C%20and%20WebAssembly&url=https%3A%2F%2Fgithub.com%2Fpdfluent%2Fpdfluent-sdk) ·
@@ -113,6 +114,10 @@ well, which is what CI does and what takes the time.
 
 Default features: `signing`, `pdfa`, `redaction`, `font-subset`.
 
+## Community
+
+Ask questions in [GitHub Discussions](https://github.com/pdfluent/pdfluent-sdk/discussions/categories/q-a), in the Q&A category. Report bugs in [this repository's issue tracker](https://github.com/pdfluent/pdfluent-sdk/issues/new/choose). Report security problems by email to [security@pdfluent.com](mailto:security@pdfluent.com), never in a public issue.
+
 ## Contributing
 
 Issues labelled [`good first issue`](https://github.com/pdfluent/pdfluent-sdk/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
@@ -131,7 +136,7 @@ where they go.
 
 [SETUP.md](SETUP.md) is the contributor onboarding, [CHANGELOG.md](CHANGELOG.md)
 is what changed and when, and <https://pdfluent.com> is the product around it.
-Runnable examples in Rust, Python, Node.js and a browser/WASM demo live in
+Runnable examples in Rust and a browser/WASM demo live in
 [`pdfluent/examples`](https://github.com/pdfluent/examples). This engine also
 ships inside [`pdfluent/pdfluent`](https://github.com/pdfluent/pdfluent), the
 free desktop editor.
@@ -181,20 +186,6 @@ features. You are buying the right not to publish your own source. It is what
 [pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing) sells; enquiries go
 to <sales@pdfluent.com>.
 
-**What the build currently does, stated plainly, because the licence file
-previously said otherwise.** As of 1 September 2026 the compiled SDK still
-contains tier checks left over from the proprietary model: with no licence key
-it runs as `Tier::Trial`, and some capabilities — rendering, redaction,
-conversion — return `FeatureNotInTier`. Text edits add an "Edited with PDFluent
-trial" annotation.
-
-Those checks do not limit the rights the AGPL grants. You have the source and
-the freedom to modify it, so you may remove them, and you need no permission
-from us to do so. But a licence that says "no enforcement of any kind" while the
-binary refuses features is a false statement, and it was one. Removal of the
-enforcement is tracked as issue #199; until that lands, this paragraph is the
-accurate description and the sentence it replaced was not.
-
 ### Not everything here is ours to license
 
 Several crates in this repository are forks of third-party open-source projects
@@ -232,3 +223,5 @@ entitled to read the terms they agreed to.
 From 1 September 2026 `LICENSE` carried the two-licence explanation above and
 the AGPL text sat beside it in `LICENSE-AGPL`. Since 7 September 2026 there is
 one AGPL text, in `LICENSE`, and this section is the explanation.
+
+Before 1.0.0 the SDK used licence keys and feature tiers; they were removed before the 1.0.0 release, and the published 1.0.0 packages contain no key check.

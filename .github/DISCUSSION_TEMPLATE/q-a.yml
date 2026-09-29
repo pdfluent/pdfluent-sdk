@@ -1,0 +1,41 @@
+# The form for the Q&A category. The fields are what an answer needs first;
+# without them the first reply is always a question back.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask questions about the SDK here; bugs belong in [the issue tracker](https://github.com/pdfluent/pdfluent-sdk/issues/new/choose).
+
+  - type: input
+    id: version
+    attributes:
+      label: Version and binding
+      description: The PDFluent version and the binding you use, for example 1.0.0 with the Python bindings.
+      placeholder: "1.0.0, Python"
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What you tried, what you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: code
+    attributes:
+      label: Code
+      description: The smallest code snippet that shows the problem.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: pdf
+    attributes:
+      label: Sample PDF
+      description: Optional. A PDF that shows the problem, if you can share it. Never attach a confidential or personal document.
+    validations:
+      required: false

@@ -7,6 +7,9 @@
 # licensing question, which is not a defect in anything.
 blank_issues_enabled: false
 contact_links:
+  - name: Question about using the SDK
+    url: https://github.com/pdfluent/pdfluent-sdk/discussions/categories/q-a
+    about: Ask SDK usage questions in the Q&A category of pdfluent/pdfluent-sdk Discussions.
   - name: Security vulnerability
     url: https://github.com/pdfluent/pdfluent-sdk/blob/main/SECURITY.md
     about: >
