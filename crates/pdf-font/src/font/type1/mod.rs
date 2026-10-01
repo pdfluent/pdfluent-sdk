@@ -582,7 +582,7 @@ impl<'a> Stream<'a> {
         None
     }
 
-    // Note: AI generated, haven't double-checked.
+    // Note: Automatically generated, haven't double-checked.
     fn read_float_array(&mut self) -> Option<Vec<f32>> {
         let mut entries = Vec::new();
 

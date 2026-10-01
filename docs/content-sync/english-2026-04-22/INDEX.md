@@ -49,6 +49,6 @@ After the website edits go live:
 
 ## Who does what
 
-- **Website code edits** — website repo maintainer or Cloud/Claude session with website-repo access.
+- **Website code edits** — website repo maintainer or cloud session with website-repo access.
 - **Translations** — Minimax (FASE E).
-- **Translation integration + deploy** — Cloud/Claude (FASE F).
+- **Translation integration + deploy** — cloud session (FASE F).

@@ -27,7 +27,7 @@ DELIBERATELY NOT A CI JOB
 
 A job would ask the question after the work is done, which is the one moment at
 which the answer is worthless. It belongs in a pair of hands, as step zero of
-starting a story, and that is where CLAUDE.md puts it.
+starting a story, and that is where the project's contributor instructions put it.
 `every_guard_has_a_job.py` records it as by-hand for this reason.
 
 WITHOUT A TOKEN IT SAYS SO

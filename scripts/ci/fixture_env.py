@@ -140,7 +140,7 @@ def inside_the_sandbox(cwd: str | os.PathLike, _env: dict | None = None) -> None
     A lint reads code; this runs. If the repository git would act on is not
     under `cwd`, the fixture is about to configure or commit somewhere real, and
     the honest moment to stop is before the first write, not after the gate
-    notices the identity in a later commit. (codex, #1647)
+    notices the identity in a later commit. (review, #1647)
     """
     # _env breaks the recursion: sealed_env(cwd=…) calls this, so building a
     # fresh environment here would call sealed_env again, for ever.

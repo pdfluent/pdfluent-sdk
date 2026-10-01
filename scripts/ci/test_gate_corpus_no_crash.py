@@ -9,7 +9,7 @@
 The gate's budget existed and was compared once the pool had drained. A corpus
 where every file hangs would therefore be reported about an hour in -- 500
 files, 30 s each, four at a time -- which is after the job itself has been
-killed, and a killed job reports nothing (codex, #1627). This drives the gate
+killed, and a killed job reports nothing (review, #1627). This drives the gate
 with a binary that never returns and a budget of one second, and requires the
 verdict within seconds.
 

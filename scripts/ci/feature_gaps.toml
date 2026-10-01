@@ -6,7 +6,7 @@
 # right and its only escape hatch was behind someone else's door.
 #
 # So the list moved out here and this path is excluded from t2 in
-# .claude/territories.toml, which makes it unclaimed and free to edit. Adding
+# the territory map, which makes it unclaimed and free to edit. Adding
 # a feature flag no longer requires entering another terminal's ground.
 #
 # A name here without a reason should not exist, and an empty file is the goal.

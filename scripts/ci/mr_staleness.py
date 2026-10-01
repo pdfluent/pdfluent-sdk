@@ -53,7 +53,7 @@ def token() -> str | None:
     # A developer machine keeps it in the keychain; CI passes it as a variable.
     try:
         out = subprocess.run(
-            ["security", "find-internet-password", "-a", "claude-pdfluent-api", "-w"],
+            ["security", "find-internet-password", "-a", "pdfluent-api", "-w"],
             capture_output=True, text=True, timeout=10)
         return out.stdout.strip() or None
     except Exception:  # noqa: BLE001
@@ -118,7 +118,7 @@ def main() -> None:
         print("[mr_staleness] FATAL: no API token.", file=sys.stderr)
         print("[mr_staleness]   CI: set GITLAB_API_TOKEN (api scope, read is enough).",
               file=sys.stderr)
-        print("[mr_staleness]   Local: the keychain entry `claude-pdfluent-api`.",
+        print("[mr_staleness]   Local: the keychain entry `pdfluent-api`.",
               file=sys.stderr)
         print("[mr_staleness] Exiting 2, not 0: a check that cannot run has not passed.",
               file=sys.stderr)

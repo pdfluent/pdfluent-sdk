@@ -23,7 +23,7 @@ runner setup this mirrors) rather than re-tuning the estimate.
 no compilation, `git ls-files` + a `json.load`, near-zero cost either
 way, no benefit to moving them.
 
-**Self-hosted only on `push`, never on `pull_request`** (Codex review on
+**Self-hosted only on `push`, never on `pull_request`** (review on
 #1532): `xfa-fast` is a persistent desktop runner, not an isolated
 ephemeral one. A PR's Cargo build scripts or proc-macros run as the
 runner's user, so untrusted PR code on a persistent runner means host
@@ -122,7 +122,7 @@ The fallback workflow is **not** required for merge.
 ## Why no path-gating?
 
 An earlier iteration of #1380 used `dorny/paths-filter@v3` to gate the
-expensive jobs by changed paths. Codex review flagged three P1
+expensive jobs by changed paths. Review flagged three P1
 false-skip risks: the `wasm`, `capi`, and `rendering` filters omitted
 transitive workspace dependencies, so a change to a transitively-used
 crate would silently skip the relevant validation.

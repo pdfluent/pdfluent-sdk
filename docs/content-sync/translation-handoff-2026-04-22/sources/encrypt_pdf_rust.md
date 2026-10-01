@@ -79,7 +79,7 @@ fn main() -> Result<()> {
 - If the article lists supported algorithms: state **AES-128 is
   accepted today but the 1.0 backend currently emits AES-256
   regardless** — registered in STABILITY.md §3.3 as a 1.1
-  follow-up (#1251 Codex P2 audit item).
+  follow-up (#1251 review P2 audit item).
 
 ## What stays the same
 

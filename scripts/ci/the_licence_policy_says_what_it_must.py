@@ -78,7 +78,7 @@ MUST_ALLOW: dict[str, str] = {
 #
 # Same shape as the four spellings of the head ref (#1636): a list of names
 # where a class belongs. So the family is generated, and a spelling nobody
-# typed here is an error rather than a hole. (codex, #1656)
+# typed here is an error rather than a hole. (review, #1656)
 # Not anchored at the start, because a licence field is an EXPRESSION and a
 # name can be embedded in one: `MIT OR GPL-3.0-only` is a disjunction whose
 # second operand is the GPL, and `LicenseRef-AGPL-3.0` is the family wearing a
@@ -100,7 +100,7 @@ STERK_COPYLEFT = re.compile(r"(?<![A-Za-z])A?GPL-\d", re.IGNORECASE)
 #
 # Fourth time in this file that a list of the spellings I happened to know sat
 # where a class belonged. So: a family, and any member appearing in `allowed`
-# is refused whatever its spelling. (codex, #1656)
+# is refused whatever its spelling. (review, #1656)
 SURFACE_BEPERKT = {
     "LGPL": re.compile(r"(?<![A-Za-z])LGPL-\d", re.IGNORECASE),
     "MPL": re.compile(r"(?<![A-Za-z])MPL-\d", re.IGNORECASE),
@@ -189,7 +189,7 @@ def main() -> int:
     # The comment on MOET_OVERIG_VERBODEN says an eighth entry is "a deliberate
     # edit to code that goes through review" -- and nothing made that true. A
     # sentence describing a rule is not the rule, which is the failure this file
-    # has now produced five times. (codex, #1656)
+    # has now produced five times. (review, #1656)
     # MUST_FORBID is a REASONS table and asserts nothing on its own, so a name
     # that lives only there is a name nothing requires -- it would be subtracted
     # from the unknown set below and then never checked for presence. Latent
@@ -245,7 +245,7 @@ def main() -> int:
     # with toegestaan() returning True. Worse, license_gate builds the cargo
     # weak set as the UNION of every surface, so naming it on `editor` alone
     # makes it acceptable for all 786 cargo packages. A family checked on one
-    # list is a family that moves to another. (codex, #1656)
+    # list is a family that moves to another. (review, #1656)
     per_lijst = [("licenses.allowed", allowed), ("licenses.weak_copyleft", weak)]
     for surface, blok in (pol.get("surfaces") or {}).items():
         if isinstance(blok, dict):
@@ -292,7 +292,7 @@ def main() -> int:
     # mechanism by which MPL-2.0 is permitted in one place and not another.
     # Measured: with MPL-2.0 added to `allowed`, toegestaan() returns True for a
     # surface with weak_allowed=set(), and False without it. The per-surface
-    # control is simply skipped. (codex, #1656)
+    # control is simply skipped. (review, #1656)
     for name in sorted(allowed & weak):
         problems.append(
             f"{name} is in BOTH allowed and weak_copyleft. `allowed` is tested "
@@ -332,7 +332,7 @@ def main() -> int:
             # only asked "is it refused" reported agreement while the evaluator
             # had stopped consulting the list at all. That is precisely the
             # regression this guard exists for, and it was the one thing it
-            # could not see. (codex, #1656)
+            # could not see. (review, #1656)
             problems.append(
                 f"{name} is refused for the wrong reason: {reason!r}. It is on "
                 "the forbidden list, so the evaluator should say so -- being "

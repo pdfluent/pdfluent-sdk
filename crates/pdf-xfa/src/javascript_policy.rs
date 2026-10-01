@@ -626,7 +626,7 @@ mod tests {
 
     #[test]
     fn indirect_field_action_to_javascript_is_always_stripped() {
-        // Codex P2 regression-guard: a field whose `/A` is an indirect
+        // review P2 regression-guard: a field whose `/A` is an indirect
         // reference to a JavaScript action object must always be stripped,
         // even when the underlying object iteration order would visit the
         // JS-action object before the field dict that points to it. The

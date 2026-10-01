@@ -129,7 +129,7 @@ def fetch_live_version(channel_key: str, ch: dict, endpoints: dict) -> tuple[str
             import subprocess
             try:
                 r = subprocess.run(
-                    ["security", "find-internet-password", "-a", "claude-pdfluent-api", "-w"],
+                    ["security", "find-internet-password", "-a", "pdfluent-api", "-w"],
                     capture_output=True, text=True, check=True)
                 pat = r.stdout.strip()
             except Exception:
