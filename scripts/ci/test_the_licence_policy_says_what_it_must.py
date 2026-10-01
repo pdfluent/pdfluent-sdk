@@ -99,7 +99,7 @@ expect("  and says it was emptied, not curated", "emptied" in r.stderr)
 
 # The permitting list is an attack surface too: `allowed` is tested before
 # `weak_copyleft`, so a weak licence there is acceptable even where the weak set
-# is empty. (codex, #1656)
+# is empty. (review, #1656)
 r = run_with(lambda t: set_list(t, "allowed", ["MPL-2.0"] + read_list(t, "allowed")))
 expect("a weak-copyleft licence in allowed FAILS", r.returncode == 1,
        f"exit={r.returncode}")
@@ -146,7 +146,7 @@ expect("an evaluator that stops honouring the list FAILS",
 # The other way an evaluator stops honouring it: DELETE the forbidden branch.
 # Every forbidden licence then falls through to "not classified" -- also False,
 # so a check that only asked "is it refused" saw agreement. False is the absence
-# of a verdict, not a verdict. (codex, #1656)
+# of a verdict, not a verdict. (review, #1656)
 with tempfile.TemporaryDirectory() as td:
     root = pathlib.Path(td) / "repo"
     (root / "scripts" / "ci").mkdir(parents=True)

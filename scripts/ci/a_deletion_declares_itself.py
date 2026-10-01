@@ -79,7 +79,7 @@ def main(argv: list[str]) -> int:
                          "added between the common ancestor and that tip, so a "
                          "force-push could drop a file and report nothing. A "
                          "pull request wants the merge base, because its base "
-                         "branch may have moved on. (codex, #1635)")
+                         "branch may have moved on. (review, #1635)")
     args = ap.parse_args(argv[1:])
 
     if args.exact_base:
@@ -101,7 +101,7 @@ def main(argv: list[str]) -> int:
     # is exactly what `--base origin/master` produced on a push to master, where
     # the ref already points at the revision being pushed. The caller was fixed;
     # this refuses too, because the next caller will be written by somebody who
-    # has not read that fix. (codex, #1635)
+    # has not read that fix. (review, #1635)
     head_sha = git("rev-parse", args.head)[1].strip()
     if base_sha == head_sha:
         print(f"[deletions] FATAL: the base resolves to {args.head} itself, so the "
@@ -113,14 +113,14 @@ def main(argv: list[str]) -> int:
     # any path outside ASCII -- "benchmarks/runs/\316\262.md" for a path holding
     # a beta. The trailer carries the literal path, so the two spellings never
     # match and a correctly declared deletion is reported as both undeclared and
-    # misplaced at once. This repo already tracks such paths. (codex, #1635)
+    # misplaced at once. This repo already tracks such paths. (review, #1635)
     rc, out = git("diff", "--diff-filter=D", "--name-only", "-z",
                   f"{base_sha}..{args.head}")
     if rc != 0:
         # An ignored return code made empty stdout look like an empty set of
         # deletions: with a bad --head the diff failed and the guard reported OK
         # having compared nothing. A command that did not run is not a clean
-        # answer. (codex, #1635)
+        # answer. (review, #1635)
         print(f"[deletions] FATAL: `git diff {base_sha}..{args.head}` failed "
               f"(exit {rc}). Refusing to report a clean branch for a comparison "
               "that did not happen.", file=sys.stderr)
@@ -138,7 +138,7 @@ def main(argv: list[str]) -> int:
     # it". The declaration belonged to a deletion that had been undone.
     #
     # What has to carry the trailer is the LAST commit that removes the path,
-    # because that is the one whose effect survives to the tip. (codex, #1635)
+    # because that is the one whose effect survives to the tip. (review, #1635)
     rc, log = git("log", "--reverse", "--format=%H%x00%B%x1e",
                   f"{base_sha}..{args.head}")
     if rc != 0:
@@ -168,7 +168,7 @@ def main(argv: list[str]) -> int:
         # declared deletion would fail. The same holds for an ordinary merge
         # commit landing on master. The deletion belongs to the commit on the
         # side branch that performed it, so merges are skipped when choosing the
-        # last deleter. (codex, #1635)
+        # last deleter. (review, #1635)
         parents = git("rev-list", "--parents", "-n", "1", sha)[1].split()[1:]
         _, own = git("show", "--diff-filter=D", "--name-only", "--format=", "-z",
                      "--first-parent", "-m", sha)
@@ -188,7 +188,7 @@ def main(argv: list[str]) -> int:
             # removed it -- a conflict resolution that drops a file -- and it can
             # and must declare it. Discarding every merge deletion outright made
             # such a commit report as undeclared AND misplaced at once.
-            # (codex, #1635)
+            # (review, #1635)
             inherited = set()
             for path in removed_here:
                 for par in parents[1:]:
@@ -208,7 +208,7 @@ def main(argv: list[str]) -> int:
     # the deleting commit is then impossible to satisfy, and a trailer on the new
     # tip was reported as misplaced. A deliberate force-push removal could not be
     # declared at all. In this mode any commit in the range may carry it.
-    # (codex, #1635)
+    # (review, #1635)
     orphaned = {p for p in deleted if p not in last_deleter}
     if args.exact_base and orphaned:
         anywhere = set().union(*trailers.values()) if trailers else set()
@@ -227,7 +227,7 @@ def main(argv: list[str]) -> int:
     # from the stale list: they need different sentences, and the previous
     # version put both in one list and then looked every entry up in `declared`,
     # which raised KeyError on the misplaced ones -- a traceback instead of the
-    # remediation the message was written to give. (codex, #1635)
+    # remediation the message was written to give. (review, #1635)
     misplaced: list[str] = []
     for sha, named in trailers.items():
         for path in sorted(named - deletes.get(sha, set())):

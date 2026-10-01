@@ -154,7 +154,7 @@ def registerregels_die_bewogen() -> set[str] | None:
     # neither github/master nor origin/master nor master exists, so this was the
     # answer on every Actions run. The guard was wired, ran, printed SKIPPED and
     # returned 0 while a change to a `niet_mergen` entry's `gelijk_met` or
-    # `forkpunt` passed underneath it. (codex, #1639)
+    # `forkpunt` passed underneath it. (review, #1639)
     print("SKIPPED (not a pass): geen merge-base gevonden, dus niet vastgesteld "
           "welke registerregels deze tak beweegt; `niet_mergen` blokkeert hier niets.",
           file=sys.stderr)
@@ -215,7 +215,7 @@ def main() -> int:
         # Printing it is not blocking it. The step in .github/workflows/ci.yml
         # reads the exit status and nothing else, so a branch that upgraded one
         # of these crates while leaving the field in place passed with a warning
-        # in the log that nobody reads. (Codex, #1609.)
+        # in the log that nobody reads. (review, #1609.)
         if naam in bewogen:
             fouten.append(
                 f"  {naam}: carries `niet_mergen`, and this branch moves its "

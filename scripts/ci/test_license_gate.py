@@ -61,7 +61,7 @@ HERE = Path(__file__).resolve().parent
 # filesystems -- so a same-length mutation and restore inside one second can
 # execute the cached mutated gate and report that the test caught something it
 # never ran. That is the false green this block exists to prevent, one layer
-# deeper than the fix I first wrote. Codex found it; my version was incomplete.
+# deeper than the fix I first wrote. Review found it; my version was incomplete.
 #
 # Compiling the source text directly cannot consult a cache at all.
 sys.dont_write_bytecode = True

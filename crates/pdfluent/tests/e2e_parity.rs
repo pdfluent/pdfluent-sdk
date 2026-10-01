@@ -241,7 +241,7 @@ fn naturally_runnable_slugs_match_master_reality() {
                 body.find(&format!("fn {abbreviated}_runs"))
             })
             .or_else(|| body.find("_runs()"));
-        // Codex #1279 P2: a slug on NATURALLY_RUNNABLE MUST have a
+        // review #1279 P2: a slug on NATURALLY_RUNNABLE MUST have a
         // `_runs` function. Silently continuing would let CI pass
         // after a `_runs` test is accidentally deleted while the
         // slug remains in the runnable list.

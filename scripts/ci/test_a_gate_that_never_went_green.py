@@ -187,7 +187,7 @@ GEVALLEN = [
     # ...but GitHub switching a scheduled workflow off after sixty quiet days is
     # nobody's decision, and it can happen once this repository is public. The
     # first version excused every non-active state and would have approved a
-    # scheduled gate that had gone dark. (codex, #1610)
+    # scheduled gate that had gone dark. (review, #1610)
     ("disabled by inactivity is not an excuse",
      [wf("stil.yml", 40, 0, state="disabled_inactivity")], True),
     # The queries must be scoped to the default branch. Dead on master, green on

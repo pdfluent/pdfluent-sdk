@@ -13,7 +13,7 @@ with the nightly suite left those conditions pointing at the old times, so
 
 Nothing failed. A job whose `if` is false is skipped, and a skipped job is
 green -- so the fuzzing quietly went away while the workflow kept reporting
-success. Codex caught it on #1546.
+success. Review caught it on #1546.
 
 # NO-FLOOR: it compares two lists inside each file. There is nothing it can
 # find less of without the file itself being gone.

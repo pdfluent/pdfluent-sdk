@@ -1435,7 +1435,7 @@ impl PdfDocument {
         self.check_image_pixel_limits()?;
 
         let total = self.engine.page_count();
-        // Codex P2 on #1269: guard zero-page documents BEFORE computing
+        // review P2 on #1269: guard zero-page documents BEFORE computing
         // `to - from + 1` — otherwise a default `opts.pages = None` on
         // a 0-page doc produces `from=1, to=0`, and the subsequent
         // `with_capacity(usize::MAX)` panics in debug (underflow) or

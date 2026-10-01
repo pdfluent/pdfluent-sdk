@@ -298,7 +298,7 @@ def ensure_clone(needed: list[str]) -> str | None:
     commit would be measured against an older history -- and an older commit
     already in the cache can then hold the maximum and pass, while the real
     maximum sits in a revision that was never fetched. Green, on the wrong
-    evidence. (Codex, #1609.)
+    evidence. (review, #1609.)
     """
     if CLONE.exists() and git("rev-parse", "--git-dir", cwd=CLONE).returncode == 0:
         missing = [
@@ -444,7 +444,7 @@ def main() -> int:
             # nothing can verify it. The structural guard passes because the
             # field exists, and the version check passes anywhere inside one
             # version window -- so an unverifiable merge base stayed green
-            # through all three. (Codex, #1609.)
+            # through all three. (review, #1609.)
             #
             # pdf-render is this case and carries `niet_mergen` instead, which is
             # the honest record; an entry reaching here has a fork point it

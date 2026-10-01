@@ -27,7 +27,7 @@ veraPDF that says yes, and a mutool that is either absent or refuses one file.
 Absent must be the announced skip, exit 3. Refusing a file must be exit 1 with
 that file named: the first version returned 3 for both, and the workflow reads
 3 as "nothing to calibrate against", so an unreadable output shipped green
-(codex, #1617).
+(review, #1617).
 
 Exit codes:
     0  the gate accepts what it should and rejects what it should
@@ -195,7 +195,7 @@ def main() -> int:
         # A platform we do NOT gate on has nothing to be measured against, so
         # failing every run on evidence we do not have would make this a
         # permanent red. It measures, prints the numbers to record, and says it
-        # did not judge: exit 3. (codex, #1617)
+        # did not judge: exit 3. (review, #1617)
         case(
             "an ungated platform with no floor announces, and does not judge",
             dict(FLOOR),

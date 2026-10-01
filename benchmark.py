@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--target-dir",
-        default=os.environ.get("CARGO_TARGET_DIR", "/tmp/codex-cloud-ocr-target"),
+        default=os.environ.get("CARGO_TARGET_DIR", "/tmp/pdfluent-cloud-ocr-target"),
         help="Cargo target directory to use.",
     )
     parser.add_argument(

@@ -16,8 +16,8 @@ Before starting a release, confirm:
 - [ ] No open PRs are tagged `1.0-blocker` in milestone #52.
 - [ ] No public method panics on its happy path (see
       [STABILITY.md §3.3](STABILITY.md#33-deferred-truth-gaps-in-10)).
-- [ ] The Codex end-audit has been run and its result is
-      `Codex audit complete, milestone safe to close`.
+- [ ] The end-audit has been run and its result is
+      `Audit complete, milestone safe to close`.
 - [ ] `CHANGELOG.md` has a `[Unreleased]` section with all
       user-visible changes since the previous tag.
 

@@ -22,8 +22,8 @@ BENCH_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BENCH_DIR.parent.parent
 CORPUS_PATH = BENCH_DIR / "corpus.json"
 RESULTS_PATH = BENCH_DIR / "results.json"
-CARGO_TARGET_DIR = "/tmp/codex-ocr-corpus-target"
-PADDLE_CARGO_TARGET_DIR = "/tmp/codex-ocr-paddle-target"
+CARGO_TARGET_DIR = "/tmp/pdfluent-ocr-corpus-target"
+PADDLE_CARGO_TARGET_DIR = "/tmp/pdfluent-ocr-paddle-target"
 ORT_DYLIB_PATH = (
     "/tmp/onnxruntime-arm64/onnxruntime-osx-arm64-1.24.2/lib/libonnxruntime.dylib"
 )

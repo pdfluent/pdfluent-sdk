@@ -152,7 +152,7 @@ fn dry_run_does_not_write_file() {
 
 #[test]
 fn offline_without_fetched_flag_is_rejected() {
-    // Codex P1 on PR #1275: defaulting to today's date breaks the
+    // review P1 on PR #1275: defaulting to today's date breaks the
     // drift-guard on the day after extraction. Offline runs now
     // require an explicit `--fetched`.
     let (cache, manifest, out) = seed_case("no-fetched");

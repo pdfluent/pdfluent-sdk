@@ -2499,7 +2499,7 @@ fn collect_named_descendant_candidates(
 }
 
 fn order_candidates(form: &FormTree, candidates: &mut [FormNodeId]) {
-    // Phase D-η refinement (Codex review feedback): when same-name
+    // Phase D-η refinement (review feedback): when same-name
     // candidates include a `Field` and a sibling subform/container,
     // prefer the Field. Fields have zero children, so naïve children-
     // bias would pick the container — but bare `Amount.rawValue` reads

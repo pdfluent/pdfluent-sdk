@@ -498,7 +498,7 @@ fn variables_script_globals_clear_between_documents() {
 
 #[test]
 fn variables_script_runaway_body_does_not_hang_flatten() {
-    // Phase D-ι, Codex P1 review on PR #1499: a malicious or buggy
+    // Phase D-ι, review P1 on PR #1499: a malicious or buggy
     // `<variables>` body containing `while (true) {}` must not be able
     // to hang flatten. The script-time deadline + interrupt handler
     // applied to event scripts must also apply to variables-script
@@ -538,7 +538,7 @@ fn variables_script_runaway_body_does_not_hang_flatten() {
 
 #[test]
 fn variables_script_oversized_body_is_rejected() {
-    // Phase D-ι, Codex P1 review on PR #1499: variables-script bodies
+    // Phase D-ι, review P1 on PR #1499: variables-script bodies
     // exceeding `MAX_VARIABLES_SCRIPT_BODY_BYTES` must be rejected,
     // mirroring the execute_script path.
     //

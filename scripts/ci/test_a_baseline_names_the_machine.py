@@ -206,7 +206,7 @@ def calibration_that_expired(root: pathlib.Path) -> None:
 def calibration_dated_in_the_future(root: pathlib.Path) -> None:
     """A date nobody could have measured on. It must be named as such: without
     the check the entry counts as live, and the guard still goes red -- on the
-    floor -- so this case also asserts the reason (codex, #1622)."""
+    floor -- so this case also asserts the reason (review, #1622)."""
     path = root / "benchmarks" / "BASELINE_HARDWARE.toml"
     path.write_text(path.read_text().replace(
         'runner_label = "xfa-fast"\nreachable = true\ncalibrated = false\ncalibrated_on = ""',

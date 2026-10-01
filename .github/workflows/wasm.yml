@@ -96,7 +96,7 @@ jobs:
         # `if:` at all -- reading it there does not come out false, it makes the
         # whole file invalid, which is what stopped this workflow for nine days.
         # Hoisting the token to the job's `env:` would fix that but hand a
-        # registry-write credential to every step in the job, which Codex
+        # registry-write credential to every step in the job, which the review
         # pointed out on #1544 and is right about. So the condition asks only
         # what it needs to, and the token stays on this one step. A missing
         # token now fails the publish loudly instead of skipping it in silence,

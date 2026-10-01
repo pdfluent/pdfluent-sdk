@@ -94,7 +94,7 @@ def vanzelf_actief(on) -> bool:
         if naam == "push" and isinstance(waarde, dict):
             # `tags:` alone is a release. `tags:` with `branches:` fires on
             # every commit too -- and so does `tags:` with `branches-ignore:`,
-            # which enables every branch the filter does not exclude. Codex
+            # which enables every branch the filter does not exclude. Review
             # caught the second form on #1546; the first version only knew
             # about `branches`.
             takken = "branches" in waarde or "branches-ignore" in waarde
@@ -110,7 +110,7 @@ def runner_ingangen(job: dict):
     A blob of text will not do. A matrix carrying both `[self-hosted, xfa-fast]`
     and `macos-latest` contains the word "self-hosted", and deciding on the blob
     excuses exactly the expensive half; deciding the other way bills our own
-    Windows box, whose label contains "windows". Codex made both points on
+    Windows box, whose label contains "windows". Review made both points on
     #1546. So: collect the entries and judge each on its own.
     """
     uit = []

@@ -7,7 +7,7 @@
 """Every script in `scripts/ci/` must be called by a pipeline job -- and by one
 that can still block a merge.
 
-This is the rule from CLAUDE.md, made mechanical: *nothing is done if there is
+This is the rule from the project's contributor instructions, made mechanical: *nothing is done if there is
 no test for it that runs in the CI pipeline.* That rule exists because the
 alternative went wrong three times, each time the same way -- the test existed
 and nothing ran it.
@@ -81,7 +81,7 @@ MIN_SCRIPTS = 25
 # had always stood before no merge was counted for the first time. The lines a
 # job runs were read without asking whether the job can run on a pull request,
 # so `tests_actually_ran.py`, called only from a workflow_dispatch-only
-# workflow, counted as "has a job" (codex, #1633). The count now includes
+# workflow, counted as "has a job" (review, #1633). The count now includes
 # every guard whose only GitHub job is dispatch-only or parked behind
 # `needs: parked`, and that one is in mirror_only_guards.toml with its reason.
 #
@@ -118,7 +118,7 @@ ALLOWED: dict[str, str] = {
     # Deliberately by hand, and the reason is the whole design (#237). A job
     # would ask "does this already exist?" after the work was done, which is the
     # one moment at which the answer is worthless. It belongs at the start of a
-    # story, in a pair of hands, and CLAUDE.md puts it there as step zero. Its
+    # story, in a pair of hands, and the project's contributor instructions put it there as step zero. Its
     # TEST does run, on every pull request, over a fake `gh`.
     # The measurement needs a full clone of LaurenzV/hayro -- 948 MB, with the
     # history, because the fork point is a commit and not a version number. No
@@ -151,7 +151,7 @@ ALLOWED: dict[str, str] = {
 
     "does_this_already_exist.py": (
         "asked by a person before starting a story, not by a job afterwards; "
-        "step zero in CLAUDE.md, and test_does_this_already_exist.py runs in CI"
+        "step zero in the project's contributor instructions, and test_does_this_already_exist.py runs in CI"
     ),
 
     # A cargo build of five hundred small programs -- every Rust block on
@@ -194,7 +194,7 @@ ALLOWED: dict[str, str] = {
     #
     # It runs in the local gate, where `gh` is authenticated, and it now exits 1
     # rather than 0 when CI is set, so wiring it again fails loudly instead of
-    # quietly. A token for it is an owner decision (#290). (codex, #1639)
+    # quietly. A token for it is an owner decision (#290). (review, #1639)
     "every_label_has_a_runner.py": (
         "needs `gh` with a keyring; GITHUB_TOKEN cannot be granted the scope "
         "/actions/runners requires, so in a workflow it can only skip. Runs in "
@@ -348,7 +348,7 @@ ALLOWED: dict[str, str] = {
         "both remotes. test_mirror_has_not_drifted.py runs in "
         "orchestration-guard and holds it to still biting; "
         "the_topology_agrees_with_the_mirror_gate.py holds the direction it "
-        "enforces to the roles written in CLAUDE.md"
+        "enforces to the roles written in the project's contributor instructions"
     ),
     "origin_is_the_source_in_every_checkout.py": (
         "its subject IS this machine: which repository `origin` resolves to here, "
@@ -633,7 +633,7 @@ def main() -> int:
         print(
             "\nPut a job on it in .github/workflows/ or .gitlab-ci.yml, or add the\n"
             "script to ALLOWED with the reason it belongs in a pair of hands.\n\n"
-            "The rule from CLAUDE.md: nothing is done if there is no test for it\n"
+            "The rule from the project's contributor instructions: nothing is done if there is no test for it\n"
             "that runs in the CI pipeline. That holds for the checks themselves.",
             file=sys.stderr,
         )

@@ -27,7 +27,7 @@ MAINTAINING THE LIST
 
 `PROMISES` mirrors what the website and the editor tell customers they can do.
 When a feature is added there, add it here in the same change — that is the
-Definition of Done in CLAUDE.md applied to product copy rather than to code.
+Definition of Done in the project's contributor instructions applied to product copy rather than to code.
 
 Exit codes:
     0  every promise maps to at least one test that exists
@@ -199,7 +199,7 @@ def main() -> None:
     print()
     print("  Let op: dit toetst dat er een test BESTAAT die de functie aanraakt.")
     print("  Of die test iets zinnigs beweert, en of hij in CI draait, zijn")
-    print("  aparte vragen — zie de Definition of Done in CLAUDE.md.")
+    print("  aparte vragen — zie de Definition of Done in de projectinstructies.")
 
     sys.exit(1 if (missing or unreachable) else 0)
 

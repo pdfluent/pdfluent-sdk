@@ -98,7 +98,7 @@ def calls_made(tree: ast.AST) -> set[str]:
     Separate from imports on purpose: an unused `from fixture_env import
     sealed_env` sitting beside the old environment satisfied a name check while
     changing nothing. An import is an intention; a call is the behaviour.
-    (codex, #1647)
+    (review, #1647)
     """
     out: set[str] = set()
     for n in ast.walk(tree):

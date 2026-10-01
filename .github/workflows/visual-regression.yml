@@ -31,7 +31,7 @@ jobs:
           # Status-checked, not `echo $(…)`: if cargo resolves but cannot run --
           # a rustup shim with no toolchain installed -- the substitution fails,
           # `echo` still returns 0, `set -e` sees nothing, and the step reports
-          # success with an empty version. (codex, #1659)
+          # success with an empty version. (review, #1659)
           cargo --version || {
             echo "::error::cargo is on PATH but does not run. A rustup shim without an installed toolchain does this: command -v cargo succeeds and every build fails." >&2
             exit 1

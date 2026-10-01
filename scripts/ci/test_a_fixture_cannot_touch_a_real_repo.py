@@ -123,7 +123,7 @@ expect("  but provides one on request",
 # The config surface is not the whole surface: git DISCOVERS a repository by
 # walking up from cwd, so a fixture run from inside a real checkout writes to
 # that checkout's .git/config no matter what the global config says. A lint reads
-# the call and approves it. (codex, #1647)
+# the call and approves it. (review, #1647)
 def local_config() -> str:
     """The repository's own config, read through git.
 

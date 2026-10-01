@@ -185,7 +185,7 @@ fn redact_region_invalid_page_errors() {
 
 #[test]
 fn decrypt_with_wrong_password_returns_decryption_failed() {
-    // Pin the Codex-resolved contract: decrypt() failures surface as
+    // Pin the review-resolved contract: decrypt() failures surface as
     // Error::DecryptionFailed, not a generic Error::InvalidPdf.
     let mut doc = enterprise_doc(SAMPLE);
     // Encrypt first so decrypt has something to operate on.

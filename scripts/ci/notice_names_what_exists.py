@@ -14,7 +14,7 @@ touches its subject is worse than none: it gets believed.
    repository says; two versions means one of them is untrue and nobody can see
    which.
 
-2. EVERY PATH IT NAMES EXISTS. A line about `.claude/skills/caveman` left behind
+2. EVERY PATH IT NAMES EXISTS. A line about `docs/retired-guide` left behind
    after that directory is gone -- or written before it arrives -- describes
    something the reader does not have. Same shape as a guard still watching a
    deleted file, or a ledger that never shrinks.

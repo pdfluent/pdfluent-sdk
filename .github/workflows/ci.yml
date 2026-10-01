@@ -194,7 +194,7 @@ jobs:
           # a rustup shim with no toolchain installed -- the substitution fails,
           # `echo` still returns 0, `set -e` sees nothing, and the step reports
           # success with an empty version. The one case this check exists for
-          # would pass it. (codex, #1659)
+          # would pass it. (review, #1659)
           cargo --version || {
             echo "::error::cargo is on PATH but does not run. A rustup shim without an installed toolchain does this: `command -v cargo` succeeds and every build fails." >&2
             exit 1
@@ -247,7 +247,7 @@ jobs:
           # three has moved -- the check would report moved=false and sleep
           # through exactly the change that breaks it. Manifests and the lock
           # file are here for the same reason: a version bump changes the
-          # writer. (codex, #1649)
+          # writer. (review, #1649)
           # `--quiet` and its exit code, NOT a pipe into grep. Under `pipefail`,
           # `git diff --name-only ... | grep -q .` fails the whole pipeline with
           # 141 as soon as grep stops reading and git takes SIGPIPE -- which is
@@ -255,7 +255,7 @@ jobs:
           # crates/lopdf/. The `else` branch then wrote moved=false and skipped
           # the fixture check precisely when the input it guards had changed
           # most. A detector whose failure mode is "too much evidence" is not a
-          # detector. (codex, #1649)
+          # detector. (review, #1649)
           #
           # `git diff --quiet` exits 0 for no change, 1 for a change and 2 on
           # error, so anything that is not a clean "nothing moved" runs the
@@ -765,7 +765,7 @@ jobs:
       # reads exactly like a guard that reads neither file.
       #
       # This file is t2's and is on loan for these two steps (#220); the loan and
-      # its expiry are written in .claude/territories.toml.
+      # its expiry are written in the territory map.
       - name: The order-form guard goes red where it must
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_the_order_form_agrees_with_the_licence.py
@@ -779,7 +779,7 @@ jobs:
       # comparing them. Test first, same reason as every pair on this list.
       #
       # These two steps are on the same loan of this file as the two above
-      # (#220); the loan and its expiry are written in .claude/territories.toml.
+      # (#220); the loan and its expiry are written in the territory map.
       - name: The one-offer guard goes red where it must
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_one_offer_in_every_document.py
@@ -1172,7 +1172,7 @@ jobs:
       # base ref the guard printed SKIPPED and exited 0 while a change to a
       # `niet_mergen` entry passed underneath it. It is fatal now, so this fetch
       # is what makes it able to answer rather than what hides it.
-      # (codex, #1639)
+      # (review, #1639)
       # actions/checkout is depth-1, and HEAD itself is in .git/shallow. A
       # TARGETED fetch of the base brings the object in and does not connect it
       # to HEAD's history, so `git merge-base HEAD origin/master` still fails --
@@ -1182,7 +1182,7 @@ jobs:
       # My first fix made that fatal instead of silent, which turned a guard
       # that always passed into one that always failed. Both are the same
       # defect: the check never ran. This is the half that makes it able to run.
-      # (codex, #1639)
+      # (review, #1639)
       - name: Give the fork guards a history to compare against
         if: ${{ !cancelled() }}
         env:

@@ -73,7 +73,7 @@ Exit codes:
     0  every number matches the floor for this platform
     1  a number moved, in either direction, a tool disagreed with itself, or
        mutool could not read a file it was handed -- an unreadable output is
-       a verdict about the output, not a missing tool (codex, #1617)
+       a verdict about the output, not a missing tool (review, #1617)
     2  the gate could not run at all (missing converter, missing veraPDF)
     3  did not judge, and says so: no floor for this platform, or no mutool
        installed, so retention was never measured
@@ -155,7 +155,7 @@ FLOORS: dict[str, dict[str, int]] = {
 #   3. add "linux" to BLOKKEERT
 #
 # Never the other way round: a floor invented on a different platform is worse
-# than none, because it looks measured. (codex, #1617)
+# than none, because it looks measured. (review, #1617)
 BLOKKEERT: frozenset[str] = frozenset({"darwin"})
 
 PROFILE = "2b"
@@ -237,7 +237,7 @@ class Onleesbaar(Exception):
     the converter just wrote means the file is not readable, and that is a
     finding about the file. The first version returned 3 for both, and the
     workflow reads 3 as "nothing to calibrate against" -- so an output mutool
-    choked on went green (codex, #1617)."""
+    choked on went green (review, #1617)."""
 
     def __init__(self, path: Path):
         super().__init__(str(path))
@@ -293,7 +293,7 @@ def behouden_deel(bron: bytes, uit: bytes) -> float:
     here is 100.8 to 103.3 per cent -- and inside that surplus an output can
     drop several per cent of the original characters, or replace them with the
     same number of unrelated ones, and still count as retained. The gate exists
-    to catch deletion, and a length was never going to see it. (codex, #1617)
+    to catch deletion, and a length was never going to see it. (review, #1617)
 
     Longest-common-subsequence-free and deliberately cheap: walk the source in
     order and count how much of it can be found, in order, in the output.
@@ -489,7 +489,7 @@ def main() -> int:
         # "every number matched", on a script whose own header says conformance
         # alone cannot detect content deletion. That is the cannot-run-reported-
         # as-a-pass fault this gate exists to remove, inside the gate.
-        # (codex, #1617)
+        # (review, #1617)
         print("SKIPPED (not a pass): mutool is not installed, so no text was read "
               "back and retention was not measured. Conformance alone cannot see "
               "deleted content, which is the whole reason this gate exists.",

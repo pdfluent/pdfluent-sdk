@@ -172,7 +172,7 @@ def main() -> int:
         "That script refuses while the mirror is ahead and keeps those commits under a "
         "tag\nbefore overwriting anything -- read docs/ci/mirror.md before reaching for "
         "--archive.\nIf the direction itself has changed, say so on #231 and change "
-        "CLAUDE.md with it.",
+        "the project's contributor instructions with it.",
         file=sys.stderr,
     )
     return 1

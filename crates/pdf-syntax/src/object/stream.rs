@@ -64,7 +64,7 @@ pub struct ImageDecodeParams {
     /// receives is `/DecodeParms`, which is `Dict::default()` when the stream
     /// has none -- and that carries a context with no limits at all. The CCITT
     /// decoder's own limit check was reading exactly that, so a stream without
-    /// `/DecodeParms` skipped it entirely. (Codex, #1609.)
+    /// `/DecodeParms` skipped it entirely. (review, #1609.)
     pub pixel_limit: Option<u32>,
 }
 
@@ -573,7 +573,7 @@ mod tests {
     /// dictionary. When a stream has none that is `Dict::default()`, whose
     /// context carries no limits -- so the check existed, its unit tests passed,
     /// and it was unreachable. `Stream::decoded_image` now puts the limit on
-    /// `ImageDecodeParams`, where every filter can see it. (Codex, #1609.)
+    /// `ImageDecodeParams`, where every filter can see it. (review, #1609.)
     ///
     /// `/DecodeParms` is present here on purpose. The absent case cannot
     /// discriminate: `/Columns` then defaults to 1728 and two bytes of data

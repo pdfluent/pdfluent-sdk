@@ -113,7 +113,7 @@ expect("  and the comment naming it is not mistaken for the call",
 # gate -- and `test_the_commit_msg_hook_is_wired.py`, the line that runs THIS
 # file, contains it. So deleting the guard's own invocation left the suite
 # green: the assertion that the skipped layer still had a home was satisfied by
-# the test asserting it. (codex, #1660)
+# the test asserting it. (review, #1660)
 aanroepen = gate_aanroepen("the_commit_msg_hook_is_wired.py")
 expect("the local gate still calls the guard itself", len(aanroepen) == 1,
        f"matched {len(aanroepen)} line(s): {aanroepen}")

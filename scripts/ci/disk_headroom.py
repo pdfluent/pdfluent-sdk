@@ -104,7 +104,7 @@ HOST_VOLUME_FSTYPES = ("9p", "drvfs", "virtiofs", "cifs")
 # storage box with no relation to the Windows disk holding the distro image, so
 # with /mnt/c unmounted the search below would have picked the storage box and
 # reported its free space as the vhdx's headroom -- a full C: passing the guard
-# on the strength of a remote share's spare room. (codex, #1616)
+# on the strength of a remote share's spare room. (review, #1616)
 #
 # It stays in HOST_VOLUME_FSTYPES because the check above it is a different
 # question: if the repository itself lives on the share, then the share really

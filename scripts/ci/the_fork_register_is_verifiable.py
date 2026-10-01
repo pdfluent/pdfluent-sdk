@@ -419,7 +419,7 @@ def refresh_for(clone: Path, commits: list[str], upstream_url: str) -> str | Non
         # Not swallowed. Ignoring it made version_at() treat a still-missing
         # commit as a bad register entry and return 1 -- so a network outage was
         # reported as bad fork data and sent the reader at the wrong problem.
-        # (Codex, #1609.)
+        # (review, #1609.)
         return f"could not refresh {clone.name}: {out.stderr.strip()[:200]}"
     return None
 

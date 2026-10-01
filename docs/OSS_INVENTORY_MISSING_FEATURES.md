@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-18 · **Question:** what can we use for OCR, HTML→PDF and XFA
 barcodes, given that PDFluent is proprietary and the architecture rule is *pure
-Rust, no C/C++ dependencies* (`CLAUDE.md`)?
+Rust, no C/C++ dependencies* (the project's contributor instructions)?
 
 Every licence below was read from crates.io metadata and the project's own
 repository, not from memory. Where a licence could not be established, that is

@@ -140,7 +140,7 @@ pub fn embed_font(
     // would be embedded under a key that promises glyf outlines, which viewers
     // cannot reliably load -- a document that opens and renders nothing, from a
     // call that returned Ok. CFF belongs in /FontFile3 with a matching subtype,
-    // which this path does not write. (Codex, #1614.)
+    // which this path does not write. (review, #1614.)
     if face.tables().cff.is_some() || face.tables().cff2.is_some() {
         return Err(EmbedFontError::CffOutlinesNotSupported);
     }
@@ -200,7 +200,7 @@ fn widths_for_winansi(face: &ttf_parser::Face<'_>, units_per_em: u16) -> Vec<i64
 /// 0x92)` looks up U+0092, a control character no font has a glyph for, so the
 /// width came out zero while the font does carry a right single quote at
 /// U+2019. Text using any of these sixteen was then laid out with the wrong
-/// spacing. (Codex, #1614.)
+/// spacing. (review, #1614.)
 ///
 /// The two `None`s are the two codes WinAnsiEncoding leaves undefined.
 fn winansi_to_char(code: u8) -> char {
@@ -333,7 +333,7 @@ fn register_on_every_page(
             // own reference limit fires first and get_object returns
             // ReferenceLimit, so the loop ends there. This bound covers the case
             // where a chain is long but under that limit, and costs a Vec of at
-            // most 32 ids. Raised by Codex on #1614; the hang it described is
+            // most 32 ids. Raised in review on #1614; the hang it described is
             // not reachable through this call today, and the guard is cheap
             // enough to keep for when the layer below changes.
             let mut seen = vec![fonts_id];
@@ -379,7 +379,7 @@ struct ResourcesHolder {
 /// ancestor that is destructive: `/Resources` inheritance picks the nearest
 /// dictionary rather than merging, so a new empty one hides every inherited
 /// font, XObject, colour space and graphics state, and content that used them
-/// stops rendering. (Codex, #1614.)
+/// stops rendering. (review, #1614.)
 fn resources_holder(doc: &Document, page_id: ObjectId) -> Result<ResourcesHolder, EmbedFontError> {
     let (own, inherited_ids) = doc
         .get_page_resources(page_id)
