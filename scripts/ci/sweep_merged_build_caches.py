@@ -63,7 +63,7 @@ def run(*args: str) -> tuple[bool, str]:
     The status is returned rather than folded into an empty string because this
     script decides whether to DELETE things. "git could not tell me" and "git
     told me nothing" have to reach the caller as different answers: read as the
-    same, an unreadable index makes a worktree look clean. (codex, #1634)
+    same, an unreadable index makes a worktree look clean. (review, #1634)
     """
     r = subprocess.run(["git", *args], capture_output=True, text=True,
                        env=clean_env())
@@ -76,7 +76,7 @@ def a_build_may_be_running() -> tuple[bool, str]:
     A failed `ps` used to read as "no build is running", which is the one answer
     that lets --sweep delete a target/ from under a live rustc -- the 25-08
     corruption. When the process table cannot be read the honest answer is that
-    we do not know, and not knowing must not authorise deletion. (codex, #1634)
+    we do not know, and not knowing must not authorise deletion. (review, #1634)
     """
     r = subprocess.run(["ps", "-Ao", "args="], capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
@@ -142,7 +142,7 @@ def main(argv: list[str]) -> int:
             ["git", "-C", str(wt), "merge-base", "--is-ancestor", head, args.base],
             capture_output=True, env=clean_env()).returncode == 0
         # An unreadable index is not a clean worktree. Folding the two together
-        # is how uncommitted work gets deleted. (codex, #1634)
+        # is how uncommitted work gets deleted. (review, #1634)
         ok_status, status = run("-C", str(wt), "status", "--porcelain")
         if not ok_status:
             kept.append((wt, "git status could not be read here")); continue
@@ -177,7 +177,7 @@ def main(argv: list[str]) -> int:
     # Only what actually went away is counted. ignore_errors=True used to
     # swallow permission failures, after which the script printed "removed" and
     # reported the whole pre-scan size as freed -- a number describing a
-    # deletion that had not happened. (codex, #1634)
+    # deletion that had not happened. (review, #1634)
     freed, failed = 0, []
     for size, target in freeable:
         try:

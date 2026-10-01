@@ -77,7 +77,7 @@ MIN_CRATES = 30
 # T1 daarom een feature-vlag wég in plaats van hem te verklaren. De bewaker had
 # gelijk en zijn enige uitweg zat achter andermans deur.
 #
-# Het TOML-bestand is in .claude/territories.toml uitgezonderd van t2, dus
+# Het TOML-bestand is in de territoriumkaart uitgezonderd van t2, dus
 # niemand claimt het en iedereen mag het bewerken.
 GAPS = REPO / "scripts" / "ci" / "feature_gaps.toml"
 
@@ -116,7 +116,7 @@ TOEGESTAAN = toegestaan()
 # test gates its whole file -- and the previous pattern required `#[`, so a
 # crate-level gate was invisible. Also matches a feature named anywhere inside
 # the cfg, so `cfg(all(test, feature = "x"))` counts; requiring `feature` to
-# come first missed every compound condition (Codex, #1583).
+# come first missed every compound condition (review, #1583).
 CFG_FEATURE = re.compile(r'#!?\[cfg\([^)]*?feature\s*=\s*"([^"]+)"')
 TEST_ATTRIBUUT = re.compile(r"#\[(?:[\w:]+::)?test\b")
 CFG_NOT_FEATURE = re.compile(r'#\[cfg\(\s*not\(\s*feature\s*=\s*"([^"]+)"')

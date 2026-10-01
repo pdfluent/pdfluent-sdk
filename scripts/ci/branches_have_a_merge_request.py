@@ -15,7 +15,7 @@ On 28-08-2026 that turned out to matter: `chore/test-reachability-gate` stood
 anywhere. Fifteen finished pieces of work, none of them on master, and nothing
 counting them (#272).
 
-The rule in CLAUDE.md is that a merge request is a question waiting for an
+The rule in the project's contributor instructions is that a merge request is a question waiting for an
 answer. A branch without one is not even a question.
 
 WHERE THE DESTINATION COMES FROM
@@ -25,7 +25,7 @@ Run from the pre-push hook, git hands this process one line per ref on stdin:
 honest answer to "is this branch on the remote, and under what name" -- a
 push with a renaming refspec never produces a `github/<branch>`, so asking
 for that ref answered "not yet" on every push, for ever, and the promise
-"the next push fails" was empty (codex, #1610). When the line is there it is
+"the next push fails" was empty (review, #1610). When the line is there it is
 used, for both the existence check and the name handed to `gh pr list`. When
 it is not -- run by hand, from a terminal -- the guard falls back to the
 tracking ref and says so, instead of promising what it cannot see.
@@ -99,7 +99,7 @@ def main() -> int:
         return 0
 
     # Not `tak.split("/")[-1]`: that reads `release/main` and `feature/master`
-    # as the default branch and skips a topic branch entirely. Codex, #1542.
+    # as the default branch and skips a topic branch entirely. review, #1542.
     if tak in ("master", "main"):
         print(f"[branch-mr] on {tak}; nothing to ask.")
         return 0
@@ -175,7 +175,7 @@ def main() -> int:
     # one -- the remote sha is all zeros for a branch the remote has never seen
     # -- because a tracking ref cannot answer it: a renaming refspec never
     # creates `github/<branch>`, and the first version of this guard asked for
-    # exactly that ref and so said "not yet" on every push. (codex, #1610)
+    # exactly that ref and so said "not yet" on every push. (review, #1610)
     if not op_de_remote and bron:
         print(f"[branch-mr] {tak} is {vooruit} ahead of {standaard} and "
               f"{bestemming} does not exist on the remote yet, so it cannot have a "

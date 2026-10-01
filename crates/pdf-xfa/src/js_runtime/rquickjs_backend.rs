@@ -1320,7 +1320,7 @@ impl QuickJsRuntime {
     /// the same body-size cap (`MAX_SCRIPT_BODY_BYTES`). Without the
     /// budget, an untrusted/malformed XFA template that contains
     /// `while (true) {}` inside `<variables>` could hang flatten before
-    /// any normal event script runs (Codex P1 review on PR #1499).
+    /// any normal event script runs (review P1 on PR #1499).
     /// Returns `Ok(true)` when the JS-side `setVariablesScript` bound the
     /// namespace, `Ok(false)` when it returned `false` (eval failure caught
     /// JS-side), or `Err` on a Rust-side skip (cap / REDOS / timeout / panic).

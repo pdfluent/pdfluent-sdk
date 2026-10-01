@@ -56,7 +56,7 @@ fresh_target() {
 }
 
 # `--sweep` refuses while any cargo-family process is alive anywhere on the host
-# (codex, #1621: the GitLab jobs pass CARGO_TARGET_DIR through the environment,
+# (review, #1621: the GitLab jobs pass CARGO_TARGET_DIR through the environment,
 # so a command-line scan misses them). The suite therefore has to say what `ps`
 # reports, or these cases pass or fail on whether this machine happens to be
 # building right now -- which is not a test of anything.
@@ -71,7 +71,7 @@ SWEEP_IDLE=(env "PATH=${IDLE}:${PATH}")
 # This case used to assert exit 0, which pinned the defect rather than the
 # behaviour: six workflows call this script and not shared_build_dir_is_there.sh,
 # so on the morning the mount vanished the step they all rely on reported a pass
-# and cargo walked into the broken path. (codex, #1616)
+# and cargo walked into the broken path. (review, #1616)
 case_
 out="$(CARGO_TARGET_DIR="${WORK}/never-existed" bash "${BENCH}/cargo_target_health.sh" 2>&1)"; rc=$?
 grep -q 'FATAL' <<<"${out}" || fail "a missing configured build directory is not announced: ${out}"
@@ -170,7 +170,7 @@ case_
 grep -q 'is clean' <<<"${out}" || fail "a clean directory was not reported clean: ${out}"
 
 # --- the default is report-only, because a snapshot cannot promise no build
-#     starts between the check and the delete (codex, #1621) ------------------
+#     starts between the check and the delete (review, #1621) ------------------
 t="$(fresh_target reportonly)"; : > "${t}/debug/live.part.bin"
 case_
 out="$(CARGO_TARGET_DIR="${t}" bash "${BENCH}/cargo_target_health.sh" 2>&1)"

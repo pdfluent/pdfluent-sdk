@@ -328,7 +328,7 @@ fn embed_font_rejects_data_that_is_not_a_font() {
     );
 }
 
-/// Codex #1269 P2 regression guard: `to_images` on a document with zero
+/// review #1269 P2 regression guard: `to_images` on a document with zero
 /// pages previously underflowed `with_capacity(to - from + 1)` and
 /// panicked. Since FASE B it returns an empty report cleanly.
 #[test]

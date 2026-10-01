@@ -22,7 +22,7 @@
 #
 # The `if:` below lives in this file, and `gh workflow run --ref <branch>` runs
 # THIS FILE FROM THAT BRANCH. A branch that deletes the guard is not stopped by
-# it. Codex made that point on #1538 and it is right: this is not a boundary
+# it. Review made that point on #1538 and it is right: this is not a boundary
 # against a hostile branch.
 #
 # What it does stop is the accident -- dispatching a feature branch out of habit

@@ -120,7 +120,7 @@ def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None,
     # nothing is True -- so those three shapes reported "every label is a hosted
     # image" and passed on the strength of having said nothing. Vacuous green,
     # the same shape as "empty is not a verdict" one function over. Which runner
-    # a job takes cannot be read off a field that is not there. (codex, #1649)
+    # a job takes cannot be read off a field that is not there. (review, #1649)
     echte = [l for l in labels if isinstance(l, str) and l.strip()]
     if not echte:
         return [f"{key} has no readable `runs-on` ({runs_on!r}). Which runner it "
@@ -156,7 +156,7 @@ def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None,
         # alone let an unfiltered `push` count as safe -- including down the
         # reusable-workflow path, where the inner job's canonical
         # `event_name == 'push'` expression was then approved. Same finding as
-        # the branch-filter one, reached through the other door. (codex, #1649)
+        # the branch-filter one, reached through the other door. (review, #1649)
         toegestaan = DESKTOP_TOEGESTAAN(triggers)
         if all(PER_GEBEURTENIS_VEILIG(k, events, toegestaan) for k in kandidaten):
             return []
@@ -225,7 +225,7 @@ def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None,
 
 def main() -> int:
     # GitHub reads .yaml as well. Globbing only .yml meant a workflow named
-    # unsafe.yaml escaped this guard completely. (codex, #1635)
+    # unsafe.yaml escaped this guard completely. (review, #1635)
     files = sorted(list(FLOW.glob("*.yml")) + list(FLOW.glob("*.yaml")))
     if len(files) < MINIMUM_WORKFLOWS:  # FLOOR
         print(f"[pr-runner] FATAL: {len(files)} workflow(s) found, floor is "
@@ -254,7 +254,7 @@ def main() -> int:
         #   on: [pull_request, push]    -> list
         #   on: {pull_request: {...}}   -> dict
         # Only the mapping was handled, so `on: [pull_request]` -- a perfectly
-        # ordinary spelling -- skipped the whole workflow. (codex, #1635)
+        # ordinary spelling -- skipped the whole workflow. (review, #1635)
         on = doc.get("on", doc.get(True))
         if isinstance(on, str):
             events = {on}
@@ -300,7 +300,7 @@ def main() -> int:
                             # reusable workflow runs under whatever triggered the
                             # job that calls it, and passing nothing here let
                             # _judge treat a pull_request_target caller as
-                            # eventless and approve it. (codex, #1649)
+                            # eventless and approve it. (review, #1649)
                             problems.extend(_judge(f"{called.name}:{iname}", ijob,
                                                    called.name, iname,
                                                    target_only=target_only,
@@ -390,7 +390,7 @@ def main() -> int:
         # The remediation used to print the INVERSE expression -- the very form
         # finding 3 is about. Guidance that tells you to write what the guard
         # rejects is worse than no guidance: it is a wrong answer with the
-        # authority of the tool. (codex, #1635)
+        # authority of the tool. (review, #1635)
         print("\n  Choose the runner per event, in the form both guards read:\n"
               "    runs-on: ${{ github.event_name == 'push'\n"
               "                 && fromJSON('[\"self-hosted\",\"xfa-fast\"]')\n"

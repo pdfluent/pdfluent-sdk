@@ -68,7 +68,7 @@ TIMEOUT_S = 30
 # Enforced WHILE running, not after. The first version compared the wall clock
 # with the budget once the pool had drained, so a run where every file hung
 # was detected 500 x 30 s / 4 workers = about an hour in -- long after the
-# point the budget was meant to stop it (codex, #1627). Now every task gets
+# point the budget was meant to stop it (review, #1627). Now every task gets
 # the run's deadline: one that has not started by then does not start, and one
 # still running is cut at the deadline instead of at its own 30 s.
 BUDGET_S = 900

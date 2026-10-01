@@ -2192,7 +2192,7 @@ mod tests {
     #[test]
     fn ocr_google_from_env_prefers_api_key() {
         let _env = env_lock().lock().expect("env lock");
-        let temp_path = std::env::temp_dir().join("codex-google-creds.json");
+        let temp_path = std::env::temp_dir().join("pdfluent-google-creds.json");
         let temp_path_string = temp_path.to_string_lossy().into_owned();
         std::fs::write(
             &temp_path,

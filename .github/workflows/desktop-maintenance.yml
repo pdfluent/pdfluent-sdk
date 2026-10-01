@@ -139,7 +139,7 @@ jobs:
           echo "## Every target/ on this filesystem, not only in this checkout"
           # Same rule for find: exit 1 means some path could not be read, which
           # is expected when walking / as the runner user; 2+ is a real error and
-          # must not be hidden behind `|| true`. (codex, #1662)
+          # must not be hidden behind `|| true`. (review, #1662)
           find / -xdev -type d -name target -prune > "$RUNNER_TEMP/targets.txt" 2>/dev/null && rc=0 || rc=$?
           [ "$rc" -le 1 ] || { echo "::error::find failed with $rc"; exit "$rc"; }
           [ "$rc" -eq 0 ] || echo "(find could not read every directory; partial)"

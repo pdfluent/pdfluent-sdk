@@ -20,7 +20,7 @@
 # or from the pre-push gate's report, plus `scripts/ci/mirror_has_not_drifted.py`
 # in the landing lane -- which turns a mirror nobody pushed into a red gate in
 # front of the next person landing, rather than into silence. The reason is in
-# docs/ci/mirror.md and the roles are in CLAUDE.md.
+# docs/ci/mirror.md and the roles are in the project's contributor instructions.
 #
 # WHAT IT REFUSES
 #

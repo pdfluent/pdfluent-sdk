@@ -763,7 +763,7 @@ mod tests {
 
     #[test]
     fn flatten_preserves_non_js_entries_on_targeted_widget_with_shared_indirect_aa() {
-        // Codex P2 regression-guard (PR #1373 follow-up): when /AA is an
+        // review P2 regression-guard (PR #1373 follow-up): when /AA is an
         // indirect dict shared between widgets and contains a mix of JS and
         // non-JS entries, flattening the targeted widget must:
         //   - drop the JS entry (/E) from that widget's effective /AA

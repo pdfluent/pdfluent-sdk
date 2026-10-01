@@ -77,7 +77,7 @@ def main() -> int:
             # `secrets` in an if: is the fatal one. Reading it from `env:` is
             # fine and is the fix, so only flag the bare context.
             # Both `secrets.NPM_TOKEN` and `secrets['NPM_TOKEN']` reach the
-            # same context, and GitHub refuses both. Codex made that point on
+            # same context, and GitHub refuses both. Review made that point on
             # #1544; the first version only saw the dotted form.
             if re.search(r"(?<![\w.])secrets\s*[.\[]", conditie):
                 treffers.append((pad.name, job, stap, " ".join(conditie.split())[:80]))

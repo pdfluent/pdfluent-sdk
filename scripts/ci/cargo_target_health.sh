@@ -38,7 +38,7 @@
 # machine to be idle, and "idle" cannot be established by looking once -- the
 # gap between the look and the delete spans the scheduling of the next workflow
 # step, and the GitHub and GitLab runners on this host share no lock. See the
-# comment above `_target_in_use`. (codex, #1621)
+# comment above `_target_in_use`. (review, #1621)
 #
 # ORDER MATTERS. Run `shared_build_dir_is_there.sh` before this, never after.
 # Every command below touches the filesystem, and on a device that has stopped
@@ -69,7 +69,7 @@ if [ "${seen}" -ne 0 ]; then
     # shared_build_dir_is_there.sh, though the note above says to run that
     # first. So on the morning the mount is gone, the step every one of them
     # relies on reported a pass and cargo walked into the broken path. That is
-    # #264 reported as green. (codex, #1616)
+    # #264 reported as green. (review, #1616)
     #
     # The split that keeps this honest: a directory somebody CONFIGURED and
     # which is not there is the failure. An unconfigured default that is not
@@ -93,7 +93,7 @@ fi
 # removed out from under a live build corrupts the directory this file exists to
 # protect" -- and then the two deletions above it did not apply it. A live
 # `.part.bin` removed before cargo renames it reproduces exactly the 25-08
-# failure this script repairs. (codex, #1616)
+# failure this script repairs. (review, #1616)
 #
 # The concurrency groups do not help: GitHub and GitLab jobs share this machine
 # and each other's target directory, and neither knows about the other's lock.
@@ -110,7 +110,7 @@ _target_in_use() {
     # the guard failed OPEN exactly when many rustc processes were running, i.e.
     # when a build was busiest and deleting under it was most damaging.
     # Reproduced with 5000 matching lines: 141 with `grep -q`, 0 with a count.
-    # (codex, #1621)
+    # (review, #1621)
     # The path alone is not enough: any shell whose command line mentions the
     # directory matches, including the one invoking this script. That is the
     # same self-match that made `pgrep -f "git push"` report other sessions'
@@ -127,7 +127,7 @@ _target_in_use() {
     # environment, so cargo's command line need not contain the path -- and in a
     # linker or build-script phase there may be no rustc process to find either.
     # A scan of command lines therefore misses exactly our own runners, which is
-    # the population this is meant to protect. (codex, #1621)
+    # the population this is meant to protect. (review, #1621)
     #
     # Reading other processes' environments is not portable and needs privileges
     # we should not want here, so `--sweep` takes the conservative branch
@@ -145,7 +145,7 @@ _target_in_use() {
 # job running on the shared machine) and not the rare one (a job starting during
 # the sweep). A real cross-CI lock is the fix if this ever bites; it has not
 # yet, and I would rather leave the limitation written down than implied.
-# Deleting is opt-in, and this is the second thing codex was right about on
+# Deleting is opt-in, and this is the second thing review was right about on
 # #1621: a snapshot cannot hold the no-live-deletion invariant. Two jobs can both
 # find the directory idle, and the window is not a few instructions -- it spans
 # the scheduling of the next workflow step. crash-guard.yml runs this guard at
@@ -189,7 +189,7 @@ if [ -d "${TARGET}/debug/incremental" ] || [ -d "${TARGET}/release/incremental" 
     if ! _bounded_probe "${DEADLINE}" rm -rf "${TARGET}/debug/incremental" "${TARGET}/release/incremental" >/dev/null 2>&1; then
         # 124 is the probe's timeout, anything else is a real rm failure. Either
         # way the debris is still there, and saying "removed" would send the next
-        # build into the files this step claims to have cleared. (codex, #1616)
+        # build into the files this step claims to have cleared. (review, #1616)
         echo "[cargo-target-health] FATAL: could not remove the incremental state." >&2
         echo "[cargo-target-health]   The subtree is unresponsive or not ours to delete;" >&2
         echo "[cargo-target-health]   the initial probe does not walk into it, so this is the" >&2
@@ -230,7 +230,7 @@ if [ -f "${TARGET}/.cargo-lock" ]; then
         # Counted, or a lock as the ONLY finding leaves `cleaned` at zero and the
         # summary below says the directory "is clean" -- a healthy verdict
         # contradicting the one thing the scan just found, in the mode that runs
-        # on every build. (codex, #1621)
+        # on every build. (review, #1621)
         echo "[cargo-target-health] .cargo-lock present — reported, not removed (run with --sweep when idle)"
         cleaned=$((cleaned + 1))
     elif ! pgrep -x cargo >/dev/null 2>&1; then

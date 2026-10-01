@@ -995,11 +995,11 @@ fn compress_flate(data: &[u8]) -> Vec<u8> {
 /// Cascade clone-on-write semantics:
 ///   * /Resources is resolved via the /Pages parent chain (PDF resource
 ///     inheritance) so pages that omit a direct /Resources entry still get
-///     their fonts processed (Codex P1 #1379 fix).
+///     their fonts processed (review P1 #1379 fix).
 ///   * Both the page-private /Resources dict AND its /Font sub-dict get
 ///     materialised as fresh objects before any mutation, so a redacted
 ///     page never rewrites a /Resources or /Font dict that other pages
-///     happen to share via indirect reference (Codex P1 #1379 fix).
+///     happen to share via indirect reference (review P1 #1379 fix).
 ///   * Each font dict that needs stubbing also gets cloned; the original
 ///     shared font object stays intact for non-redacted pages.
 ///
@@ -1014,7 +1014,7 @@ fn strip_tounicode_for_redacted_page(doc: &mut Document, page_id: ObjectId) -> R
     // the same Form referenced from nested Forms, a self-cycle, etc.)
     // it resolves to ONE shared, already-stubbed clone instead of
     // producing fresh unprocessed clones for the second-and-later
-    // aliases (Codex P1 ronde-6 follow-up #1379). Without the memo,
+    // aliases (review P1 ronde-6 follow-up #1379). Without the memo,
     // `visited.insert` correctly prevented infinite recursion but did
     // not prevent the second alias from getting an un-stubbed clone,
     // leaving extractable text reachable from the redacted page.
@@ -1053,7 +1053,7 @@ enum ContainerKind {
 ///     clone (which has already been stubbed by the first recursion).
 ///     Without this, a second alias would receive a fresh clone whose
 ///     /Resources/Font/* still pointed at the ORIGINAL /ToUnicode (no
-///     recursion = no stub) — Codex P1 ronde-6 follow-up #1379.
+///     recursion = no stub) — review P1 ronde-6 follow-up #1379.
 fn strip_tounicode_for_container(
     doc: &mut Document,
     container_id: ObjectId,
@@ -1111,7 +1111,7 @@ fn strip_tounicode_for_container(
             new_font.set("ToUnicode", Object::Reference(stub_id));
             let new_font_id = doc.add_object(Object::Dictionary(new_font));
             if let Ok(Object::Dictionary(font_dict)) = doc.get_object_mut(font_dict_id) {
-                // Raw byte key — see Codex P2 #1379 ronde-3 fix.
+                // Raw byte key — see review P2 #1379 ronde-3 fix.
                 font_dict.set(font_name_bytes.clone(), Object::Reference(new_font_id));
             }
             stripped += 1;
@@ -1122,7 +1122,7 @@ fn strip_tounicode_for_container(
     // memoised clone, redirect this container's private /XObject entry
     // there, and recurse into the clone the FIRST time we see its
     // original (subsequent aliases reuse the existing already-stubbed
-    // clone, fixing Codex P1 ronde-6 #1379).
+    // clone, fixing review P1 ronde-6 #1379).
     if let Some(xobject_dict_id) = private.xobject_dict_id {
         for entry in form_xobject_entries {
             let (cloned_form_id, recurse_into_new_clone) =
@@ -1179,7 +1179,7 @@ struct FontStripPlan {
     /// verbatim and only render lossy strings for diagnostics. Writing
     /// the rewritten /Font entry back under a UTF-8-lossy version of the
     /// key would silently bypass the redaction for any name that
-    /// contains non-UTF-8 bytes (Codex P2 #1379 fix).
+    /// contains non-UTF-8 bytes (review P2 #1379 fix).
     font_name_bytes: Vec<u8>,
     /// Owned clone of the original font dict (with the original /ToUnicode
     /// reference still in place); the apply phase rewrites /ToUnicode to
@@ -1346,7 +1346,7 @@ fn collect_strip_actions(
         // the raw bytes for the rewrite path so the entry we emit is keyed
         // under exactly the same bytes content streams reference. The
         // lossy String form is used ONLY for human-readable error messages
-        // (Codex P2 #1379 fix).
+        // (review P2 #1379 fix).
         let font_name_bytes: Vec<u8> = name_bytes.to_vec();
         let display_name = String::from_utf8_lossy(&font_name_bytes).into_owned();
 
@@ -1473,7 +1473,7 @@ fn set_container_resources(
 ///
 /// The XfaRedactionStub marker is treated as a fast-path *hint*, never
 /// authoritative: a crafted PDF can set the marker on an attacker-
-/// controlled /ToUnicode stream (Codex P1 #1379), which would let the
+/// controlled /ToUnicode stream (review P1 #1379), which would let the
 /// strip silently skip the font and leave the original mapping intact.
 ///
 /// The authoritative check is on the stream BODY: we parse the bytes
@@ -2081,7 +2081,7 @@ end
 
     #[test]
     fn tounicode_strip_resolves_resources_inherited_from_pages_parent() {
-        // Codex P1 #1379: when a page has no direct /Resources entry but
+        // review P1 #1379: when a page has no direct /Resources entry but
         // inherits one from its /Pages parent (a common PDF layout), the
         // strip flow must walk the parent chain to find the inherited
         // Resources and apply the stub. Without the walk, no fonts are
@@ -2163,7 +2163,7 @@ end
 
     #[test]
     fn tounicode_strip_does_not_mutate_shared_indirect_font_subdict() {
-        // Codex P1 #1379: when /Resources/Font is an indirect dict shared
+        // review P1 #1379: when /Resources/Font is an indirect dict shared
         // between two pages, redacting page 1 must NOT rewrite that
         // shared /Font sub-dict (which would silently downgrade page 2's
         // font to use the stubbed /ToUnicode). The strip must clone the
@@ -2284,7 +2284,7 @@ end
 
     #[test]
     fn tounicode_strip_rejects_crafted_marker_without_safe_stub_content() {
-        // Codex P1 #1379 regression-guard: an attacker can craft a PDF
+        // review P1 #1379 regression-guard: an attacker can craft a PDF
         // that sets /XfaRedactionStub true on an arbitrary /ToUnicode
         // stream whose content still maps codes to real characters.
         // If the redactor honored the marker alone, redaction would
@@ -2370,7 +2370,7 @@ end
 
     #[test]
     fn tounicode_strip_preserves_non_utf8_font_resource_key() {
-        // Codex P2 #1379 regression-guard: PDF resource names are byte
+        // review P2 #1379 regression-guard: PDF resource names are byte
         // identifiers and may contain bytes that are invalid UTF-8 (via
         // #xx escapes). If we round-trip the key through
         // String::from_utf8_lossy on the rewrite path, the U+FFFD
@@ -2497,7 +2497,7 @@ end
 
     #[test]
     fn tounicode_strip_rejects_crafted_usecmap_with_trivial_bfchar() {
-        // Codex P1 #1379 ronde-5 regression-guard: the previous round's
+        // review P1 #1379 ronde-5 regression-guard: the previous round's
         // marker-bypass fix validated stream content for "all bfchar
         // destinations are U+FFFD". An attacker can carry the marker,
         // include a single trivial `<00> <FFFD>` bfchar entry to satisfy
@@ -2601,7 +2601,7 @@ end
         );
     }
 
-    // ─── Form XObject font traversal (Codex P1 ronde-6 fix) ─────────────
+    // ─── Form XObject font traversal (review P1 ronde-6 fix) ─────────────
 
     /// Build a self-contained /ToUnicode stream + font dict pair and
     /// return their object ids. Helper for the Form XObject tests that
@@ -2694,7 +2694,7 @@ end
 
     #[test]
     fn tounicode_strip_traverses_form_xobject_fonts() {
-        // Codex P1 ronde-6 regression-guard: a redacted page that
+        // review P1 ronde-6 regression-guard: a redacted page that
         // references a Form XObject with its OWN /Resources/Font/F1 must
         // get the Form's /ToUnicode stubbed too. Without recursion, text
         // drawn via `Do <FormXObj>` would still decode through the
@@ -3181,7 +3181,7 @@ end
 
     #[test]
     fn tounicode_strip_coalesces_aliased_form_xobject_to_one_stubbed_clone() {
-        // Codex P1 ronde-6 follow-up #1379: when the SAME original Form
+        // review P1 ronde-6 follow-up #1379: when the SAME original Form
         // XObject is referenced by multiple /XObject names on a redacted
         // page (or transitively via cycles / nested aliases), the second
         // and later references must NOT receive a fresh un-stubbed

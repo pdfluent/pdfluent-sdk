@@ -250,7 +250,7 @@ def niet_gecontroleerd() -> int:
     to find, inside the guard. On a contributor's clone with no token it is a
     warning, because failing there helps nobody.
 
-    Same split T3 uses for the term list, from the same variable. (codex, #1610)
+    Same split T3 uses for the term list, from the same variable. (review, #1610)
     """
     if IN_CI:
         print("  In CI that is a failure, not a skip: a gate that could not read "
@@ -303,7 +303,7 @@ def main() -> int:
             # after 60 quiet days -- which it can do once this repository is
             # public. Treating every non-active state as "off on purpose" would
             # let a scheduled gate go dark and be approved for it. Only the
-            # deliberate switch is an excuse. (codex, #1610)
+            # deliberate switch is an excuse. (review, #1610)
             dood.append((pad.name, 0, dt.datetime.now(dt.timezone.utc)))
             print(f"[groen] {pad.name}: state is `{staat}`, which nobody chose. "
                   "Re-enable it or name it in BEKEND.", file=sys.stderr)
@@ -336,7 +336,7 @@ def main() -> int:
         # its previous version green -- which is the guard reporting the
         # opposite of the truth, not merely missing it. The date already comes
         # from the default branch, so the runs must too or the two halves are
-        # measuring different things. (codex, #1610)
+        # measuring different things. (review, #1610)
         #
         # Without `status=completed`, queued and in-progress runs count towards
         # GENOEG while contributing no successes. Three runs created in a burst

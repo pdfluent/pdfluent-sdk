@@ -99,7 +99,7 @@ There is no barcode encoder anywhere in the workspace.
 | path | owner | rule |
 |---|---|---|
 | `Documents/XFA` (main checkout) | **Kimi**, branch `pdfa/retention-round4` | never build or test here; a stray `maturin` run once rewrote his lockfile mid-session |
-| `Documents/XFA/.worktrees/master-r3` | this Claude session | all own work goes here |
+| `Documents/XFA/.worktrees/master-r3` | this session | all own work goes here |
 | other `.worktrees/*` | historical | dead ends on old branches |
 | `Documents/PDFluent/ROADMAP.md` | **shared with the SEO terminal** | edit surgically; never `cat >` |
 
