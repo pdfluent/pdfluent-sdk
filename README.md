@@ -104,6 +104,38 @@ and XMP metadata repair.
 
 **Signatures.** PAdES signing and verification.
 
+## Quality tiers
+
+Extraction runs in one of two tiers:
+
+- `fast` (default): the engine alone — pure Rust, no models, everywhere
+  including WASM.
+- `balanced` (preview): the layout model regions each page — headings,
+  lists, tables, page furniture — and the table-structure model
+  structures tables, all run locally through ONNX Runtime 1.23.2.
+  Needs the model files (`pdfluent models install layout tables`) and
+  does more work per page than `fast`. Native only, never WASM.
+  Balanced/tables: glibc Linux, macOS, Windows; not on musl Linux
+  (loading returns a typed ModelError).
+
+On the FinTabNet and PubTables-1M benchmarks, the balanced tier's
+table structure (TEDS) scores higher than Docling and pymupdf4llm
+(claim A35, claim A36, both measured 2026-10-08; see
+[benchmarks/BENCHMARK_CLAIMS.md](benchmarks/BENCHMARK_CLAIMS.md)).
+
+| Tier | Needs | Runs | Status |
+|---|---|---|---|
+| `fast` | Nothing | Everywhere, including WASM | Shipping |
+| `balanced` | The `ort-layout` build (`ort-tables` for table structure) plus installed models | Native only | Preview |
+
+```sh
+pdfluent models install layout tables   # explicit, once; SHA-256 verified, never automatic
+pdfluent models status
+```
+
+[Quality tiers](docs/STRUCTURED_EXTRACTION.md#quality-tiers) has the
+whole story: enabling, per-language options, errors and licences.
+
 ## Build and test
 
 Rust 1.94.0, pinned in [`rust-toolchain.toml`](rust-toolchain.toml) so `rustup`
