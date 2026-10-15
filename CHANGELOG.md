@@ -32,6 +32,114 @@ All notable changes to PDFluent are documented here.
   `scripts/ci/no_licence_key_in_a_binding.py` refuses a change that puts a key
   check back.
 
+## [1.1.0] — <RELEASE_DATE>
+
+### Breaking
+
+- **Public CLI exit codes are 0/1/2/3.** `pdfluent-cli` used to exit 2 on usage errors, 3 on missing files, 4 on malformed PDFs, 5 on policy opt-in, and 6/7/70 on stub, IO and unknown failures. Every failure now maps to 0 ok, 1 usage, 2 input error, 3 processing error. The error code inside the `--json` envelope names the exact failure. Scripts that matched the old numbers need updating.
+
+- **The `pdfluent` binary is the public CLI.** The internal XFA tooling that owned the name moved to `xfa-runner`. The public CLI keeps `pdfluent-cli` as a compatibility alias.
+
+- **`Block` is `#[non_exhaustive]`, and two fields were added to it before it was.** `pdf_engine::Block`, re-exported by the `pdfluent` facade, gained `confidence` (the learned model's probability for the block's kind, `None` where no model spoke) and `grid` (what the heuristic table builder had to go on, on every cell of a table). Both were added while the struct was still exhaustive, so any code that constructed a `Block` with a struct literal stopped compiling with a missing-field error. The struct is now `#[non_exhaustive]`, so we can add fields from here on without breaking a caller. You can no longer use a literal from outside the crate: use `Block::new(kind, page, bbox, text, index)` and set the rest on the value it returns.
+
+### Added
+
+- **Monospace reads as code in `extract_markdown`.** `extract_markdown` writes a run of spans the document set in a monospace face as inline code inside a paragraph or a list item, and writes a paragraph set wholly in one over two lines or more as a fenced block with its line breaks kept; indentation or a short opening line says code. Tables, headings and blocks that are mostly digits never are: tabular figures are often set in monospace in financial reports. `ExtractOptions.code` (Python `code=`, Node `code`, default `True`) switches it off; `False` restores the output from before code existed, byte for byte.
+
+- **A `progress` callback over extraction.** `ExtractOptions::progress` hears `(done, total)` once per page as the text pass finishes that page. In Python the callback runs live, with the GIL released during extraction. Node's sync `extractMarkdown` carries no progress parameter.
+
+- **Plain image extraction on the document API.** Available on `PdfDocument` in Rust, `Document` in Python, `PdfDocument` in Node, `PdfluentDocument` in Java, `PdfDocument` in .NET, and over the C ABI.
+
+- **Image options for extraction.** `ExtractOptions` gains `image_dpi`, `image_size_limit` and lossless WebP output. Default output is byte-identical. The engine rejects an `image_dpi` of `Some(0)` as `OptionsError::InvalidImageDpi` (it never reads it as 1), and validates `image_size_limit` as an `ImageSizeLimit` within 0..=1, so `ExtractOptions` keeps `Eq`. Both bindings surface them as validation errors.
+
+- **OCR on the markdown path, through the system Tesseract.** `ExtractOptions` gained `ocr` (`Never`/`Auto`/`Force`, default `Never`), `ocr_language` (default `"eng"`) and `ocr_dpi` (default 150), in Rust and in the Python and Node bindings. `Auto` recognizes the pages that need it and leaves the rest untouched. `Force` recognizes every page in the window, replacing a born-digital page's own text with the OCR layer rather than doubling it. Recognition runs through a `tesseract` binary the engine finds on `PATH` or at `PDFLUENT_TESSERACT`, and adds no dependency. The recognized words land on an in-memory copy as an invisible text layer, and failures come back as `OcrError`. The Python binding also takes `ocr_function`, a callable `fn(png_bytes, dpi, language)`, in place of Tesseract. Default output is byte-identical, since the engine default stays `Never`.
+
+- **`iterChunks` for Node, and per-page `toc_items` and `tables` in both bindings.** `pdfluent.chunks.iter_chunks` had no Node counterpart. `@pdfluent/node` now exports `iterChunks(document | path | Buffer, options?)`, with the same semantics and camelCase names (`mode`, `includeFurniture`, `firstPage`, `pageCount`, `hierarchical`, `maxChars`). Markdown-mode chunks in both bindings now carry per-page `toc_items`, the outline entries pointing at the page as `[level, title, page]` triples. They also carry `tables`, one `{"bbox", "rows", "columns"}` per table on the page, grouped from the blocks. `images` and `words` are deliberately absent. Outline destinations now resolve to their page.
+
+- **Full `pdfluent` command-line interface.** `extract`, `merge`, `split`, `pages`, `compress`, `protect`/`unprotect`, `watermark`, `convert`, `redact`, `sign`, and `validate --pdfa`, thin over the `pdfluent` facade, with global `--json`, `-q`/`-v`, and `-` for stdin/stdout. Capabilities the facade does not expose (user-password removal, `--tsa` timestamping, `--pdfua`, non-PDF extraction, unshipped extraction qualities) fail with a named facade gap instead of a guess.
+
+- **CLI: `--raster quality|speed`, `--words` and `--format words`; `--jobs 1` no longer starts an idle thread pool.**
+
+- **`PdfDocument::extract_words(&opts)`.** Every word of the document with the box it was drawn in, in Rust, Python (`Document.extract_words`) and Node (`extractWords`). Each `Word` carries the page, the text, the box in PDF user space, the position of its block in the `extract_blocks` answer under the same window, the line within that block, and the span's bold, italic and font size. Words come in reading order, block by block and line by line. Each box is the union of the word's glyph boxes, or the span box split proportionally where a span carries none.
+
+- **Four browser tools in `@pdfluent/sdk-wasm`.**
+  - `encryptPdf(bytes, userPassword, ownerPassword, permissions?)` (AES-256) and `decryptPdf(bytes, password)`. Both work on bytes, because `PdfDoc.open` cannot open a file with a user password. Decrypt first, then open. Removing a password needs that password: the owner password always, the user password only when the file carries no permission restrictions. `encryptPdf` does not encrypt an already encrypted file again over its owner's restrictions.
+  - `PdfDoc.addWatermark(options)`: text or a preset stamp, size, rotation, opacity, `#rrggbb` colour, position, layer, tiling and page selection. Text only; there is no image watermark in any binding. `addTextWatermark(text, opacity)` stays as the short form.
+  - `extractImages(bytes)` returns `{ images, skipped }`: each image once, as PNG or JPEG. It lists what it cannot reproduce exactly as it looks in `skipped`, with the reason, instead of handing it out wrong: JPEG 2000, JBIG2 and fax compression, transparency masks, Decode arrays, CMYK JPEGs (browsers show them inverted), CMYK and non-sRGB ICC images, exotic colour spaces. It also finds images inside Form XObjects and in inherited resources. It expands palette (Indexed) images, which the office-export path wrote as grey.
+  - `signPdf(bytes, p12, password, options?)`: a PAdES signature with the user's own .p12/.pfx, whose private key never leaves the page. The signature is incremental and optionally visible. No timestamp authority in the browser.
+
+- **`PdfDocument::extract_markdown(&opts)` and `extract_blocks(&opts)`, in Rust and in all five bindings.** A document's structure rather than its characters: paragraphs, headings and their level, list items and their number, table cells and their place in the grid, and the running heads the document repeats, in reading order and each with the page and the box it was drawn in. `extract_markdown` writes that out for a reader or a RAG pipeline: `#` to `###`, `-` and `1.`, pipe tables, an HTML table where markdown cannot hold the shape, and an HTML comment where the page changes. `ExtractOptions` chooses the pages with `first_page` and `page_count`, defaulting to the whole document. `docs/STRUCTURED_EXTRACTION.md` is the reader's account of both forms and of every binding's spelling. The engine reads the document whole whatever the window is, because it decides what a block is against the rest of the document. A window past the last page is empty rather than an error.
+
+- **.NET `PdfDocument` gains AcroForm read/write, annotations, images, merge and PDF/A validation.**
+
+- **C ABI: form field write and read-back, document serialisation.**
+
+- **`PdfDocument::extract_text_pages()`.** The text of every page separately, in page order, one entry per page including the empty ones. `extract_text()` joins the same pages with a blank line, and `text()` with a form feed. Both hand back one string. This one hands back the pages.
+
+- **`PdfDocument::keep_ligatures(bool)`.** Hand back the ligature code points a font declared rather than the letters they stand for. Off by default; see the entry under Changed. Structured output (`text_with_layout()` and the spans under it) carries the glyphs' characters whatever this is set to.
+
+- **Markdown switches for running heads and page separators.** `extract_markdown` always dropped the running heads and always wrote a page marker, so callers who needed page numbers or running titles in the text could not get them. `ExtractOptions::include_headers` writes header blocks and `ExtractOptions::include_footers` footer blocks as plain paragraphs at their reading-order position, never as headings. `ExtractOptions::page_separators` set to `PageSeparators::None` writes no page marker at all, leaving the paragraphs separated by a blank line. In Python `extract_markdown(..., include_headers=False, include_footers=False, page_separators="comment"|"none")`, in Node `ExtractOpts.includeHeaders`, `includeFooters` and `pageSeparators`. All default to today's output, byte for byte.
+
+- **A `balanced` extraction quality, and model-based table structure (Preview).** `balanced` is the layout model regioning each page (headings, lists, tables, page furniture), with the engine's own text filling the regions. The table-structure model then structures the balanced tier's kept table regions. Both are opt-in cargo features, `ort-layout` and `ort-tables`: the release CLI, the Python wheels and the `@pdfluent/node` addon build with them, while the default Rust crate and the WASM build stay pure Rust. The engine loads ONNX Runtime 1.23.2 [B49, 2026-10-10] at run time and never links it. The tier reads only `extract_markdown` (`extract_blocks` refuses it) and runs on glibc Linux, macOS and Windows, not on musl Linux, where loading returns a typed `ModelError`. Preview: output quality is still improving and the API may change in a minor release. Table-structure results for the `balanced` tier are in the release notes [A38, A39, A40].
+
+- **`pdfluent models install layout|tables` and `pdfluent models status`.** The command is part of the `pdfluent` CLI, which ships as archives on the GitHub release page. `install` is the only command that downloads anything: it fetches the files from the `models-v1` release and verifies every file's size and SHA-256 against compiled-in pins before placing it. Nothing downloads automatically at run time, and it leaves files already in place and verifying alone. `PDFLUENT_MODELS_BASE` points the installer at a mirror or a local directory, and the installer enforces the pins the same way whatever the source. `status` reports what is installed and whether the pins verify. Licences are listed in `MODELS-NOTICE.txt`: the layout model under the SDK licence terms, the table model and ONNX Runtime under MIT.
+
+- **`quality`, `model_dir` and `table_model_dir` in the Python and Node bindings.** Python spells them `quality=` (`"fast"` by default, `"balanced"` for the layout-model tier), `model_dir=` and `table_model_dir=`. Node carries `quality`, `modelDir` and `tableModelDir` on the extract options. The two directories point the tier at model files outside the default per-user directory. Without them the tier reads `PDFLUENT_MODEL_DIR`, else that directory. Without the `ort-layout`/`ort-tables` builds the tier refuses with `MODEL_NOT_AVAILABLE`, naming the install command and the path looked at.
+
+- **`vector_figures`: vector-drawn regions as figures.** `ExtractOptions::vector_figures` (Python `vector_figures=`, default `False`) reads vector-drawn regions, such as a bar chart or a line drawing, as figures beside placed images.
+
+- **The compat API, and one shared `PdfluentError` in Node.** Python ships a compat layer that follows part of the PyMuPDF API. Coverage is partial and behaviour can differ in places. It is an independent implementation, not PyMuPDF. Node's CJS, ESM and compat exports share one `PdfluentError`, and the published typings no longer use a reserved word as a parameter name.
+
+- **New public items in `pdf-interpret`.** `font::GlyphPlace`, `OutlineGlyph::place` and `OutlineGlyph::reread_previous` are additive.
+
+### Changed
+
+- **`pdf-syntax` and `pdf-interpret` move to 0.6.0.** `pdf-syntax` 0.5.7 → 0.6.0 and `pdf-interpret` 0.5.9 → 0.6.0. Minor rather than patch, because both drifted across a breaking API change. `Resources::from_parent`/`Resources::parent` are gone (the nearest `/Resources` now wins instead of merging up the chain), and `InterpreterWarning` gained `UnresolvedAnnotationAppearance` on an exhaustive enum. Crates pinned to 0.5.x must move.
+
+- **Structured extraction ships as Preview in 1.1.0.** `extract_blocks` and `extract_markdown` with their per-binding spellings, `extract_docling`, the block serializers (`to_json`, `to_markdown`, `render_markdown`) and the chunkers built on them (`iter_chunks`, `iterChunks`, `to_markdown`/`to_json`) carry the label on every surface. Preview: output quality is still improving and the API may change in a minor release. Plain-text extraction is not Preview.
+
+- **The engine joins words by default.** Letter-spaced runs read as words (`Safety rules`, not `S a f e t y`), decimals read joined (`18.90`), and spans merge to one per word or run. Block and span counts in JSON output drop accordingly.
+
+- **A textless scan without OCR returns one figure marker instead of empty output.**
+
+- **`/ActualText` replacement is opt-in (`actual_text`), default off.**
+
+- **Markdown now marks every figure where it stands.** `extract_markdown` writes each drawn image as its own paragraph holding a figure marker, at its reading-order position: before the first body block on its page whose top edge is below the figure's middle, or after the page's last body block. A page that holds nothing but a figure no longer comes out empty. Where the tagged structure tree gives the figure an `/Alt` (only with `use_tags`), the marker carries it. This changes the bytes of an existing output. `MarkdownImages::None` restores the output from before figures existed, and the plain-text, JSON and Docling forms are unchanged. The Python and Node bindings follow the same default: their `images` option is now `"placeholder"` unless asked otherwise, and `"none"` restores the old output.
+
+- **A typographic ligature comes out as the letters it stands for.** `office` set in a serif face is drawn with one `ﬃ` glyph, and a font that carries a `ToUnicode` map for it usually names U+FB03 rather than the three letters. Extracted text now folds the ligatures of the Alphabetic Presentation Forms block, U+FB00–FB06 and U+FB13–FB17, in page text and in AcroForm field values alike. A search, an index or a `grep` for the word a person types now matches it. `search_text` folds its query the same way, so a word pasted out of the structured output still finds the page it came from. This changes the bytes of an existing output. `PdfDocument::keep_ligatures(true)` restores the code points and survives the operations that re-parse the document. No other compatibility folding is applied: superscripts, fractions and full-width forms are left as the document set them.
+
+- **`pdfluent-cli extract-text` ends every page with a form feed (U+000C).** The output previously joined pages with a blank line and carried no page boundary of any kind. Page is the unit a retrieval pipeline chunks on and a citation points at. This changes the bytes of an existing output. `--no-page-breaks` restores the blank-line join for pipelines written against the earlier output.
+
+- **`extract-text --json` carries `pages`.** One entry per page with its number and character count, and its text when the document is under the inline cap. The envelope keeps `page_count`, `char_count` and `text`.
+
+- **`PdfDocument::text()` terminates every page rather than separating them.** It now emits a form feed after every page, including the last. AcroForm field values still land at the end of the last page's text rather than behind its form feed, so a consumer counting pages does not see one too many.
+
+- **The final-table judge ships on.** The is-table v2 model reads every table the learned pass would emit once more, and a table it refuses goes back to prose whole. This changes the bytes of an existing output: prose the pass used to emit as tables now comes out as paragraphs. The judge can now read tables that pair a short key with a long description as prose. This is a known loss we plan to recover. `TableSignal.p_is_table` carries the deciding model's probability.
+
+- **Table defaults.** A detected table now takes in the label-only lines below its rows and the header rows above its first figure row, and the extractor drops a column with no text in any row from the emitted grid. Cell text reads line by line, top line first and left to right within a line, rather than in the decoder's stored order. A table the final-table judge refuses goes back to prose as paragraphs, and the stacked-table split runs after that judge, so a refused table never splits. A row that fused two text lines comes apart where a complete figure stands over another, unless every lower-line figure reads parenthesised. A fused row whose first column holds two stacked labels splits regardless. All of these are on by default.
+
+- **LICENSE-COMMERCIAL §3 now covers the optional model files.** It covers model files and runtime libraries that you download on explicit request (for example with `pdfluent models install` from the CLI archives on the GitHub release page), under the terms stated there. [B48]
+
+- **`PdfDocument::outlines()` returns `None` for an entry with no destination.** 1.0.0 returned `Some(0)` through a page-1 fallback. The signature is unchanged; the new value is the truthful one. Code that treated `Some(0)` as "first page" for such entries needs to handle `None`.
+
+- **Plain-text extraction can be slightly slower on some documents.** The engine now places combining marks (for example `c⃝` and `≠`) after the glyph they mark, which adds a small per-glyph cost. Follow-up work on this is planned after 1.1.0.
+
+- **`@pdfluent/node` on Linux needs glibc 2.17 or newer [B50-PENDING].**
+
+### Fixed
+
+- **`pdf-engine`: a conflicting page selection arrives as `EngineError::Io`, not as its own variant.** Combining `pages` with the `first_page`/`page_count` window returned `EngineError::ConflictingPageSelection`, a variant added after 1.0.0 to an exhaustive enum. The case now travels as `EngineError::Io` with kind `InvalidInput`, carrying the new `#[non_exhaustive] OptionsError::ConflictingPageSelection`, readable through `EngineError::options()`. The message is unchanged, the Python binding still raises `PdfluentValidationError`, and Node still reports `E-UNSUPPORTED`. New 1.x error cases arrive as `OptionsError` variants from here on, never as `EngineError` variants.
+
+- **Signing no longer traps in the browser.** The CMS builder read the clock with `SystemTime::now()`, which compiles for wasm32 and panics when reached, so every signature the WASM build made died as `RuntimeError: unreachable`.
+
+- **Our signatures carry `/M`.** The signature dictionary had no signing time, so `verifySignatures()` reported `signing_time: null` on every signature PDFluent made.
+
+- **The reader now reads a document whose `%%EOF` sits behind trailing bytes rather than refusing it.** The reader looked for the cross-reference start only near the end of the file, so it refused a document whose cross-reference table was intact and correctly pointed at. It now reads such a document.
+
+- **"This document requires a password" instead of "wrong password".** When a document is encrypted and no password was supplied, the engine reports one condition for both. `DecryptionFailureReason::PasswordRequired` is the new reason. The error code `E-SECURITY-DECRYPTION-FAILED` is unchanged.
+
+- **The C ABI's `pdf_version()` reports the crate version.** It returned a hard-coded `"0.1.0"`. It now reads the `pdf-capi` package version at compile time.
+
 ## [1.0.0] — 2026-09-16
 
 General availability. Every binding channel moves to `1.0.0`; the crates.io
