@@ -43,6 +43,20 @@ dotnet add package PDFluent         # .NET
 C and C++ link against `pdf-capi`; [SETUP.md](SETUP.md) has the header and the
 build flags.
 
+### Command-line tool
+
+The `pdfluent` CLI ships as archives on the [v1.1.0 release
+page](https://github.com/pdfluent/pdfluent-sdk/releases/tag/v1.1.0), built with
+the model features. The `pdfluent` command comes from those archives. `pip
+install pdfluent` and `npm install @pdfluent/node` do not install it, and no
+Python or Node function installs models. Install the models once:
+
+```sh
+pdfluent models install layout tables
+```
+
+`pdfluent-cli` is an alias for the same binary.
+
 ## In thirty seconds
 
 ```rust
@@ -72,16 +86,22 @@ a reader's first attempt.
 
 ## How it compares
 
-The axes, the readers and their versions, the machine class, and what counts as
-a failure are written up at
-<https://pdfluent.com/benchmarks/how-we-measure>. Every figure PDFluent
-publishes carries a claim ID and points back to that method. That page
-deliberately carries no figure of its own, and neither does this README.
+Every figure in this README carries a claim ID. The figures, their method and
+their limits are in the [1.1.0 release
+notes](https://github.com/pdfluent/pdfluent-sdk/releases/tag/v1.1.0) and the
+evidence bundle (<EVIDENCE_BUNDLE_URL>).
 
 ## What is in here
 
 The engine, the language bindings and the guards that gate them are in this one
 repository.
+
+**Structured extraction (Preview).** Every binding returns Markdown, blocks,
+words with boxes, and chunks for retrieval pipelines. Blocks are paragraphs,
+headings with level, list items, table cells with grid position, and running
+heads, each with page and box. Output quality is still improving and the API
+may change in a minor release. The `fast` tier runs everywhere. The optional
+`balanced` tier runs the layout and table-structure models locally.
 
 **Rendering.** A pure-Rust rasterizer (vello_cpu) to PNG, JPEG or a rasterized
 PDF, with SSIM comparison against a reference renderer.
@@ -118,10 +138,25 @@ Extraction runs in one of two tiers:
   Balanced/tables: glibc Linux, macOS, Windows; not on musl Linux
   (loading returns a typed ModelError).
 
-On the FinTabNet and PubTables-1M benchmarks, the balanced tier's
-table structure (TEDS) scores higher than Docling and pymupdf4llm
-(claim A35, claim A36, both measured 2026-10-08; see
-[benchmarks/BENCHMARK_CLAIMS.md](benchmarks/BENCHMARK_CLAIMS.md)).
+`balanced` scored higher than Docling on FinTabNet and PubTables-1M, level with
+it on ParseBench, and ahead of pymupdf4llm on FinTabNet and ParseBench
+[A38, A39, A40, 2026-10-14]. On PubTables-1M against pymupdf4llm our score is
+higher, but not above our pre-set threshold of 0.05. The margin is +0.081
+[+0.046; +0.127] on 120 pages from 55 documents, from the development (tuning)
+split [A39, 2026-10-14]. Docling had more fully perfect ParseBench tables in an
+earlier round [A37, 2026-10-08]. All three come from the development (tuning)
+split, which we used while building the table work. Our side is an upper bound,
+not a held-out result. The table-structure model we ship is Microsoft's Table
+Transformer v1.1-all, trained on PubTables-1M and FinTabNet.c. We have not
+checked whether our sample pages fall inside that training data, so the
+FinTabNet and PubTables-1M results may favour us for that reason too. Table
+structure only. Numbers, sample sizes and intervals: [1.1.0 release
+notes](https://github.com/pdfluent/pdfluent-sdk/releases/tag/v1.1.0),
+<EVIDENCE_BUNDLE_URL>.
+
+The Python wheel, the Node addon and the CLI archives ship with the model
+features (`ort-layout`, `ort-tables`) already built in. The `pdfluent` command
+comes from the CLI archives on the release page, not from pip or npm.
 
 | Tier | Needs | Runs | Status |
 |---|---|---|---|
