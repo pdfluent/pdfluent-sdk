@@ -36,7 +36,7 @@ XFA-Native-Rust is a **100% pure Rust** PDF SDK delivering full Adobe Reader par
 
 **Core principles:**
 - **Memory safety** — no `unsafe` in application code; all parsing is bounds-checked
-- **No C dependencies** — WASM-compilable, no FFI overhead, no segfaults
+- **No C dependencies** — WASM-compilable, no FFI overhead
 - **Layered architecture** — each crate has a single responsibility with clear interfaces
 - **Standards-first** — ISO 32000-2 (PDF 2.0), XFA 3.3, PDF/A (ISO 19005), PDF/UA (ISO 14289), PDF/X (ISO 15930)
 
