@@ -124,7 +124,7 @@ All notable changes to PDFluent are documented here.
 
 - **Plain-text extraction can be slightly slower on some documents.** The engine now places combining marks (for example `c⃝` and `≠`) after the glyph they mark, which adds a small per-glyph cost. Follow-up work on this is planned after 1.1.0.
 
-- **`@pdfluent/node` on Linux needs glibc 2.17 or newer [B50-PENDING].**
+- **`@pdfluent/node` on Linux needs glibc 2.17 or newer [B50].**
 
 ### Fixed
 
