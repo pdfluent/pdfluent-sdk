@@ -257,7 +257,7 @@ All fallible WASM methods throw an `XfaWasmError` — a standard `Error` (name:
 | `message` | `string` | Human-readable description (inherited from `Error`) |
 | `code` | `string` | Stable `SCREAMING_SNAKE_CASE` identifier — use for programmatic dispatch |
 | `help` | `string` | Actionable hint for the developer (may be empty) |
-| `docsUrl` | `string` | Deep-link to `https://docs.pdfluent.dev/errors/<slug>` |
+| `docsUrl` | `string` | Link into the error reference, `https://pdfluent.com/errors/<CODE>` |
 
 ### 9.1 Catching errors
 
@@ -302,7 +302,7 @@ try {
 | `XMP_REPAIR_FAILED` | `convertToPdfa` — XMP metadata repair |
 
 Engine-level errors (from `pdf-engine`) carry their `PdfError::code()` directly —
-consult `https://docs.pdfluent.dev/errors/<code-in-kebab-case>` for full descriptions.
+consult `https://pdfluent.com/errors/#<code-in-kebab-case>` for full descriptions.
 
 ### 9.3 TypeScript declarations
 

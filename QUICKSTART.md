@@ -308,6 +308,6 @@ automatic cleanup.
 
 - **Docs:** <https://pdfluent.com/docs>
 - **Licensing:** [docs/licensing.md](docs/licensing.md)
-- **Pricing:** <https://pdfluent.com/pricing>
-- **Issues:** <https://github.com/pdfluent/pdfluent-sdk/-/issues>
+- **Pricing:** <https://pdfluent.com/sdk/pricing/>
+- **Issues:** <https://github.com/pdfluent/pdfluent-sdk/issues>
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md)

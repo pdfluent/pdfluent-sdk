@@ -123,9 +123,11 @@ plus one for the runtime:
 installed heron_ep03.onnx (layout) — PDFluent SDK licence (AGPL-3.0 or commercial) — see MODELS-NOTICE.txt
 ```
 
-The source override is `PDFLUENT_MODELS_BASE`, an `https://` or
-`file:///dir/` URL for mirrors and offline installs; the pins are
-enforced identically whatever the source. Point the tier at a directory
+The source override is `PDFLUENT_MODELS_BASE`, an `https://` URL or a
+standard file URL for mirrors and offline installs: `file:///dir/`, on
+Windows `file:///C:/dir/`, also `file://localhost/dir/`, percent-escapes
+such as `%20`, and on Windows a UNC share as `file://server/share/dir/`.
+The pins are enforced identically whatever the source. Point the tier at a directory
 outside the default with `--model-dir` / `--table-model-dir` (CLI),
 `model_dir=` / `table_model_dir=` (Python), `modelDir` /
 `tableModelDir` (Node), or `ExtractOptions::model_dir` / `with_tatr`

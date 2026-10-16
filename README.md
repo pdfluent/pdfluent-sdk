@@ -96,8 +96,10 @@ evidence bundle (<EVIDENCE_BUNDLE_URL>).
 The engine, the language bindings and the guards that gate them are in this one
 repository.
 
-**Structured extraction (Preview).** Every binding returns Markdown, blocks,
-words with boxes, and chunks for retrieval pipelines. Blocks are paragraphs,
+**Structured extraction (Preview).** Every binding returns Markdown, blocks
+and Docling JSON. Rust, Python, Node and the CLI also return words with boxes,
+and Python, Node and the CLI return chunks for retrieval pipelines [B51].
+Blocks are paragraphs,
 headings with level, list items, table cells with grid position, and running
 heads, each with page and box. Output quality is still improving and the API
 may change in a minor release. The `fast` tier runs everywhere. The optional
