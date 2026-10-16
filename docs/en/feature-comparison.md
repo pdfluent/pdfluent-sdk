@@ -43,10 +43,10 @@ PDFluent vs. the most widely used PDF libraries.
 
 ## Unique selling points
 
-### Pure Rust — memory safe by construction
+### Written in Rust
 
-PDFluent has no C/C++ dependencies in the hot path. There are no buffer overflows,
-use-after-free, or data races — the Rust type system rules them out at compile time.
+PDFluent has no C/C++ dependencies in the hot path. In safe Rust the ownership model rules out buffer overflows
+and use-after-free.
 This matters for server-side PDF processing where malformed inputs are a real attack
 surface.
 
