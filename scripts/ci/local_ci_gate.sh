@@ -210,7 +210,7 @@ fi
 # that check exits the script outright. A branch far enough ahead without a pull
 # request therefore hid every one of these -- and that is exactly the branch
 # most likely to have broken something. The large unreviewed change and the
-# checks that would have judged it were disqualifying each other. (codex, #1610)
+# checks that would have judged it were disqualifying each other. (review, #1610)
 run startbaar python3 scripts/ci/every_workflow_can_start.py
 run startbaartest python3 scripts/ci/test_every_workflow_can_start.py
 # ADVISORY IN BOTH LOCAL LANES, refusing only in ci.yml on master. It reads run
@@ -247,7 +247,7 @@ if [ -n "$(git status --porcelain | grep -vE 'gen/schemas|\.e1_gaps')" ]; then
 fi
 # `run` swallows output on success, and this one says things worth reading when
 # it passes: a WARNING at 50-149 commits ahead, and every announced SKIPPED.
-# Run it once and show what it said either way. (Codex, #1542)
+# Run it once and show what it said either way. (review, #1542)
 _bm_uit="$(python3 scripts/ci/branches_have_a_merge_request.py 2>&1)"; _bm=$?
 printf '%s\n' "$_bm_uit" | sed 's/^/  /'
 # Counted, not fatal. This used to `exit 1` here, which aborted the run before
@@ -256,7 +256,7 @@ printf '%s\n' "$_bm_uit" | sed 's/^/  /'
 # unmerged branch also guaranteed nothing else was looked at. That is the state
 # in which the other guards matter most.
 #
-# Codex found it through the four fork guards this branch adds (#1639), but they
+# Review found it through the four fork guards this branch adds (#1639), but they
 # were only the newest things standing behind the exit; moving those four in
 # front of it would have made them arbitrarily special and left the other
 # forty-nine where they were.

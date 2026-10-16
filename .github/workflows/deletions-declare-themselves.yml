@@ -4,7 +4,7 @@
 # `paths-ignore: '**.md'`, so a pull request that ONLY removes Markdown never
 # starts it -- and a Markdown removal is exactly what this guard exists to
 # notice. The guard lived in ci.yml's commit-identity-guard job and could not run
-# for the case its own tests cover. (codex, #1635)
+# for the case its own tests cover. (review, #1635)
 #
 # Nothing is filtered here. It is two Python scripts and a checkout; running it
 # on every event costs less than the class of change it would otherwise miss.
@@ -40,7 +40,7 @@ concurrency:
   # quick succession used to share one: A carries an undeclared deletion, B is
   # innocent, A's run is cancelled, and B compares A..B where the file is already
   # absent on both sides -- green, with A never judged. A cancelled run is not a
-  # passing run, and here it silently became one. (codex, #1635)
+  # passing run, and here it silently became one. (review, #1635)
   group: deletions-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -58,7 +58,7 @@ jobs:
     #
     # Push events keep xfa-fast: a spending limit disables hosted runners, and a
     # check that stops running exactly when the bill does is not a check.
-    # (codex, #1635)
+    # (review, #1635)
     # The desktop runner, plainly. The per-event expression that used to stand
     # here chose a hosted runner for a pull request; with no pull_request
     # trigger left (#333) its condition can only be true, so the expression
@@ -83,7 +83,7 @@ jobs:
           python-version: '3.12'
       # ubuntu-latest has no PyYAML, and pr_code_stays_off_the_desktop.py reads
       # workflow files. Without this every pull request went red on an import.
-      # (codex, #1635)
+      # (review, #1635)
       - name: Install PyYAML
         if: ${{ !cancelled() }}
         run: pip install --quiet pyyaml
@@ -122,7 +122,7 @@ jobs:
             # A push reports where the branch actually WAS. Resolving a merge
             # base from it loses anything added between the common ancestor and
             # that tip, so a force-push could drop a file and report nothing.
-            # (codex, #1635)
+            # (review, #1635)
             EXACT="--exact-base"
           fi
           # A brand-new branch has no "before"; git reports all-zeros for it.

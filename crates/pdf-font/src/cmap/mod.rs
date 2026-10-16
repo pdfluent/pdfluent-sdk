@@ -1439,7 +1439,7 @@ mod bcmap_tests {
         assert_eq!(cmap.lookup_cid_code(0xFFFF, 2), Some(0xFFFF));
     }
 
-    // Note: Some tests AI-generated, haven't double-checked them.
+    // Note: Some tests automatically generated, haven't double-checked them.
 
     #[test]
     fn embedded_adobe_gb1_ucs2() {

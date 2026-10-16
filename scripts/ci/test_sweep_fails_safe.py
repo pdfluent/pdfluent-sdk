@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The sweeper must fail safe, not fail clean (#1634, codex).
+"""The sweeper must fail safe, not fail clean (#1634, review).
 
 Every case here is a FAILURE the script used to read as permission to delete:
 `ps` unreadable meant "no build running", `git status` unreadable meant "clean",
@@ -118,10 +118,10 @@ with tempfile.TemporaryDirectory() as d:
 # The first version of this case made the removal fail with chmod. As root, or
 # with CAP_DAC_OVERRIDE -- which many CI containers run with -- rmtree ignores
 # the mode, the target is deleted, both assertions fail and the cleanup raises
-# FileNotFoundError on a path that is already gone. Codex reproduced it as root.
+# FileNotFoundError on a path that is already gone. Review reproduced it as root.
 # A fixture that fails-as-intended only on one machine measures something else
 # everywhere else, so the failure is injected directly and depends on no
-# filesystem permission at all. (codex, #1641)
+# filesystem permission at all. (review, #1641)
 with tempfile.TemporaryDirectory() as d:
     r = repo_with_worktree(pathlib.Path(d))
     (r / "target" / "more.bin").write_text("z" * 2048)
@@ -174,7 +174,7 @@ for f in fails:
 # The floor was declared and never compared: len(fails) counts only what FAILED,
 # so deleting cases -- or skipping them by accident -- left the gate green while
 # the suite shrank. A floor that is not compared is a comment, and this one was
-# meant to prevent exactly that. (codex, #1641)
+# meant to prevent exactly that. (review, #1641)
 if ran < MINIMUM_CASES:
     print(f"  FATAL: {ran} assertions ran, floor is {MINIMUM_CASES}. Cases have "
           "gone missing; a smaller suite passing is not the same as this suite "

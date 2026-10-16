@@ -111,7 +111,7 @@ the optional C++ engines honestly, or they go.
 ## HTML → PDF: needs an explicit decision
 
 There is no pure-Rust option. Everyone who does this properly drives Chromium,
-which conflicts with the architecture rule in `CLAUDE.md`. The realistic choices:
+which conflicts with the architecture rule in the project's contributor instructions. The realistic choices:
 
 1. **Chromium, as an explicit documented exception** — heavy, and it is what the
    market expects.
@@ -127,7 +127,7 @@ any code is written.
 ## Definition of done applies to all of it
 
 Nothing above counts as delivered until it has a test that runs in the pipeline
-(`CLAUDE.md`), and until `scripts/ci/feature_promises.py` shows it both **tested**
+(the project's contributor instructions), and until `scripts/ci/feature_promises.py` shows it both **tested**
 and **reachable from the facade**. Coverage without reachability is not a kept
 promise — that gate was reporting 11/11 while Excel and PowerPoint could not be
 called at all.

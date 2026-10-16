@@ -66,7 +66,7 @@ CALLER_SUPPLIED = re.compile(
   | \bgithub\.head_ref\b
   # A branch name is free text and so is a tag name. `github.ref_name` strips
   # the prefix and hands over whatever is left, so a tag called
-  # `v1.2.$(id)` reaches a shell as a command. Codex raised this on #1540;
+  # `v1.2.$(id)` reaches a shell as a command. Review raised this on #1540;
   # I had left it out because it appears in many run-blocks and I could not
   # tell which were real. The answer is that they are all real.
   | \bgithub\.ref_name\b
@@ -79,7 +79,7 @@ CALLER_SUPPLIED = re.compile(
 # Steps checked by hand whose value cannot carry shell metacharacters. A dict
 # rather than a set, so the reason has somewhere to live: with a set there was
 # nowhere to put it and the comment asking for one was the only thing enforcing
-# it, which is to say nothing was. (Codex, #1540)
+# it, which is to say nothing was. (review, #1540)
 EXEMPT: dict[tuple[str, str, str], str] = {}
 
 

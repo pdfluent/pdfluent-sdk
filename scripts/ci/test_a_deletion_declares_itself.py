@@ -121,7 +121,7 @@ def main() -> int:
         # The trailer was chosen over a register file precisely because it travels
         # with the deletion through rebase and cherry-pick; accepting it anywhere
         # in the range lets the two come apart in exactly those operations.
-        # (codex, #1635)
+        # (review, #1635)
         expect("a trailer on a LATER commit does not count", r.returncode == 1,
                f"exit {r.returncode}")
         expect("and it says the trailer is on the wrong commit",
@@ -143,7 +143,7 @@ def main() -> int:
     # first parent that merge removes every path the PR removes, and its
     # generated message carries no trailer -- so it became the last deleter of
     # everything and a correctly declared deletion failed. An ordinary merge on
-    # master has the same shape. (codex, #1635)
+    # master has the same shape. (review, #1635)
     with tempfile.TemporaryDirectory() as d:
         wd = repo(Path(d))
         run(wd, "rm", "-q", "doomed.txt")
@@ -171,7 +171,7 @@ def main() -> int:
     # core.quotePath is on by default, so git spells a path outside ASCII as
     # "runs/\316\262.md" while the trailer carries the literal one. The two
     # spellings never matched: a correct declaration was reported as undeclared
-    # AND misplaced at once. This repo already tracks such paths. (codex, #1635)
+    # AND misplaced at once. This repo already tracks such paths. (review, #1635)
     BETA = "runs/D\u03b2\u03b3.md"
     with tempfile.TemporaryDirectory() as d:
         wd = repo(Path(d))
@@ -206,7 +206,7 @@ def main() -> int:
     # merge deletion outright reported such a commit as undeclared AND misplaced
     # at once. The discriminator is the other parents: absent in any parent means
     # the merge inherited it; present in all of them means the merge did it.
-    # (codex, #1635)
+    # (review, #1635)
     with tempfile.TemporaryDirectory() as d:
         wd = repo(Path(d))
         (wd / "x.txt").write_text("topic\n")
@@ -241,7 +241,7 @@ def main() -> int:
 
     # A push reports where the branch WAS. Deriving a merge base from it loses
     # anything added between the common ancestor and that tip, so a force-push
-    # that drops such a file reported nothing at all. (codex, #1635)
+    # that drops such a file reported nothing at all. (review, #1635)
     with tempfile.TemporaryDirectory() as d:
         wd = repo(Path(d))
         (wd / "later.txt").write_text("added after the ancestor\n")
@@ -266,7 +266,7 @@ def main() -> int:
 
     # A force-push whose new history never had the file: nothing in base..head
     # can be its "last deleter", so the trailer had nowhere valid to go and a
-    # deliberate removal could not be declared at all. (codex, #1635)
+    # deliberate removal could not be declared at all. (review, #1635)
     with tempfile.TemporaryDirectory() as d:
         wd = repo(Path(d))
         (wd / "later.txt").write_text("added after the ancestor\n")
@@ -299,7 +299,7 @@ def main() -> int:
 
     # A git command that FAILS must not read as "nothing found". With a bad
     # --head the diff exited non-zero, stdout was empty, and the guard reported
-    # OK having compared nothing. (codex, #1635)
+    # OK having compared nothing. (review, #1635)
     #
     # This case proves the PAIR of return-code checks, not either alone:
     # measured, disabling only the diff check leaves it green, because the log
@@ -328,7 +328,7 @@ def main() -> int:
 
     # A declaration attached to a deletion that was later undone. The trailer is
     # real, the commit that carried it really did delete the file -- and none of
-    # that is true of the deletion standing at the tip. (codex, #1635)
+    # that is true of the deletion standing at the tip. (review, #1635)
     with tempfile.TemporaryDirectory() as d:
         wd = repo(Path(d))
         run(wd, "rm", "-q", "doomed.txt")

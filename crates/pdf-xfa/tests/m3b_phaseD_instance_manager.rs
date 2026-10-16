@@ -467,7 +467,7 @@ fn implicit_resolver_falls_back_to_stub_when_only_stubs_exist() {
 
 #[test]
 fn implicit_resolver_prefers_field_over_sibling_container() {
-    // Phase D-η, Codex review feedback: when same-name candidates include
+    // Phase D-η, review feedback: when same-name candidates include
     // a Field and a sibling subform/container, the Field must win.
     // `Amount.rawValue` means the field's value, not a container that
     // happens to share the name; picking the container would silently

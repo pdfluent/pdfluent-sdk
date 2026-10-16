@@ -82,7 +82,7 @@ security find-identity -v -p codesigning | grep -E 'Developer ID Application' >/
   echo 'Windows Trusted Signing: env not set (use USB EV fallback if available)'
 
 # GitLab API token — for `glab release create` and Releases upload
-security find-internet-password -s gitlab.com -a claude-pdfluent-api -w >/dev/null 2>&1 && \
+security find-internet-password -s gitlab.com -a pdfluent-api -w >/dev/null 2>&1 && \
   echo 'GitLab API: OK' || echo 'GitLab API: MISSING'
 ```
 
@@ -596,7 +596,7 @@ Per `docs/release/SIGNING_WINDOWS.md` §2.1 (preferred) or §2.3 (fallback):
 
 | field | value |
 |---|---|
-| GitLab API token | `claude-pdfluent-api` (already in keychain, scope = `api`, expires 2027-05-28) is sufficient for `glab release create` + `glab release upload`. |
+| GitLab API token | `pdfluent-api` (already in keychain, scope = `api`, expires 2027-05-28) is sufficient for `glab release create` + `glab release upload`. |
 | GitLab CI/CD variable | `GLAB_TOKEN` if using glab in CI; the `CI_JOB_TOKEN` is sufficient for `release: create` via the API |
 | needed for | uploading the binary release tarballs to GitLab Releases |
 
@@ -694,7 +694,7 @@ combine into a single yes/no answer per channel. This is the answer to
 | **Binary release — Linux musl** (`x86_64-unknown-linux-musl`) | 🟢 **YES** (GPG-signed) | Tier-1 CI artefact present; `binary_release.md` checklist supports GPG `.asc` Linux signing via the PDFluent GPG key already in keychain. No platform code-signing identity required for Linux | §1.8 — Linux row |
 | **Binary release — Windows** (`x86_64-pc-windows-gnu`) | 🔴 **NO** | Tier-1 CI artefact present, but no code-signing identity provisioned. SmartScreen will warn on every consumer download. **Block on §3.7**: Microsoft Trusted Signing (preferred) or USB EV cert | §3.7 + `SIGNING_WINDOWS.md` |
 | **Binary release — macOS** (`x86_64-apple-darwin` + `aarch64-apple-darwin`) | 🔴 **NO** | No `Developer ID Application` cert in keychain (only `Apple Development` debug certs); no notarytool API key stored. Gatekeeper will refuse to open the binary. **Block on §3.6**: Apple Developer Program + Dev ID cert + notarytool key | §3.6 + `SIGNING_MACOS.md` |
-| **GitLab Releases** (artefact upload) | 🟢 **YES** | `claude-pdfluent-api` PAT in keychain, scope `api`, expires 2027-05-28 | §1.8 footer |
+| **GitLab Releases** (artefact upload) | 🟢 **YES** | `pdfluent-api` PAT in keychain, scope `api`, expires 2027-05-28 | §1.8 footer |
 
 **Summary:** 8 of 10 publish targets are ready for staged beta publish
 today, gated only on the operator's explicit per-step approval. The 2

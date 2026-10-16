@@ -54,7 +54,7 @@ def stappen(tekst: str):
     Not a single regex over `uses:` followed immediately by `with:`. A step may
     put `if:`, `id:` or `name:` between the two, and a pattern that expects them
     adjacent then finds no `with:` block, misses the `targets:` inside it, and
-    passes the step. Codex caught that on #1539 -- a false negative in the guard
+    passes the step. Review caught that on #1539 -- a false negative in the guard
     itself, which is the failure this whole family of checks exists to prevent.
 
     The step runs from its `uses:` line to the next line at or left of its own
@@ -114,7 +114,7 @@ def main() -> int:
                 # Derived from the checked-out ref rather than written out.
                 # expensive-validation.yml runs against an arbitrary branch or
                 # tag whose rust-toolchain.toml may pin something else, so a
-                # literal here would be wrong one step removed. Codex raised
+                # literal here would be wrong one step removed. Review raised
                 # this on #1539.
                 continue
             elif tc.group(1) != kanaal:

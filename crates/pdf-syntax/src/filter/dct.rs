@@ -184,7 +184,7 @@ fn find_sof_marker(data: &[u8]) -> Option<usize> {
 
         let marker = data[i + 1];
 
-        // Note: Not sure if 100% correct/robust, is AI-generated.
+        // Note: Not sure if 100% correct/robust, is automatically generated.
         match marker {
             // All SOF markers carry dimensions: SOF0–SOF15, excluding
             // 0xC4 (DHT), 0xC8 (JPG), 0xCC (DAC) which are not frame markers.

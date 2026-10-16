@@ -30,7 +30,7 @@ every Office conversion -- was manual on merge requests, manual on master, and
 automatic only on a schedule that did not exist. The tests were fine. Nothing
 ran them, for months, and every report said "tested". A test that no job
 executes is not coverage; it is a file. This register refuses to call such a
-capability tested, which is the Definition of Done in CLAUDE.md made mechanical.
+capability tested, which is the Definition of Done in the project's contributor instructions made mechanical.
 
 Usage:
     capability_register.py            # regenerate docs/CAPABILITY_REGISTER.md

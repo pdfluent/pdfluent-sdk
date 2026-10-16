@@ -266,7 +266,7 @@ jobs:
           # deliberately did not gate. Under `set -e` that would fail the job
           # exactly like a real failure, which would keep every pull request red
           # until somebody commits a Linux floor: the outage the exit-3 branch
-          # exists to avoid, reintroduced by the caller. (codex, #1617)
+          # exists to avoid, reintroduced by the caller. (review, #1617)
           #
           # 0 and 3 pass; anything else fails. When "linux" joins BLOKKEERT this
           # stays correct, because a gated platform never returns 3.
@@ -297,7 +297,7 @@ jobs:
           # Not plain `rustup target add`: that lands on the default toolchain,
           # which is `stable` here, while rust-toolchain.toml pins 1.94.0 and
           # that is what cargo will use. Same trap as #1539 -- a target on the
-          # wrong toolchain gives "can't find crate for `core`". Codex, #1547.
+          # wrong toolchain gives "can't find crate for `core`". review, #1547.
           rustup target add wasm32-unknown-unknown \
             --toolchain "$(rustup show active-toolchain | cut -d" " -f1)"
           cargo check --target wasm32-unknown-unknown -p pdfluent --tests
@@ -470,7 +470,7 @@ jobs:
           # to the manifest and forget to commit its generated .rs, and the
           # extractor creates that file as untracked -- which `git diff` does
           # not see, so the guard reports no drift for precisely the
-          # manifest-expansion it is meant to catch. (codex, #1610)
+          # manifest-expansion it is meant to catch. (review, #1610)
           nieuw=$(git status --porcelain -- crates/pdfluent/tests/web_examples/ \
                   | awk '$1 == "??" { print $2 }')
           if ! git diff --exit-code --stat -- crates/pdfluent/tests/web_examples/ || [ -n "$nieuw" ]; then
@@ -498,7 +498,7 @@ jobs:
           # Not plain `rustup target add`: that lands on the default toolchain,
           # which is `stable` here, while rust-toolchain.toml pins 1.94.0 and
           # that is what cargo will use. Same trap as #1539 -- a target on the
-          # wrong toolchain gives "can't find crate for `core`". Codex, #1547.
+          # wrong toolchain gives "can't find crate for `core`". review, #1547.
           rustup target add wasm32-unknown-unknown \
             --toolchain "$(rustup show active-toolchain | cut -d" " -f1)"
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh

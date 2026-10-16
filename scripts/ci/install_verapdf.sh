@@ -41,7 +41,7 @@ if [ -x "${DEST}/verapdf" ]; then
     # and the retention floors this repository records were measured against a
     # named version. A different one grades the same bytes differently, which
     # produces a pass or a failure nobody can trace to a version change.
-    # (codex, #1617)
+    # (review, #1617)
     have="$("${DEST}/verapdf" --version 2>&1 | head -1)"
     if printf '%s' "${have}" | grep -qF "${VERSION}"; then
         echo "[verapdf] ${VERSION} already present at ${DEST}"

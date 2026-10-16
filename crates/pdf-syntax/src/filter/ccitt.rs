@@ -39,7 +39,7 @@ pub(crate) fn decode(
     // Clamp BEFORE decoding, not after. The check further down rejected an
     // over-large image only once hayro_ccitt::decode had already grown the
     // output to roughly columns * rows / 8 bytes -- so the limit was enforced
-    // after the memory it exists to bound had been allocated. (Codex, #1609.)
+    // after the memory it exists to bound had been allocated. (review, #1609.)
     //
     // The limit comes from the stream's context via ImageDecodeParams, because
     // `params` here is /DecodeParms and is Dict::default() when the stream has
@@ -174,7 +174,7 @@ pub(crate) fn decode(
     // honest count, and the point of the fix above -- lets a file declare a
     // small /Height to get past that check and then hand a much larger row count
     // to get_components, which allocates at least a u16 per pixel. The fix for
-    // one hole opened another. (Codex, #1609.)
+    // one hole opened another. (review, #1609.)
     //
     // So the limit is applied again, to what was actually produced.
     // Belt and braces: the clamp above bounds what the decoder is asked for, and
@@ -212,7 +212,7 @@ pub(crate) fn decode(
             // (so the pixel-limit check passes) and a huge /Rows, carrying one
             // encoded row, would have get_components allocate and zero-pad
             // rows * width samples. decoded_rows is what the buffer holds.
-            // (Codex, #1609.)
+            // (review, #1609.)
             height: decoder.decoded_rows,
         }),
     })
@@ -287,7 +287,7 @@ mod upstream_hardening_tests {
     }
 
     /// The gap between "asked for" and "produced", which `/Rows` alone does not
-    /// close (Codex, #1609).
+    /// close (review, #1609).
     ///
     /// A small `/Height` passes the pixel-limit check upstream of here; a huge
     /// `/Rows` then sets the reported height, while the data encodes one row.
@@ -332,7 +332,7 @@ mod upstream_hardening_tests {
     /// honest answer, and it also means a file can declare a tiny `/Height` to
     /// slip past that check and then hand a far larger count to
     /// `get_components`, which allocates at least a `u16` per pixel.
-    /// (Codex, #1609.)
+    /// (review, #1609.)
     #[test]
     fn decoded_rows_are_checked_against_the_pixel_limit_too() {
         // Declared height 1, so the check before decoding is satisfied. Eight

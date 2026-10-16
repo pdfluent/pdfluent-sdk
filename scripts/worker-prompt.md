@@ -62,7 +62,7 @@ Update je worker-bestand:
 ## Regels
 
 - **GEEN** bestanden aanpassen die niet in `affected_files` staan, tenzij noodzakelijk voor compilatie
-- **GEEN** commits met "Co-Authored-By: Claude" of verwijzingen naar Claude
+- **GEEN** commits met automatische co-author-trailers of verwijzingen naar assistenten
 - **WEL** `cargo fmt` en `cargo clippy -- -D warnings` voor elke commit
 - **WEL** alleen de specifieke veraPDF regels uit de taak fixen
 - Als een taak te complex is of je vast zit, zet status op `"failed"` met uitleg in `result`

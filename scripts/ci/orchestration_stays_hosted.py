@@ -14,7 +14,7 @@ warm cargo cache and the runner registration token. The rule is that pre-merge
 code stays on isolated runners, and a workflow that dispatches by ref is exactly
 where that rule gets bypassed.
 
-Found by Codex review on PR #1535, after that PR moved orchestration onto
+Found in review on PR #1535, after that PR moved orchestration onto
 xfa-fast to save 10-20s of hosted time per run. The saving was real; the
 exposure it bought back is not bounded, and the person most likely to trigger it
 was the one dispatching feature branches every few minutes.
@@ -54,7 +54,7 @@ FLOOR = 10
 
 # `self-hosted` is implied by a custom label but does not have to be written:
 # `runs-on: [xfa-fast]` routes to the same machine and contains neither word.
-# Codex caught this; matching the literal string alone would have let the next
+# Review caught this; matching the literal string alone would have let the next
 # job through.
 PERSISTENT_LABELS = ("self-hosted", "xfa-fast")
 
@@ -73,7 +73,7 @@ PERSISTENT_LABELS = ("self-hosted", "xfa-fast")
 #
 # Accepted here, with a caveat that belongs in writing: the `if:` lives in the
 # workflow file, and a dispatch by ref runs that branch's copy of it. A branch
-# that deletes the guard is not stopped by the guard. Codex raised this on
+# that deletes the guard is not stopped by the guard. Review raised this on
 # #1538 and it is correct.
 #
 # What it stops is the accident, which is the failure that actually occurs. The
@@ -85,7 +85,7 @@ PERSISTENT_LABELS = ("self-hosted", "xfa-fast")
 #
 # The comparison is against the full ref, not `ref_name`: that strips both
 # refs/heads/ and refs/tags/, so a TAG named master would satisfy a short-name
-# check. Codex caught that too.
+# check. Review caught that too.
 REF_VASTGEZET = re.compile(
     r"github\.ref\s*==\s*"
     r"(format\('refs/heads/\{0\}',\s*github\.event\.repository\.default_branch\)"
@@ -138,7 +138,7 @@ def desktop_toegestaan(triggers) -> frozenset[str]:
     point at a commit that never reached master.
 
     `schedule` needs no filter. GitHub only ever runs a scheduled workflow from
-    the default branch, so there is no ref for a caller to choose. (codex, #1649)
+    the default branch, so there is no ref for a caller to choose. (review, #1649)
     """
     if triggers is None:
         return DESKTOP_GEBEURTENISSEN
@@ -179,7 +179,7 @@ def desktop_toegestaan(triggers) -> frozenset[str]:
 # first operand is false, so the disjunction yields the ARRAY -- the desktop --
 # and the scan approved it because it had found the words it was looking for.
 # The operator between the condition and the runner is what decides, so the
-# operator is what gets read. (codex, #1649)
+# operator is what gets read. (review, #1649)
 _STRUCTUUR = re.compile(
     r"\$\{\{\s*(?P<cond>.+?)\s*&&\s*(?P<desktop>.+?)\s*\|\|\s*(?P<gehost>.+?)\s*\}\}",
     re.S)
@@ -192,7 +192,7 @@ _STRUCTUUR = re.compile(
 # every event EXCEPT push safe and putting pull requests and dispatches on the
 # desktop. A negation does not decorate a condition, it reverses it, so the
 # only conditions this guard accepts are the un-negated whitelist forms.
-# (codex, #1649)
+# (review, #1649)
 _COND_REST = re.compile(r"github\.event_name\s*==\s*'[a-z_]+'|&&|\|\||[()\s]")
 _NEGATIE = re.compile(r"!")
 
@@ -210,7 +210,7 @@ def per_gebeurtenis_veilig(runs_on: str, events: set[str] | None = None,
 
     So the condition has to NAME the events on which the desktop is chosen, and
     every one of them has to be in DESKTOP_GEBEURTENISSEN. The next event GitHub
-    adds is then a refusal rather than a leak. (codex, #1649)
+    adds is then a refusal rather than a leak. (review, #1649)
     """
     if not ALLEEN_BIJ_PUSH.search(runs_on):
         return False
@@ -300,7 +300,7 @@ ZWARE_BASELINE = {
     # Found only once the guard started following the scripts a job calls:
     # `publish` runs ./scripts/publish_ordered.sh, which compiles. Same reason
     # as preflight -- release path, no way to rehearse a change to it without
-    # publishing. (Codex, #1541)
+    # publishing. (review, #1541)
     ("publish-crates.yml", "publish"),
     # The visual suite (#326). Not the corpus: crates/visual-regression/README.md
     # says the renderer uses no system font and no external command, so on paper
@@ -342,7 +342,7 @@ ZWARE_BASELINE = {
 
 
 # A job that calls `bash scripts/ci/run_build.sh` compiles just as hard as one
-# that types `cargo build`, and the workflow file says nothing about it. Codex
+# that types `cargo build`, and the workflow file says nothing about it. Review
 # raised this on #1541; the first version read only the YAML.
 # Only shell scripts. A .sh file's text is commands, so `cargo build` in it is a
 # build. A .py file's text is mostly not: this guard's own source contains
@@ -395,7 +395,7 @@ def op_blijvende_runner(runs_on, events: set[str] | None = None,
     the job was classified as not-on-the-desktop and never looked at again.
     Two places deciding the same thing, and the newer one silenced the older.
     Whether a per-event choice is safe is per_gebeurtenis_veilig's question,
-    here as everywhere. (codex, #1649)
+    here as everywhere. (review, #1649)
 
     events=None means the caller could not say which events reach the job.
     per_gebeurtenis_veilig refuses to call that safe, so the job is judged.
@@ -480,7 +480,7 @@ BASELINE = {
     # this check has been failing on it on master ever since -- which is what
     # #288 is about in miniature, since the failure was in a step nothing read.
     ("bench.yml", "benchmark"),
-    # Found only after Codex pointed out that a pull_request branch filter names
+    # Found only after review pointed out that a pull_request branch filter names
     # the base, not the source. Runs on [self-hosted, xfa-corpus] -- a second
     # persistent machine -- so ubuntu-latest is not the fix here; restricting the
     # trigger is.
@@ -494,7 +494,7 @@ BASELINE = {
 # `pull_request` belongs here, which is not obvious: its `branches:` filter
 # selects the BASE branch, so `branches: [master]` means "PRs targeting master"
 # and the workflow still runs from the merge commit -- source branch included.
-# Codex caught that; the first version read the filter as proof the code was
+# Review caught that; the first version read the filter as proof the code was
 # already merged, which is the opposite of what a pull request is.
 # `schedule` is deliberately absent. A scheduled run always takes the workflow
 # file from the default branch, so the caller cannot choose the body -- unlike

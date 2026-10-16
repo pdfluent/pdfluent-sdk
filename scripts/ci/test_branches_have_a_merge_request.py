@@ -16,7 +16,7 @@ about, so this file refuses to let its own guard have it.
 
 The other one that matters is the pre-push ref list. The guard promised "the
 next push fails" while reading a tracking ref that a renaming refspec never
-creates, so the promise could not come true (codex, #1610). Cases 4 to 6 feed
+creates, so the promise could not come true (review, #1610). Cases 4 to 6 feed
 the guard the lines git hands a pre-push hook and require it to act on them:
 fail when the remote has the branch and no request exists, ask `gh` for the
 remote's name and not the local one, and stay quiet only while the remote sha

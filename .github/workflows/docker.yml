@@ -59,7 +59,7 @@ jobs:
       # A tag name is free text, and `github.ref_name` hands over whatever is
       # left after the prefix is stripped. A tag called `v1.2.$(id)` is a legal
       # ref, matches this workflow's tag trigger, and reaches the shell as a
-      # command. Through `env:` it arrives as data. (Codex, #1540)
+      # command. Through `env:` it arrives as data. (review, #1540)
       - name: Inspect image
         env:
           REF_NAME: ${{ github.ref_name }}

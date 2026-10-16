@@ -45,7 +45,7 @@ WHAT IT CHECKS
      than `[meta] calibration_valid_days` counts as absent. So does one dated
      in the future: a date nobody could have measured on is a typo or a
      guess, and either way it would outlive every real calibration around it
-     (codex, #1622).
+     (review, #1622).
 
   5. A restored criterion baseline names the machine class in its cache key.
      `target/criterion` is the baseline: restoring it is the comparison. A key

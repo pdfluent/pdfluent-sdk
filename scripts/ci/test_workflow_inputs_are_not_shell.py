@@ -71,7 +71,7 @@ GEVALLEN: list[tuple[str, str, bool]] = [
     ("event-inputs", "${{ github.event.inputs.crate }}", True),
     ("head-ref", "${{ github.head_ref }}", True),
     # A tag may be called `v1.2.$(id)`; ref_name hands over what is left after
-    # the prefix. Codex, #1540.
+    # the prefix. review, #1540.
     ("ref-name", "${{ github.ref_name }}", True),
     ("pr-title", "${{ github.event.pull_request.title }}", True),
     ("issue-body", "${{ github.event.issue.body }}", True),

@@ -51,7 +51,7 @@ const MAX_BFCHAR_PER_BLOCK: usize = 100;
 /// individual ranges (or many bfchar blocks) whose cumulative size still
 /// exhausts memory. 1 MiB-of-codes is several orders of magnitude above
 /// what real-world fonts mapping use (~10^4 CIDs typical) — well clear
-/// of false rejections, low enough to refuse DoS-shaped inputs (Codex
+/// of false rejections, low enough to refuse DoS-shaped inputs (review
 /// P2 #1379 fix).
 const MAX_TOTAL_EXTRACTED_CODES: usize = 1_048_576;
 
@@ -59,7 +59,7 @@ const MAX_TOTAL_EXTRACTED_CODES: usize = 1_048_576;
 /// only by the redaction caller — the actual idempotency check must
 /// validate the stream content via [`is_safe_stub_cmap`], because a
 /// crafted PDF can set this marker on an attacker-controlled
-/// /ToUnicode stream to bypass the strip (Codex P1 #1379 fix).
+/// /ToUnicode stream to bypass the strip (review P1 #1379 fix).
 pub(crate) const STUB_MARKER_KEY: &[u8] = b"XfaRedactionStub";
 
 /// Codes extracted from an existing /ToUnicode CMap.
@@ -251,7 +251,7 @@ pub(crate) fn is_safe_stub_cmap(bytes: &[u8]) -> bool {
                 // idempotency check while still leaking text. `pdf-font`'s
                 // CMap parser supports usecmap, so the extraction layer
                 // would honour it on lookup. Reject any usecmap presence
-                // for "safe stub" classification (Codex P1 #1379 fix).
+                // for "safe stub" classification (review P1 #1379 fix).
                 return false;
             }
             // Header tokens, codespace ranges, /CMapName, etc. are fine —
@@ -305,7 +305,7 @@ impl<'a> Scanner<'a> {
                 // `\r`, or CRLF as line terminators. Stopping only on
                 // `\n` causes a CR-only-encoded CMap to swallow the rest
                 // of the stream into one comment, breaking redaction on
-                // otherwise-valid PDFs (Codex P2 #1379 fix).
+                // otherwise-valid PDFs (review P2 #1379 fix).
                 while self.pos < self.bytes.len() {
                     let cc = self.bytes[self.pos];
                     if cc == b'\n' || cc == b'\r' {
@@ -385,7 +385,7 @@ fn parse_hex_string(token: &[u8], font: &str) -> Result<Vec<u8>> {
     // digits is permitted and is implicitly padded with a final `0`
     // nibble. Hard-rejecting odd-length input would refuse a class of
     // spec-valid CMaps and abort redaction with UnsupportedToUnicodeCMap
-    // (Codex P2 #1379 fix).
+    // (review P2 #1379 fix).
     if !stripped.len().is_multiple_of(2) {
         stripped.push(b'0');
     }
@@ -436,7 +436,7 @@ fn parse_codespace_block(
 
 /// Append a code to `out`, enforcing the cumulative `MAX_TOTAL_EXTRACTED_CODES`
 /// cap so an adversarial CMap with many legal-size blocks cannot exhaust
-/// memory (Codex P2 #1379 fix).
+/// memory (review P2 #1379 fix).
 fn try_push_code(out: &mut Vec<Vec<u8>>, code: Vec<u8>, font: &str) -> Result<()> {
     if out.len() >= MAX_TOTAL_EXTRACTED_CODES {
         return Err(unsupported(
@@ -693,7 +693,7 @@ endcmap
 
     #[test]
     fn extract_codes_handles_cr_only_line_endings_in_comments() {
-        // Codex P2 #1379 regression-guard: PDF/PostScript spec accepts
+        // review P2 #1379 regression-guard: PDF/PostScript spec accepts
         // \n, \r, or CRLF as line terminators. Without the fix the
         // comment scanner would only stop on \n, so a CR-only-encoded
         // CMap would have its comment "swallow" the rest of the stream
@@ -751,7 +751,7 @@ endcmap
 
     #[test]
     fn extract_codes_pads_odd_length_hex_source_codes() {
-        // Codex P2 #1379 regression-guard: PDF spec §7.3.4.3 permits hex
+        // review P2 #1379 regression-guard: PDF spec §7.3.4.3 permits hex
         // strings with an odd number of digits, with implicit `0`
         // padding on the trailing nibble. The conservative parser used
         // to hard-reject odd-length hex, aborting redaction on
@@ -805,7 +805,7 @@ endcmap
 
     #[test]
     fn safe_stub_validator_rejects_original_tounicode_with_real_mappings() {
-        // Codex P1 #1379 regression-guard: a /ToUnicode that maps codes to
+        // review P1 #1379 regression-guard: a /ToUnicode that maps codes to
         // real characters (not U+FFFD) must NOT be accepted as a safe stub
         // even if the caller mistakenly passes its bytes here.
         let original = b"\
@@ -879,7 +879,7 @@ endcmap
 
     #[test]
     fn safe_stub_validator_rejects_usecmap_inheritance() {
-        // Codex P1 #1379 regression-guard: a crafted /ToUnicode that
+        // review P1 #1379 regression-guard: a crafted /ToUnicode that
         // carries the XfaRedactionStub marker, a single trivial
         // <00> <FFFD> bfchar entry, AND a `usecmap` operator referencing
         // a base CMap can pass a marker-only idempotency check while
@@ -940,7 +940,7 @@ end
 
     #[test]
     fn extract_codes_caps_cumulative_total_across_many_legal_ranges() {
-        // Codex P2 #1379 regression-guard: build a CMap with many
+        // review P2 #1379 regression-guard: build a CMap with many
         // individually-legal bfranges (each within MAX_BFRANGE_SPAN)
         // whose cumulative code count exceeds MAX_TOTAL_EXTRACTED_CODES
         // (1_048_576). Without the global cap, the extractor allocates

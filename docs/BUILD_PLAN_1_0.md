@@ -3,7 +3,7 @@
 **Date:** 2026-08-18 · Sizes are for one developer, implementation plus the tests
 the Definition of Done requires. Every crate named was checked on crates.io for
 licence and for C/C++ dependencies; anything pulling `cc` or a `-sys` crate is
-excluded by the pure-Rust rule in `CLAUDE.md`.
+excluded by the pure-Rust rule in the project's contributor instructions.
 
 **S** = under a day · **M** = a few days · **L** = one to two weeks · **XL** = a month or more
 

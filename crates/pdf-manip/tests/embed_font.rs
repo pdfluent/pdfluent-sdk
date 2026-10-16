@@ -316,7 +316,7 @@ fn data_that_is_not_a_font_is_refused_rather_than_embedded() {
 }
 
 // ---------------------------------------------------------------------------
-// Findings from the Codex review on #1614. Each of these passed against the
+// Findings from the review on #1614. Each of these passed against the
 // first version of embed_font, which is why they are here.
 //
 // NOT covered, and stated so rather than left to be assumed from the count of

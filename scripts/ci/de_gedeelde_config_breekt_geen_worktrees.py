@@ -95,7 +95,7 @@ def waarde(tekst: str, sectie: str, sleutel: str) -> str | None:
     Met git zelf lezen zou de global en de per-worktree config meenemen, en juist
     het onderscheid tussen die drie is hier de vraag. Dus met de hand -- en dan
     ook mét de twee eigenaardigheden die git wél heeft en een naïeve lezer niet
-    (allebei aangewezen door Codex op #1609):
+    (allebei aangewezen door review op #1609):
 
     * **De laatste toekenning wint.** Bij `bare = false` gevolgd door
       `bare = true` gebruikt git `true`. De eerste versie hiervan gaf de eerste
@@ -116,7 +116,7 @@ def waarde(tekst: str, sectie: str, sleutel: str) -> str | None:
             # `[core "demo"]` is core.demo.*, a different key entirely -- git
             # prints it as `core.demo.bare` and leaves `core.bare` unset. Reading
             # it as `core` made the guard report every worktree broken over a
-            # subsection that affects nothing. (Codex, #1609.)
+            # subsection that affects nothing. (review, #1609.)
             huidige = None if kop.group(2) else kop.group(1).lower()
             continue
         if huidige != sectie:
@@ -137,7 +137,7 @@ def volg_includes(pad: pathlib.Path, tekst: str, diepte: int = 0) -> str:
     `includeIf`, whose conditions are not evaluated here, and not the global or
     per-worktree files, which are not what this checks. A file that sets
     `core.bare` through an include breaks worktrees exactly as directly as one
-    that sets it inline. (Codex, #1609.)
+    that sets it inline. (review, #1609.)
     """
     if diepte > 5:  # git's own limit is 10; this is a guard against a loop.
         return tekst
@@ -179,7 +179,7 @@ def main() -> int:
     bare = waarde(tekst, "core", "bare")
     # git's false spellings. Anything outside both lists is not "not true": git
     # refuses to run at all with `fatal: bad boolean config value`, which breaks
-    # worktrees just as completely. (Codex, #1609.)
+    # worktrees just as completely. (review, #1609.)
     ONWAAR = ("false", "no", "off", "0", "")
     if bare is not None and bare.lower() not in ONWAAR and bare.lower() not in (
         "true", "yes", "on", "1",

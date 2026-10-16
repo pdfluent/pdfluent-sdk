@@ -52,7 +52,6 @@ must preserve case and surrounding punctuation.
 - `PDFluent`
 - `pdfluent`
 - `pdfluent.com`
-- `Anthropic` (where cited)
 - `ISO 32000-1`, `ISO 32000-2` (standards tags)
 
 ### Rust identifiers (types, traits, functions, modules)
@@ -178,7 +177,7 @@ CJK-specific (ja, zh):
 - [ ] Full-width / half-width punctuation consistent within each file.
 - [ ] No stray Japanese katakana for words that should be kanji (or vice versa).
 
-## Delivery format to Cloud/Claude
+## Delivery format to the cloud session
 
 Return one directory per language, mirroring `sources/`:
 
