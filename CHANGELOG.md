@@ -32,7 +32,7 @@ All notable changes to PDFluent are documented here.
   `scripts/ci/no_licence_key_in_a_binding.py` refuses a change that puts a key
   check back.
 
-## [1.1.0] — <RELEASE_DATE>
+## [1.1.0] — 2026-10-17
 
 Java: 1.1.0 on Maven Central follows shortly; 1.0.0 remains available.
 
