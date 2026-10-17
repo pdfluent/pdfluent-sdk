@@ -13,7 +13,7 @@
 #
 # What it leaves in the image:
 #   /src                                   the checkout
-#   /src/target/release/pdfluent           the command-line driver (crate xfa-cli)
+#   /src/target/release/pdfluent           the command-line driver (crate pdfluent-cli)
 #   /src/target/release/deps/*-<hash>      compiled test binaries of the core crates
 #   /src/fuzz/target/<triple>/release/     the libFuzzer targets, built with
 #                                          AddressSanitizer and debug assertions
@@ -63,7 +63,7 @@ RUN cargo fetch --locked \
 
 # The public facade crate and the command-line driver. Release profile with
 # LTO off, debug info on and symbols kept, so a backtrace names its frames.
-RUN cargo build --release --locked ${JOBS:+-j "$JOBS"} -p pdfluent -p xfa-cli --bin pdfluent
+RUN cargo build --release --locked ${JOBS:+-j "$JOBS"} -p pdfluent -p pdfluent-cli --bin pdfluent
 
 # Test binaries of the parser and the crates closest to untrusted input, so
 # they can be run offline. Building them must succeed; running them below is
