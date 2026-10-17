@@ -1,0 +1,51 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH PDFLUENT-VALIDATE 1  "pdfluent 1.1.0" PDFluent
+.SH NAME
+pdfluent\-validate \- Validate: parse check, PDF/A conformance, or (unexposed) PDF/UA
+.SH SYNOPSIS
+\fBpdfluent validate\fR [\fB\-\-json\fR] [\fB\-\-pdfa\fR] [\fB\-\-pdfua\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-profile\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIINPUT\fR> 
+.SH DESCRIPTION
+Validate: parse check, PDF/A conformance, or (unexposed) PDF/UA
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Machine\-readable JSON envelope on stdout
+.TP
+\fB\-\-pdfa\fR
+Validate PDF/A conformance (default profile a2b, see \-\-profile)
+.TP
+\fB\-\-pdfua\fR
+Validate PDF/UA conformance. Accepted and reported: the facade does not expose it
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Quiet: human mode prints data only (no warnings or progress notes)
+.TP
+\fB\-\-profile\fR \fI<PROFILE>\fR [default: a2b]
+PDF/A profile for \-\-pdfa
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+a1b: PDF/A\-1b
+.IP \(bu 2
+a2b: PDF/A\-2b (default)
+.IP \(bu 2
+a3b: PDF/A\-3b
+.RE
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose stderr diagnostics (repeat for more)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+<\fIINPUT\fR>
+Input PDF, or `\-` for stdin
+.SH VERSION
+v1.1.0

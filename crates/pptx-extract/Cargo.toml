@@ -1,0 +1,26 @@
+[package]
+name = "pptx-extract"
+version.workspace = true
+edition.workspace = true
+# AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+repository.workspace = true
+description = "PowerPoint PPTX to pdf-engine block extraction (Epic #636 item 5)"
+readme = "README.md"
+
+# Dependency licences, reviewed for pdfluent-internal#636 item 5 (allowed:
+# MIT, Apache-2.0 or BSD only):
+# - quick-xml 0.37: MIT (same version as crates/pdf-pptx).
+# - zip 2: MIT (same version and features as crates/pdf-pptx).
+# - thiserror: MIT OR Apache-2.0 (workspace dependency).
+# - pdf-engine: first-party, AGPL-3.0-only OR LicenseRef-PDFluent-Commercial.
+# calamine was checked (MIT) and rejected: it reads spreadsheets
+# (xls/xlsx/ods/csv), not presentations, so it cannot parse .pptx.
+[dependencies]
+pdf-engine = { path = "../pdf-engine", version = "=1.1.0" }
+thiserror.workspace = true
+quick-xml = "0.37"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }

@@ -15,12 +15,7 @@ import {
   mergePdfs,
   validatePdfa,
   PdfluentError,
-  PdfluentIoError,
-  PdfluentParseError,
-  PdfluentPasswordError,
-  PdfluentPageError,
-  PdfluentFormError,
-  PdfluentOperationError,
+  TextEditor,
   type AnnotationInfo,
   type BookmarkItem,
   type ComplianceIssueInfo,
@@ -217,23 +212,39 @@ async function pageThumb(page: PdfPage): Promise<RenderResult> {
 // ── Error classes ─────────────────────────────────────────────────────────────
 
 function handleError(err: unknown): void {
-  if (err instanceof PdfluentPasswordError) {
-    console.error('Need a password:', err.message)
-  } else if (err instanceof PdfluentParseError) {
-    console.error('Corrupt PDF:', err.message)
-  } else if (err instanceof PdfluentIoError) {
-    console.error('I/O failure:', err.message)
-  } else if (err instanceof PdfluentPageError) {
-    console.error('Page out of range:', err.message)
-  } else if (err instanceof PdfluentFormError) {
-    console.error('Form error:', err.message)
-  } else if (err instanceof PdfluentOperationError) {
-    console.error('Operation failed:', err.message)
-  } else if (err instanceof PdfluentError) {
-    console.error('PDF error:', err.message)
-  } else {
-    throw err
+  // `PdfluentError` is the only error class the package exports. Branch on
+  // `.code` (the C8 catalogue in docs/error_catalogue.md), never on
+  // `.message` — see the wire-format note in crates/pdf-node/src/error.rs.
+  if (err instanceof PdfluentError) {
+    switch (err.code) {
+      case 'E-PARSE-INVALID-PDF':
+        console.error('Corrupt PDF:', err.message)
+        break
+      case 'E-IO-READ':
+        console.error('I/O failure:', err.message)
+        break
+      default:
+        console.error(`PDF error (${err.code ?? 'no code'}) during ${err.operation ?? 'unknown'}:`, err.message)
+    }
+    return
   }
+  throw err
+}
+
+// ── Text find and replace ─────────────────────────────────────────────────────
+
+function findAndReplace(pdfPath: string): Buffer {
+  const editor: TextEditor = TextEditor.open(fs.readFileSync(pdfPath))
+  const matchesJson: string = editor.findText(JSON.stringify({ text: 'Acme B.V.', caseInsensitive: false }))
+  const matches: unknown = JSON.parse(matchesJson)
+  if (!Array.isArray(matches) || matches.length === 0) return editor.toBuffer()
+  const reportJson: string = editor.replaceText(
+    JSON.stringify({ text: 'Acme B.V.' }),
+    'Acme Holding B.V.',
+    JSON.stringify({ commitPolicy: 'allOrNothing' }),
+  )
+  void reportJson
+  return editor.toBuffer()
 }
 
 // ── Suppress unused-variable warnings without calling side-effects ────────────
@@ -273,3 +284,4 @@ void (openWithPassword as unknown)
 void (thumb as unknown)
 void (pageThumb as unknown)
 void (handleError as unknown)
+void (findAndReplace as unknown)

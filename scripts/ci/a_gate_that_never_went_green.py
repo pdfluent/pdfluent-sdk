@@ -61,29 +61,22 @@ GENOEG = 3
 # baseline that only grows is a list of excuses, and one that only shrinks
 # stops noticing when something dies.
 BEKEND = {
-    # ci.yml is here twice over, and the two are not the same claim.
-    #
-    # The first time was wrong: "5 runs, none green" came from dating the file
-    # against the branch, where the commit adding the entry had just edited it.
-    # Against the default branch it was 48 runs and 7 green, and the entry came
-    # out with the dating fix.
-    #
-    # It is back on a measurement that holds. #1601 merged on 01-09-2026 and
-    # touched ci.yml, so the window restarts there, and in that window it is 3
-    # runs and 0 green -- because orchestration_stays_hosted.py fails on master
-    # itself, on ci-ephemeral's `reap` job (#267). Verified by running that
-    # guard on master and on this branch: byte-identical output, both exit 1.
-    # So every pull request is red on ci.yml regardless of its contents, and
-    # the workflow carrying every guard in this repository is not green.
-    #
-    # Not fixable from here -- moving `reap` off the persistent runner is a cost
-    # decision on #267. Out of this list the day ci.yml goes green, which the
-    # check below enforces.
-    "ci.yml": "orchestration_stays_hosted fails on master itself: ci-ephemeral `reap` on the persistent runner (#267)",
+    # ci.yml was here twice, the second time from 01-09-2026 on #267
+    # (orchestration_stays_hosted failing on master itself). It has been green
+    # since its file last changed, and on 28-09-2026 the recovery check below
+    # made that a FATAL on every push to master -- the one failing step of
+    # ci.yml there. Out, as visual-regression.yml and fuzz.yml before it, so the
+    # next workflow to die is still news.
     # Diagnosed on #294. Not one of the four fails on what it is supposed to
     # guard, which is the reason they are one issue and not four.
     "enterprise-acceptance.yml": "`Install system dependencies` fails; needs one re-run for the message (#294)",
-    "fuzz.yml": "every fuzz job passes; `delete-runner` gets 422 runner-still-busy and leaks the instance (#294)",
+    # fuzz.yml was here from 02-09-2026: every fuzz job passed and `delete-runner`
+    # got 422 runner-still-busy. It went green on master on 09-09 (run
+    # 34332662666, two hours of fuzzing and a runner that was deleted), and this
+    # list is only allowed to hold what is still dead -- so it comes out, and the
+    # next workflow to die is still news. Same removal, same reason, as
+    # visual-regression.yml above. Its run of 10-09 is red again on the fuzzing
+    # itself, which is a finding rather than a dead gate. (#516)
     "node-bindings.yml": "Node 24 red on all three platforms; logs expired, needs a re-run (#294)",
     # Measured 02-09-2026, and two layers deep. `rust-toolchain.toml` overrode
     # dtolnay/rust-toolchain@stable on every cargo call: cargo-audit died on
@@ -395,6 +388,22 @@ def main() -> int:
         print(f"[groen] {naam}: SILENT -- no run at all since the file changed "
               f"{dagen} days ago ({sinds:%d-%m-%Y}). Not judged here; a workflow "
               f"nothing triggers is #276/#288.")
+    # ONE LINE PER NEVER-GREEN WORKFLOW, WHETHER OR NOT IT IS EXCUSED (#516).
+    #
+    # The refusal below names only the ones that are NOT in BEKEND, and the
+    # excused ones were a single summary line at the very end. So a workflow
+    # that had been dead for a day and a workflow that has been dead since May
+    # read the same in the middle of a lane that prints hundreds of lines --
+    # which is how publication-guards.yml went 38 runs, none green, over two
+    # days, while this guard was printing the fact on every push.
+    #
+    # Printed here, in a shape the lane can grep for, next to SILENT: the tail
+    # of the run is the part that gets read.
+    for naam, n, sinds in sorted(dood):
+        excuus = BEKEND.get(naam)
+        print(f"[groen] NEVER GREEN -- {naam}: {n} run(s) since the file changed "
+              f"{sinds:%d-%m-%Y}, none green"
+              + (f". Known: {excuus}" if excuus else ""))
     print(f"[groen] {gezond} workflow(s) green since their file last changed; "
           f"{len(dood)} not.")
 

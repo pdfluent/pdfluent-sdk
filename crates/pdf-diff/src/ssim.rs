@@ -28,26 +28,27 @@ fn to_grayscale(rgba: &[u8], width: u32, height: u32) -> Vec<f64> {
     gray
 }
 
-/// Compute mean and (co)variance for a window at position (x, y).
-fn window_stats(
+/// Mean and (co)variance over the rectangle `(x0, y0, w, h)` of two
+/// grayscale images.
+fn region_stats(
     a: &[f64],
     stride_a: usize,
     b: &[f64],
     stride_b: usize,
-    x: usize,
-    y: usize,
+    rect: (usize, usize, usize, usize),
 ) -> (f64, f64, f64, f64, f64) {
-    let n = (WINDOW_SIZE * WINDOW_SIZE) as f64;
+    let (x0, y0, w, h) = rect;
+    let n = (w * h) as f64;
     let mut sum_a = 0.0;
     let mut sum_b = 0.0;
     let mut sum_a2 = 0.0;
     let mut sum_b2 = 0.0;
     let mut sum_ab = 0.0;
 
-    for dy in 0..WINDOW_SIZE {
-        for dx in 0..WINDOW_SIZE {
-            let va = a[(y + dy) * stride_a + (x + dx)];
-            let vb = b[(y + dy) * stride_b + (x + dx)];
+    for dy in 0..h {
+        for dx in 0..w {
+            let va = a[(y0 + dy) * stride_a + (x0 + dx)];
+            let vb = b[(y0 + dy) * stride_b + (x0 + dx)];
             sum_a += va;
             sum_b += vb;
             sum_a2 += va * va;
@@ -63,6 +64,27 @@ fn window_stats(
     let covar = sum_ab / n - mean_a * mean_b;
 
     (mean_a, mean_b, var_a, var_b, covar)
+}
+
+/// Compute mean and (co)variance for a window at position (x, y).
+fn window_stats(
+    a: &[f64],
+    stride_a: usize,
+    b: &[f64],
+    stride_b: usize,
+    x: usize,
+    y: usize,
+) -> (f64, f64, f64, f64, f64) {
+    region_stats(a, stride_a, b, stride_b, (x, y, WINDOW_SIZE, WINDOW_SIZE))
+}
+
+/// The SSIM score for one set of window statistics (the standard formula).
+fn ssim_from_stats(mean_a: f64, mean_b: f64, var_a: f64, var_b: f64, covar: f64) -> f64 {
+    let c1 = (K1 * L).powi(2);
+    let c2 = (K2 * L).powi(2);
+    let numerator = (2.0 * mean_a * mean_b + c1) * (2.0 * covar + c2);
+    let denominator = (mean_a.powi(2) + mean_b.powi(2) + c1) * (var_a + var_b + c2);
+    numerator / denominator
 }
 
 /// Compute SSIM between two RGBA images (potentially different dimensions).
@@ -87,9 +109,6 @@ pub fn compute_ssim(
     let gray_a = to_grayscale(img_a, width_a, height_a);
     let gray_b = to_grayscale(img_b, width_b, height_b);
 
-    let c1 = (K1 * L).powi(2);
-    let c2 = (K2 * L).powi(2);
-
     let mut total_ssim = 0.0;
     let mut window_count = 0usize;
     let step = WINDOW_SIZE / 2;
@@ -101,10 +120,7 @@ pub fn compute_ssim(
             let (mean_a, mean_b, var_a, var_b, covar) =
                 window_stats(&gray_a, width_a as usize, &gray_b, width_b as usize, x, y);
 
-            let numerator = (2.0 * mean_a * mean_b + c1) * (2.0 * covar + c2);
-            let denominator = (mean_a.powi(2) + mean_b.powi(2) + c1) * (var_a + var_b + c2);
-
-            total_ssim += numerator / denominator;
+            total_ssim += ssim_from_stats(mean_a, mean_b, var_a, var_b, covar);
             window_count += 1;
 
             x += step;
@@ -116,6 +132,88 @@ pub fn compute_ssim(
         return 1.0;
     }
     total_ssim / window_count as f64
+}
+
+/// SSIM of one tile: the standard windowed mean restricted to the tile
+/// rectangle. A tile smaller than one 8x8 window scores as a single region
+/// instead, so edge strips still gate instead of defaulting to 1.0.
+fn tile_ssim(
+    a: &[f64],
+    stride_a: usize,
+    b: &[f64],
+    stride_b: usize,
+    rect: (usize, usize, usize, usize),
+) -> f64 {
+    let (x0, y0, w, h) = rect;
+    let step = WINDOW_SIZE / 2;
+    let mut total_ssim = 0.0;
+    let mut window_count = 0usize;
+
+    let mut y = y0;
+    while y + WINDOW_SIZE <= y0 + h {
+        let mut x = x0;
+        while x + WINDOW_SIZE <= x0 + w {
+            let (mean_a, mean_b, var_a, var_b, covar) =
+                window_stats(a, stride_a, b, stride_b, x, y);
+            total_ssim += ssim_from_stats(mean_a, mean_b, var_a, var_b, covar);
+            window_count += 1;
+            x += step;
+        }
+        y += step;
+    }
+
+    if window_count == 0 {
+        let (mean_a, mean_b, var_a, var_b, covar) = region_stats(a, stride_a, b, stride_b, rect);
+        return ssim_from_stats(mean_a, mean_b, var_a, var_b, covar);
+    }
+    total_ssim / window_count as f64
+}
+
+/// Minimum per-tile SSIM ("tile floor") over `tile_size` px tiles.
+///
+/// Splits the overlapping region into `tile_size` squares (edge tiles
+/// smaller), scores each with the standard 8x8-window SSIM, and returns the
+/// minimum. A single localised defect tanks one tile while barely moving the
+/// global mean, which is what the floor catches.
+pub fn compute_tile_ssim_min(
+    img_a: &[u8],
+    width_a: u32,
+    height_a: u32,
+    img_b: &[u8],
+    width_b: u32,
+    height_b: u32,
+    tile_size: u32,
+) -> f64 {
+    let w = width_a.min(width_b) as usize;
+    let h = height_a.min(height_b) as usize;
+    if w == 0 || h == 0 {
+        return 1.0;
+    }
+
+    let gray_a = to_grayscale(img_a, width_a, height_a);
+    let gray_b = to_grayscale(img_b, width_b, height_b);
+
+    let tile = tile_size.max(1) as usize;
+    let mut floor = 1.0f64;
+    let mut ty = 0;
+    while ty < h {
+        let th = tile.min(h - ty);
+        let mut tx = 0;
+        while tx < w {
+            let tw = tile.min(w - tx);
+            let score = tile_ssim(
+                &gray_a,
+                width_a as usize,
+                &gray_b,
+                width_b as usize,
+                (tx, ty, tw, th),
+            );
+            floor = floor.min(score);
+            tx += tile;
+        }
+        ty += tile;
+    }
+    floor
 }
 
 /// Generate a visual diff image (RGBA) highlighting per-pixel differences in red.

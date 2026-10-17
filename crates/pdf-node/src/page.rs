@@ -10,7 +10,7 @@
 
 use crate::annotation::{self, AnnotationInfo};
 use crate::document::{PageGeometry, RenderOpts, RenderResult, TextBlockInfo, TextSpanInfo};
-use crate::error::to_napi_error;
+use crate::error;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use pdf_engine::{PdfDocument as RustDocument, RenderOptions, ThumbnailOptions};
@@ -47,7 +47,7 @@ impl PdfPage {
         let g = self
             .doc
             .page_geometry(self.index as usize)
-            .map_err(to_napi_error)?;
+            .map_err(error::engine("width"))?;
         let (w, _) = g.effective_dimensions();
         Ok(w)
     }
@@ -58,7 +58,7 @@ impl PdfPage {
         let g = self
             .doc
             .page_geometry(self.index as usize)
-            .map_err(to_napi_error)?;
+            .map_err(error::engine("height"))?;
         let (_, h) = g.effective_dimensions();
         Ok(h)
     }
@@ -69,7 +69,7 @@ impl PdfPage {
         let g = self
             .doc
             .page_geometry(self.index as usize)
-            .map_err(to_napi_error)?;
+            .map_err(error::engine("geometry"))?;
         let (w, h) = g.effective_dimensions();
         Ok(PageGeometry {
             width: w,
@@ -85,7 +85,7 @@ impl PdfPage {
         let rp = self
             .doc
             .render_page(self.index as usize, &ro)
-            .map_err(to_napi_error)?;
+            .map_err(error::engine("render"))?;
         Ok(crate::document::rendered_to_result_inner(rp))
     }
 
@@ -97,8 +97,8 @@ impl PdfPage {
         let ro = convert_render_opts(&options);
         let rp = tokio::task::spawn_blocking(move || doc.render_page(index as usize, &ro))
             .await
-            .map_err(|e| napi::Error::from_reason(format!("join error: {e}")))?
-            .map_err(to_napi_error)?;
+            .map_err(error::join("renderAsync"))?
+            .map_err(error::engine("renderAsync"))?;
         Ok(crate::document::rendered_to_result_inner(rp))
     }
 
@@ -112,8 +112,8 @@ impl PdfPage {
         };
         let rp = tokio::task::spawn_blocking(move || doc.thumbnail(index as usize, &opts))
             .await
-            .map_err(|e| napi::Error::from_reason(format!("join error: {e}")))?
-            .map_err(to_napi_error)?;
+            .map_err(error::join("thumbnail"))?
+            .map_err(error::engine("thumbnail"))?;
         Ok(crate::document::rendered_to_result_inner(rp))
     }
 
@@ -122,7 +122,7 @@ impl PdfPage {
     pub fn text(&self) -> Result<String> {
         self.doc
             .extract_text(self.index as usize)
-            .map_err(to_napi_error)
+            .map_err(error::engine("text"))
     }
 
     /// Extract text from this page (async).
@@ -132,8 +132,8 @@ impl PdfPage {
         let index = self.index;
         tokio::task::spawn_blocking(move || doc.extract_text(index as usize))
             .await
-            .map_err(|e| napi::Error::from_reason(format!("join error: {e}")))?
-            .map_err(to_napi_error)
+            .map_err(error::join("textAsync"))?
+            .map_err(error::engine("textAsync"))
     }
 
     /// Extract structured text blocks from this page.
@@ -142,7 +142,7 @@ impl PdfPage {
         let blocks = self
             .doc
             .extract_text_blocks(self.index as usize)
-            .map_err(to_napi_error)?;
+            .map_err(error::engine("textBlocks"))?;
         Ok(blocks
             .into_iter()
             .map(|b| TextBlockInfo {
@@ -155,6 +155,6 @@ impl PdfPage {
     /// Get annotations on this page.
     #[napi]
     pub fn annotations(&self) -> Result<Vec<AnnotationInfo>> {
-        annotation::page_annotations(self.doc.pdf(), self.index as usize)
+        annotation::page_annotations(self.doc.pdf(), self.index as usize, "annotations")
     }
 }

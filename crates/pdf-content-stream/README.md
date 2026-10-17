@@ -2,9 +2,9 @@
 
 PDF content stream parser, state machine, and text-run locator.
 
-This crate is the **G3 foundation** for Track G (Text Editing Fidelity). It provides:
+This crate is the read-only foundation of PDFluent's text-editing path. It provides:
 
-- **Tokenizer** — byte-exact parser covering all G3 operators (BT/ET, q/Q, cm, Tf, rg/g/k, RG/G/K, Tm, Td, TD, T\*, Tj, TJ, ', ", Ts, Tz, Tw, Tc, TL)
+- **Tokenizer** — byte-exact parser covering the text and graphics-state operators (BT/ET, q/Q, cm, Tf, rg/g/k, RG/G/K, Tm, Td, TD, T\*, Tj, TJ, ', ", Ts, Tz, Tw, Tc, TL)
 - **State machine** — tracks current font, fill/stroke color, text matrix, text position, and graphics state stack
 - **Text-run locator** — maps a logical text span (text + index) to its operator position(s) and operative state
 - **Round-trip serializer** — parse → serialize produces byte-identical output for any accepted input
@@ -59,4 +59,4 @@ match result {
 
 ## Status
 
-G3 — read-only introspection. Write paths (G4+) are not part of this crate.
+Read-only introspection. Write paths are not part of this crate.

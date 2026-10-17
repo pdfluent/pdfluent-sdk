@@ -11,6 +11,24 @@ The metric is characters extracted by `mutool` (an independent extractor, so we
 are not grading our own output with our own reader), whitespace stripped,
 converted over source.
 
+WHICH RETENTION NUMBER IS WHICH (settled 09-09-2026, #442)
+
+Three counts of "text survived" exist in this repository and they are not
+interchangeable, so each is named here once:
+
+  * this file: characters, total over total, per document, against a recorded
+    baseline. It is a REGRESSION gate -- did this change take text away -- and
+    nothing else. On 002_002183 it reads 8.4% where compare.mjs reads 99.1%,
+    because a total-over-total ratio moves with anything that changes the
+    amount of extractable text.
+  * `benchmarks/pdfa/reproduce/compare.mjs`, raw column: words as a multiset,
+    source over output. The published figure's guard.
+  * the same file's real-character column: the same multiset with U+FFFD and
+    private-use code points dropped from each token and U+00AD folded onto
+    U+002D. This is the definition the ratchet (#366) states its target on,
+    because the raw column counts two losses no correct fix can close -- a
+    bullet that gained a mapping, and a soft hyphen read as a hyphen.
+
 Why the bar is "no worse than the baseline" and not "100%":
 
   * Some documents never reached 100%. Five sit at 85–91% on master, from

@@ -29,8 +29,21 @@ PAGINA = "https://pdfluent.com/errors/"
 # ("You must never: Remove a code"), so the fix belongs on the website side.
 # Named individually so the list cannot grow without somebody deciding to.
 GEEN_ANKER: dict[str, str] = {
-    # Empty since 03-09-2026: both licence codes got their section (#320).
     # A code goes in here only with the issue that will publish its section.
+    # Was empty from 03-09-2026 (#320 gave both licence codes theirs); #414 put
+    # E-PAGE-OUT-OF-RANGE here against #426, and #426 has since published the
+    # section, so it came back out on 08-09-2026. Empty is the resting state:
+    # a register that keeps entries after they are fixed stops being read.
+    #
+    # #426 also closed the way the entry got here. The page's input is
+    # generated from error.rs now
+    # (scripts/docs/generate_error_catalogue.py writes docs/sdk-error-codes.json,
+    # scripts/ci/error_catalogue_is_generated.py refuses a stale copy), so a
+    # code without a section is a red gate rather than a line in this dict.
+    #
+    # If you are about to add one anyway, check first whether the section can
+    # simply be published instead. Every entry this dict has held so far was a
+    # code nobody had got round to, not a code that needed a decision.
 }
 
 
@@ -74,10 +87,15 @@ def main() -> int:
         return 1
 
     if opgelost:
-        print(f"FAIL: {len(opgelost)} code(s) now have a section and are still listed as "
-              f"a known gap: {', '.join(sorted(opgelost))}. Remove them from GEEN_ANKER "
-              "so the next missing one is noticed.", file=sys.stderr)
-        return 1
+        # ADVISORY, not a failure. A code with a section is the outcome this
+        # guard exists to produce; the stale GEEN_ANKER line is bookkeeping.
+        # Refusing on it makes a website deploy turn every landing on master
+        # red -- which is what happened when #426's page went live, on a repo
+        # nobody had pushed to. A guard that changes colour because someone
+        # else deployed a site must not hold a merge.
+        print(f"[error-anchors] NOTE: {len(opgelost)} code(s) now have a section and "
+              f"are still listed as a known gap: {', '.join(sorted(opgelost))}. Remove "
+              "them from GEEN_ANKER so the next missing one is noticed.")
 
     print("[error-anchors] OK: every code points at a section that exists, or at a "
           "recorded gap.")

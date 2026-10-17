@@ -28,8 +28,12 @@ bash scripts/release/audit-all-packages.sh --channel cabi
    - `lib/` — built shared library (`cdylib`: `.dylib`/`.so`/`.dll`)
      for the host triple. The static archive is intentionally **not**
      bundled — see "Why no staticlib" below.
-   - `LICENSE` — the PDFluent Commercial License text. Sourced from
-     `crates/pdf-capi/LICENSE`.
+   - `LICENSE` — the AGPL text, one half of the dual licence. Sourced
+     from `crates/pdf-capi/LICENSE`.
+   - `LICENSE-COMMERCIAL` — the commercial text, the other half. Sourced
+     from `crates/pdf-capi/LICENSE-COMMERCIAL`.
+   - `NOTICE` — the license composition notice, as the other channels
+     ship. Sourced from the repository root.
    - `README.md` — consumer-facing build and integration notes. Sourced
      from `crates/pdf-capi/README.md`.
    - `VERSION` — plain text version string (matches `Cargo.toml`).
@@ -37,10 +41,27 @@ bash scripts/release/audit-all-packages.sh --channel cabi
 5. Computes and prints a SHA-256.
 6. Lists the tarball contents in the summary.
 
-The script is host-specific: it bundles whichever libraries the local cargo
-target dir contains. Cross-platform release tarballs are produced by running
-the script on each target host (mac arm64, mac x86_64, linux x86_64, linux
-arm64, windows x86_64).
+## Per-platform release tarballs
+
+The release builds the seven platform libs on their own machines
+(release-natives.yml) and cuts one tarball per platform:
+
+```bash
+bash scripts/release/package_cabi.sh --lib <the built lib> --plat linux-x64 --out dist/capi
+# → dist/capi/pdfluent-capi-<version>-linux-x64.tar.gz
+```
+
+`--plat` is one of the gate's seven platform keys; anything else is
+refused. Each tarball keeps the layout above (single root, `include/`,
+`lib/` with the one lib, `LICENSE`, `LICENSE-COMMERCIAL`, `NOTICE`,
+`README.md`, `VERSION`), so the audit rules below hold per tarball,
+and consumers link the tarball for their platform with the same
+`-I`/`-L`/`-l` line.
+
+Default mode is host-specific: it bundles whichever libraries the local
+cargo target dir contains. Cross-platform release tarballs come from the
+per-platform mode above — one call per platform lib, wherever the libs
+were built — not from running the script on each target host.
 
 ## Tarball layout
 
@@ -84,7 +105,8 @@ The C ABI channel of `audit-all-packages.sh` checks:
 | `VERSION` file present and matches `crates/pdf-capi/Cargo.toml` `version` | P0 | Prevents stale version drift. |
 | `include/` contains `*.h` files | P0 | Headers are the contract; package is unusable without them. |
 | `lib/` is non-empty | P0 | At least one platform library must be present. |
-| `LICENSE` present and contains "PDFluent Commercial License" | P0 | Required by commercial distribution policy. |
+| `LICENSE` present and carries the AGPL text | P0 | One half of the dual licence. |
+| `LICENSE-COMMERCIAL` present and carries the commercial text | P0 | The other half; the gate fails an archive with only one. |
 | `README.md` present | P0 | Consumer guidance is required. |
 | No private paths, GitHub URLs, or SBOM leakage | P0 | Enforced by `audit_package_tree.py`. |
 

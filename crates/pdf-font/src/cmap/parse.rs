@@ -50,7 +50,17 @@ pub(crate) fn parse_inner<'a>(
     let mut last_name: Option<Vec<u8>> = None;
 
     while !scanner.at_end() {
-        let obj = scanner.parse_object().ok()?;
+        // PostScript is a token stream, and an operand we cannot type is not a
+        // reason to throw the map away: `/CMapName /some-file - name.otf,000 def`
+        // leaves a bare `-` behind, and the `bfchar` block after it is perfectly
+        // good. Step over what we cannot read and keep going.
+        let Ok(obj) = scanner.parse_object() else {
+            if scanner.skip_token() {
+                continue;
+            }
+
+            break;
+        };
 
         let Object::Name(name) = &obj else { continue };
 

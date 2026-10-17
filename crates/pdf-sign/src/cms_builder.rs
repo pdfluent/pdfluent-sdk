@@ -402,12 +402,8 @@ fn digest_algo_oid(algo: DigestAlgorithm) -> &'static [u8] {
 ///
 /// Format: YYMMDDHHmmSSZ (13 chars).
 fn utc_time_now() -> String {
-    // Use std::time to get current time, format as UTCTime.
-    let now = std::time::SystemTime::now();
-    let secs = now
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    // Not `SystemTime::now()`: that panics on wasm32 (see clock.rs).
+    let secs = crate::clock::unix_now_secs();
 
     // Convert epoch seconds to calendar date/time.
     let (year, month, day, hour, min, sec) = epoch_to_utc(secs);
@@ -423,7 +419,7 @@ fn utc_time_now() -> String {
 }
 
 /// Convert Unix epoch seconds to (year, month, day, hour, min, sec) in UTC.
-fn epoch_to_utc(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
+pub(crate) fn epoch_to_utc(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
     let days = secs / 86400;
     let time_of_day = secs % 86400;
     let hour = time_of_day / 3600;
@@ -506,6 +502,27 @@ fn extract_issuer_and_serial(cert_der: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two signings a second apart are two different signatures.
+    ///
+    /// The signing time is a *signed* attribute, so it changes the bytes the
+    /// private key covers. That is why the timestamp fetch in `sign_pdf_ltv`
+    /// has to sit between signing and embedding: an authority stamps a
+    /// signature value, and signing again after the fetch would ship a
+    /// signature the token does not cover, which a verifier reports as a broken
+    /// timestamp years later. Drop the signing time from these attributes and
+    /// this test goes red, which is the moment to revisit that ordering.
+    #[test]
+    fn the_signed_attributes_move_when_the_clock_does() {
+        let digest = [0x11u8; 32];
+        let earlier = build_signed_attrs_content(&digest, "260907090000Z", OID_SHA256);
+        let later = build_signed_attrs_content(&digest, "260907090001Z", OID_SHA256);
+        assert_ne!(
+            earlier, later,
+            "the signing time is covered by the signature, so the same document \
+             signed twice is not the same signature"
+        );
+    }
 
     #[test]
     fn der_encoding_helpers() {

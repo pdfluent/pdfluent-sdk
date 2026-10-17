@@ -1,0 +1,168 @@
+{
+  "blocks": [
+    {
+      "index": 0,
+      "kind": "heading",
+      "level": 1,
+      "page": 0,
+      "bbox": [72, 680, 156.46399983978273, 696],
+      "text": "Operations",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Operations", "x": 72, "y": 680, "width": 84.46399983978273, "height": 16, "fontSize": 16, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 1,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [72, 632, 328.2099979496002, 666],
+      "text": "The plant ran to schedule through the quarter and the two lines commissioned in March reached their rated output in the first week of May.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "The plant ran to schedule through the quarter and the two", "x": 72, "y": 656, "width": 255.14999800682068, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "lines commissioned in March reached their rated output in", "x": 72, "y": 644, "width": 256.2099979496002, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "the first week of May.", "x": 72, "y": 632, "width": 94.47999957084656, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 2,
+      "kind": "heading",
+      "level": 2,
+      "page": 0,
+      "bbox": [72, 602, 144.6839993686676, 614],
+      "text": "Maintenance",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Maintenance", "x": 72, "y": 602, "width": 72.6839993686676, "height": 12, "fontSize": 12, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 3,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [72, 572, 346.57999873161316, 594],
+      "text": "The shutdown planned for August was brought forward to July so that it would fall in the same week as the inspection",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "The shutdown planned for August was brought forward to July", "x": 72, "y": 584, "width": 274.57999873161316, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "so that it would fall in the same week as the inspection", "x": 72, "y": 572, "width": 240.6699989414215, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 4,
+      "kind": "paragraph",
+      "page": 1,
+      "bbox": [72, 668, 343.7999981021881, 690],
+      "text": "already booked for the boiler house, and the two were carried out together over five days.",
+      "continuesPrevious": true,
+      "spans": [
+        { "text": "already booked for the boiler house, and the two were carried", "x": 72, "y": 680, "width": 271.7999981021881, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "out together over five days.", "x": 72, "y": 668, "width": 120.619998960495, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 5,
+      "kind": "heading",
+      "level": 1,
+      "page": 1,
+      "bbox": [72, 638, 132.46399983978273, 654],
+      "text": "Finance",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Finance", "x": 72, "y": 638, "width": 60.46399983978273, "height": 16, "fontSize": 16, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 6,
+      "kind": "paragraph",
+      "page": 1,
+      "bbox": [72, 590, 339.37999802589417, 624],
+      "text": "Revenue for the quarter was ahead of the budget laid before the board in January, and the whole of the difference is the contract signed in February.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Revenue for the quarter was ahead of the budget laid before", "x": 72, "y": 614, "width": 267.37999802589417, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "the board in January, and the whole of the difference is the", "x": 72, "y": 602, "width": 260.1499980068207, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "contract signed in February.", "x": 72, "y": 590, "width": 123.93999913215637, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 7,
+      "kind": "paragraph",
+      "page": 2,
+      "bbox": [72, 668, 333.2299986457825, 690],
+      "text": "No further business was brought before the meeting, which rose at four o'clock.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "No further business was brought before the meeting, which", "x": 72, "y": 680, "width": 261.2299986457825, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "rose at four o'clock.", "x": 72, "y": 668, "width": 86.38999929904938, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 8,
+      "kind": "header",
+      "page": 0,
+      "bbox": [72, 720, 170.92999917030335, 730],
+      "text": "Quarterly Report 2026",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Quarterly Report 2026", "x": 72, "y": 720, "width": 98.92999917030335, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 9,
+      "kind": "footer",
+      "page": 0,
+      "bbox": [290, 80, 341.14999967575073, 90],
+      "text": "Page 1 of 3",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Page 1 of 3", "x": 290, "y": 80, "width": 51.149999675750735, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 10,
+      "kind": "header",
+      "page": 1,
+      "bbox": [72, 720, 170.92999917030335, 730],
+      "text": "Quarterly Report 2026",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Quarterly Report 2026", "x": 72, "y": 720, "width": 98.92999917030335, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 11,
+      "kind": "footer",
+      "page": 1,
+      "bbox": [290, 80, 341.14999967575073, 90],
+      "text": "Page 2 of 3",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Page 2 of 3", "x": 290, "y": 80, "width": 51.149999675750735, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 12,
+      "kind": "header",
+      "page": 2,
+      "bbox": [72, 720, 170.92999917030335, 730],
+      "text": "Quarterly Report 2026",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Quarterly Report 2026", "x": 72, "y": 720, "width": 98.92999917030335, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 13,
+      "kind": "footer",
+      "page": 2,
+      "bbox": [290, 80, 341.14999967575073, 90],
+      "text": "Page 3 of 3",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Page 3 of 3", "x": 290, "y": 80, "width": 51.149999675750735, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    }
+  ]
+}

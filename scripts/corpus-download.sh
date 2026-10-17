@@ -20,22 +20,29 @@
 #   - Custom AcroForm/annotated PDFs from public repositories
 #
 # Usage:
-#   ./scripts/corpus-download.sh [--target DIR] [--suite SUITE]
+#   ./scripts/corpus-download.sh [--target DIR] [--suite SUITE] [--count N]
 #
-# Suites: pdfjs, pdfbox, govdocs, all
+# Suites: pdfjs, pdfbox, govdocs, all. --count is the govdocs document count.
 #
 # This script only downloads freely available, public-domain or
 # permissively-licensed test PDFs.
 
 set -euo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 TARGET_DIR="corpus"
 SUITE="all"
+# Measured 07-09-2026: 5000 documents is 25 zips, about 13 minutes and 3.0 GB
+# on the CI runner. The same number the fetcher defaults to, named here so a
+# smaller run is one flag rather than a different script.
+GOVDOCS_COUNT="${GOVDOCS_COUNT:-5000}"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --target) TARGET_DIR="$2"; shift 2 ;;
         --suite)  SUITE="$2"; shift 2 ;;
+        --count)  GOVDOCS_COUNT="$2"; shift 2 ;;
         -h|--help)
             head -16 "$0" | grep '^#' | sed 's/^# \?//'
             exit 0
@@ -128,19 +135,20 @@ download_pdfbox() {
 
 download_govdocs() {
     echo "=== govdocs1 corpus ==="
-    echo "  The govdocs1 corpus (~100K documents) is too large for automatic download."
-    echo "  To manually obtain a subset:"
-    echo "    1. Visit https://digitalcorpora.org/corpora/files"
-    echo "    2. Download govdocs1 threads containing PDFs"
-    echo "    3. Extract PDFs to $TARGET_DIR/govdocs/"
-    echo ""
-    echo "  Recommended: download threads 0-9 (~5,000 PDFs)"
-    mkdir -p "$TARGET_DIR/govdocs"
-    # This branch has never downloaded anything. It prints instructions and
-    # makes a directory; scripts/corpus-download-govdocs.sh is the one that
-    # fetches, and it needs the AWS CLI.
-    niets "govdocs" "this branch only prints instructions — run \
-scripts/corpus-download-govdocs.sh, which needs the AWS CLI"
+    # This branch used to print three steps for a person to follow and then
+    # report a skip, next to a script that does the same job unattended. So a
+    # corpus that was "reproducible from public sources" was reproducible by
+    # somebody reading instructions, which is a different claim. It now calls
+    # the fetcher. (#374)
+    local fetcher="$HERE/corpus-download-govdocs.sh"
+    if [[ ! -x "$fetcher" ]]; then
+        niets "govdocs" "$fetcher is missing or not executable"
+        return
+    fi
+    echo "  Delegating to $(basename "$fetcher") for $GOVDOCS_COUNT documents."
+    if ! bash "$fetcher" --target "$TARGET_DIR/govdocs" --count "$GOVDOCS_COUNT"; then
+        niets "govdocs" "the fetcher could not produce $GOVDOCS_COUNT documents"
+    fi
 }
 
 case "$SUITE" in

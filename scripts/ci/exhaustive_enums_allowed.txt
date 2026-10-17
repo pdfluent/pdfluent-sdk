@@ -1,0 +1,12 @@
+# Public enums that may stay exhaustive even though they are new since v1.0.0.
+#
+# One per line: <rustdoc path> <one-line reason>. The path is the definition
+# path exactly as check_new_public_enums.py reports it (crate name first,
+# through the module the enum is defined in, not through any re-export).
+# Blank lines and lines starting with '#' are ignored. A line without a
+# reason fails the gate rather than silently allowing the enum: an entry
+# here means someone decided the enum is closed for good, and that
+# decision names itself.
+#
+# Empty by default: no exhaustive enum is allowed until someone writes
+# down why it can never grow a variant (e.g. a two-state switch).

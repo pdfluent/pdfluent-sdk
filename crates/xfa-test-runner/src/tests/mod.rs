@@ -198,9 +198,23 @@ impl TestStatus {
 
 pub struct TestConfig {
     pub verapdf_oracle: Option<std::sync::Arc<crate::oracles::verapdf::VeraPdfOracle>>,
+    /// The PDF/A flavour `pdfa_convert` targets. Every other test ignores it.
+    pub pdfa_conformance: pdf_manip::pdfa_xmp::PdfAConformance,
+}
+
+impl Default for TestConfig {
+    /// PDF/A-2b, because that is the flavour every published conformance
+    /// number was measured at before the gate learned the others (#443).
+    fn default() -> Self {
+        Self {
+            verapdf_oracle: None,
+            pdfa_conformance: pdf_manip::pdfa_xmp::PdfAConformance::A2b,
+        }
+    }
 }
 
 pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
+    let pdfa_conformance = config.pdfa_conformance;
     let verapdf_arc = config.verapdf_oracle;
 
     let compliance = if let Some(ref oracle) = verapdf_arc {
@@ -210,9 +224,11 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
     };
 
     let pdfa_convert = if let Some(ref oracle) = verapdf_arc {
-        pdfa_convert::PdfAConvertTest::new().with_verapdf(oracle.clone())
-    } else {
         pdfa_convert::PdfAConvertTest::new()
+            .with_conformance(pdfa_conformance)
+            .with_verapdf(oracle.clone())
+    } else {
+        pdfa_convert::PdfAConvertTest::new().with_conformance(pdfa_conformance)
     };
 
     let pdfua_validate = if let Some(ref oracle) = verapdf_arc {

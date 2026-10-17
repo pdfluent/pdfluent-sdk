@@ -1,5 +1,16 @@
+// Copyright (c) 2026 Innovation Trigger B.V. All rights reserved.
+//
+// This software is proprietary. The PDFluent application is free to use,
+// including for commercial purposes. Redistribution, or extraction or reuse
+// of its components (including the embedded PDF engine), requires a licence.
+// See https://pdfluent.com/license for terms.
+
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Xunit;
 
 namespace PDFluent.Tests
@@ -38,6 +49,36 @@ namespace PDFluent.Tests
                 "startxref\n191\n%%EOF";
             return Encoding.ASCII.GetBytes(pdf);
         }
+
+        /// <summary>
+        /// A file from the repository's <c>fixtures</c> directory, found by
+        /// walking up from the test assembly (same pattern as the office and
+        /// structured suites, generalised to any fixture name).
+        /// </summary>
+        private static byte[] LoadFixture(string name)
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir != null)
+            {
+                string candidate = Path.Combine(dir.FullName, "fixtures", name);
+                if (File.Exists(candidate)) return File.ReadAllBytes(candidate);
+                dir = dir.Parent;
+            }
+            throw new FileNotFoundException(
+                "fixtures/" + name + " not found above " + AppContext.BaseDirectory);
+        }
+
+        // Embedded synthetic AcroForm fixtures, byte-identical to the Java
+        // suite's (from pdfluent-forms gen_acroform_corpus), so the form tests
+        // need no external files and assert the same field names.
+        private const string MultiselectPdfB64 =
+            "JVBERi0xLjcKJbutwN4KMSAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMiAwIG9iago8PC9MZW5ndGggMD4+c3RyZWFtCgplbmRzdHJlYW0gCmVuZG9iagozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMSAwIFIvTWVkaWFCb3hbMCAwIDYxMiA3OTJdL0NvbnRlbnRzIDIgMCBSL1Jlc291cmNlczw8Pj4vQW5ub3RzWzQgMCBSXT4+CmVuZG9iago0IDAgb2JqCjw8L1R5cGUvQW5ub3QvU3VidHlwZS9XaWRnZXQvRlQvQ2gvVChsYW5ndWFnZXMpL0ZmIDIwOTcxNTIvUmVjdFsxMDAgNDAwIDMyMCA1MjBdL09wdFsoRU4pKE5MKShERSkoRlIpXT4+CmVuZG9iago1IDAgb2JqCjw8L0ZpZWxkc1s0IDAgUl0vREEoL0hlbHYgMCBUZiAwIGcpPj4KZW5kb2JqCjYgMCBvYmoKPDwvVHlwZS9DYXRhbG9nL1BhZ2VzIDEgMCBSL0Fjcm9Gb3JtIDUgMCBSPj4KZW5kb2JqCjcgMCBvYmoKPDwvUm9vdCA2IDAgUi9UeXBlL1hSZWYvU2l6ZSA4L1dbMSA0IDJdL0luZGV4WzEgN10vTGVuZ3RoIDQ5Pj5zdHJlYW0KAQAAAA8AAAEAAABCAAABAAAAcQAAAQAAAN0AAAEAAAFVAAABAAABigAAAQAAAcYAAAplbmRzdHJlYW0gCmVuZG9iagoKc3RhcnR4cmVmCjQ1NAolJUVPRg==";
+        private const string PureTextPdfB64 =
+            "JVBERi0xLjcKJbutwN4KMSAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMiAwIG9iago8PC9MZW5ndGggMD4+c3RyZWFtCgplbmRzdHJlYW0gCmVuZG9iagozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMSAwIFIvTWVkaWFCb3hbMCAwIDYxMiA3OTJdL0NvbnRlbnRzIDIgMCBSL1Jlc291cmNlczw8Pj4vQW5ub3RzWzQgMCBSXT4+CmVuZG9iago0IDAgb2JqCjw8L1R5cGUvQW5ub3QvU3VidHlwZS9XaWRnZXQvRlQvVHgvVChmdWxsX25hbWUpL1JlY3RbMTAwIDcwMCAzMjAgNzIwXT4+CmVuZG9iago1IDAgb2JqCjw8L0ZpZWxkc1s0IDAgUl0vREEoL0hlbHYgMCBUZiAwIGcpPj4KZW5kb2JqCjYgMCBvYmoKPDwvVHlwZS9DYXRhbG9nL1BhZ2VzIDEgMCBSL0Fjcm9Gb3JtIDUgMCBSPj4KZW5kb2JqCjcgMCBvYmoKPDwvUm9vdCA2IDAgUi9UeXBlL1hSZWYvU2l6ZSA4L1dbMSA0IDJdL0luZGV4WzEgN10vTGVuZ3RoIDQ5Pj5zdHJlYW0KAQAAAA8AAAEAAABCAAABAAAAcQAAAQAAAN0AAAEAAAE0AAABAAABaQAAAQAAAaUAAAplbmRzdHJlYW0gCmVuZG9iagoKc3RhcnR4cmVmCjQyMQolJUVPRg==";
+
+        private static byte[] MultiselectPdf() => Convert.FromBase64String(MultiselectPdfB64);
+
+        private static byte[] PureTextPdf() => Convert.FromBase64String(PureTextPdfB64);
 
         public void Dispose() { }
 
@@ -224,62 +265,143 @@ namespace PDFluent.Tests
 
         // ---------- Scenario 5: Read AcroForm fields ----------
 
-        [Fact(Skip = "TODO: AcroForm field reading not yet exposed in .NET binding")]
+        // mirrors bindings/java/src/test/java/com/pdfluent/PdfluentDocumentTest.java::readFormFields
+        // NOTE: GetFormFields + FormField (Name/FieldType) do not exist on
+        // PdfDocument yet; the names follow the Java test.
+        [Fact]
         public void ReadFormFields()
         {
-            // TODO: using var doc = PdfDocument.Open(LoadFixture("acroform.pdf"));
-            //       var fields = doc.GetFormFields();
-            //       Assert.NotEmpty(fields);
+            using var doc = PdfDocument.Open(MultiselectPdf());
+            var fields = doc.GetFormFields();
+            Assert.NotEmpty(fields);
+            FormField? languages = null;
+            foreach (var f in fields)
+            {
+                if (f.Name == "languages")
+                {
+                    languages = f;
+                    break;
+                }
+            }
+            Assert.True(languages != null, "languages field missing");
+            Assert.Equal("choice", languages!.FieldType);
         }
 
         // ---------- Scenario 6: Fill text field, save ----------
 
-        [Fact(Skip = "TODO: Form field writing not yet exposed in .NET binding")]
+        // mirrors bindings/java/src/test/java/com/pdfluent/PdfluentDocumentTest.java::writeTextFormFieldRoundTrips
+        // NOTE: SetFormField + Save(path) do not exist on PdfDocument yet;
+        // the names follow the Java test.
+        [Fact]
         public void WriteFormField()
         {
-            // TODO: using var doc = PdfDocument.Open(LoadFixture("acroform.pdf"));
-            //       doc.SetFieldValue("name", "test");
-            //       var saved = doc.Save();
-            //       using var doc2 = PdfDocument.Open(saved);
-            //       Assert.Equal("test", doc2.GetFieldValue("name"));
+            string outPath = Path.GetTempFileName();
+            try
+            {
+                using (var doc = PdfDocument.Open(PureTextPdf()))
+                {
+                    Assert.True(doc.SetFormField("full_name", "Jane Doe"));
+                    doc.Save(outPath);
+                }
+                using var doc2 = PdfDocument.Open(File.ReadAllBytes(outPath));
+                string value = "";
+                foreach (var f in doc2.GetFormFields())
+                {
+                    if (f.Name == "full_name")
+                    {
+                        value = f.Value ?? "";
+                        break;
+                    }
+                }
+                Assert.Equal("Jane Doe", value);
+            }
+            finally
+            {
+                File.Delete(outPath);
+            }
         }
 
         // ---------- Scenario 7: Read annotations ----------
 
-        [Fact(Skip = "TODO: Annotation reading not yet exposed in .NET binding")]
+        // mirrors crates/pdf-python/tests/test_smoke.py::test_annotations_read
+        // NOTE: GetAnnotations + Annotation (AnnotType/Rect) do not exist on
+        // PdfDocument yet; the names follow the Python test. (The Page-level
+        // AnnotEntry calls the type TypeName; the implementer reconciles.)
+        [Fact]
         public void ReadAnnotations()
         {
-            // TODO: using var doc = PdfDocument.Open(CreateTestPdf());
-            //       var annots = doc.GetAnnotations(0);
-            //       Assert.NotNull(annots);
+            using var doc = PdfDocument.Open(LoadFixture("sample.pdf"));
+            var annots = doc.GetAnnotations(0);
+            Assert.NotNull(annots);
+            foreach (var a in annots)
+            {
+                Assert.IsType<string>(a.AnnotType);
+                Assert.IsType<Rect>(a.Rect);
+                // A rect is four edges: reading all four is the shape check
+                // the Python test writes as isinstance(tuple) + len == 4.
+                double[] edges = { a.Rect.X0, a.Rect.Y0, a.Rect.X1, a.Rect.Y1 };
+                Assert.Equal(4, edges.Length);
+            }
         }
 
         // ---------- Scenario 8: Add highlight, save ----------
 
-        [Fact(Skip = "TODO: Annotation creation not yet exposed in .NET binding")]
+        // mirrors crates/pdf-python/tests/test_smoke.py::test_annotation_highlight
+        // NOTE: AddAnnotation + Save(path) do not exist on PdfDocument yet;
+        // the names follow the Python test. (Page.AddHighlightAnnot exists
+        // with a quads shape; the mirrored call keeps Python's page/type/
+        // rect/text form.)
+        [Fact]
         public void AddHighlightAnnotation()
         {
-            // TODO: Create highlight, save, reopen, verify
+            using var doc = PdfDocument.Open(LoadFixture("sample.pdf"));
+            doc.AddAnnotation(0, "highlight", new Rect(72.0, 700.0, 300.0, 720.0), "highlighted text");
+            string outPath = Path.GetTempFileName();
+            try
+            {
+                doc.Save(outPath);
+                using var reloaded = PdfDocument.Open(File.ReadAllBytes(outPath));
+                Assert.Equal(doc.PageCount, reloaded.PageCount);
+                Assert.NotEmpty(reloaded.GetAnnotations(0));
+            }
+            finally
+            {
+                File.Delete(outPath);
+            }
         }
 
         // ---------- Scenario 9: Validate PDF/A ----------
 
-        [Fact(Skip = "TODO: PDF/A validation not yet exposed in .NET binding")]
+        // mirrors crates/pdf-python/tests/test_smoke.py::test_pdfa_validation
+        // NOTE: the static ValidatePdfA + its report (IsCompliant/ErrorCount/
+        // WarningCount/Issues) do not exist on PdfDocument yet; the names
+        // follow the Python test. (A Java JNI-level test also exists but
+        // asserts on the native flat string array, not the public report.)
+        [Fact]
         public void ValidatePdfA()
         {
-            // TODO: using var doc = PdfDocument.Open(CreateTestPdf());
-            //       var report = doc.ValidatePdfA("2b");
-            //       Assert.NotNull(report);
+            var report = PdfDocument.ValidatePdfA(LoadFixture("sample.pdf"));
+            Assert.NotNull(report);
+            Assert.IsType<bool>(report.IsCompliant);
+            Assert.IsType<int>(report.ErrorCount);
+            Assert.IsType<int>(report.WarningCount);
+            Assert.NotNull(report.Issues);
+            Assert.IsAssignableFrom<System.Collections.IEnumerable>(report.Issues);
         }
 
         // ---------- Scenario 10: Merge 2 PDFs ----------
 
-        [Fact(Skip = "TODO: PDF merge not yet exposed in .NET binding")]
+        // mirrors crates/pdf-python/tests/test_smoke.py::test_merge_pdfs
+        // NOTE: the static Merge (Python: merge_pdfs) does not exist on
+        // PdfDocument yet; it returns the merged bytes per the stub shape.
+        [Fact]
         public void MergePdfs()
         {
-            // TODO: var merged = PdfDocument.Merge(pdf1, pdf2);
-            //       using var doc = PdfDocument.Open(merged);
-            //       Assert.Equal(2, doc.PageCount);
+            byte[] merged = PdfDocument.Merge(LoadFixture("sample.pdf"), LoadFixture("multi-page.pdf"));
+            using var doc = PdfDocument.Open(merged);
+            using var docA = PdfDocument.Open(LoadFixture("sample.pdf"));
+            using var docB = PdfDocument.Open(LoadFixture("multi-page.pdf"));
+            Assert.Equal(docA.PageCount + docB.PageCount, doc.PageCount);
         }
 
         // ---------- Scenario 11: Verify signature ----------
@@ -310,12 +432,113 @@ namespace PDFluent.Tests
 
         // ---------- Scenario 12: Extract images ----------
 
-        [Fact(Skip = "TODO: Image extraction not yet exposed in .NET binding")]
+        private static string FindFixture(string name)
+        {
+            string? at = AppContext.BaseDirectory;
+            while (at != null)
+            {
+                string candidate = Path.Combine(at, "fixtures", name);
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+                // Test output nests several levels below the repo root; also
+                // try walking straight up for a fixtures sibling.
+                string sibling = Path.Combine(at, name);
+                if (File.Exists(sibling) && Path.GetFileName(at) == "fixtures")
+                {
+                    return sibling;
+                }
+                at = Path.GetDirectoryName(at);
+            }
+            // Fall back to the working directory walk (dotnet test runs with
+            // the project directory as cwd).
+            string cwd = Directory.GetCurrentDirectory();
+            string? cur = cwd;
+            while (cur != null)
+            {
+                string candidate = Path.Combine(cur, "fixtures", name);
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+                cur = Path.GetDirectoryName(cur);
+            }
+            throw new FileNotFoundException("fixtures/" + name + " not found above " + cwd);
+        }
+
+        private static string NormSpace(string name)
+        {
+            var kept = new StringBuilder();
+            string lower = name.ToLowerInvariant().Replace("device", "").Replace("grey", "gray");
+            foreach (char c in lower)
+            {
+                if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+                {
+                    kept.Append(c);
+                }
+            }
+            return kept.ToString();
+        }
+
+        [Fact]
         public void ExtractImages()
         {
-            // TODO: using var doc = PdfDocument.Open(CreateTestPdf());
-            //       var images = doc.ExtractImages(0);
-            //       Assert.NotNull(images);
+            // Known images through the plain image API (#643). Reads
+            // fixtures/known-images.expected.json; no fixture literals
+            // duplicated. Plain route (PdfDocument.PageImages plus
+            // PdfDocument.DecodeImagePixels): the compat ExtractImage
+            // returns the encoded file, not samples.
+            string pdfPath = FindFixture("known-images.pdf");
+            string jsonPath = FindFixture("known-images.expected.json");
+            var want = new List<(int Width, int Height, string Space, int Comps, int Bpc, string Sha)>();
+            using (var jsonDoc = JsonDocument.Parse(File.ReadAllText(jsonPath)))
+            {
+                foreach (var el in jsonDoc.RootElement.GetProperty("images").EnumerateArray())
+                {
+                    want.Add((
+                        el.GetProperty("width").GetInt32(),
+                        el.GetProperty("height").GetInt32(),
+                        el.GetProperty("colorspace").GetString()!,
+                        el.GetProperty("components").GetInt32(),
+                        el.GetProperty("bpc").GetInt32(),
+                        el.GetProperty("sha256").GetString()!
+                    ));
+                }
+            }
+            want.Sort((a, b) => a.Width != b.Width ? a.Width.CompareTo(b.Width) : a.Height.CompareTo(b.Height));
+            using var doc = PdfDocument.Open(File.ReadAllBytes(pdfPath));
+            using JsonDocument parsed = JsonDocument.Parse(doc.PageImages(0));
+            var refs = new List<(uint Id, int Width, int Height, int Comps, string Space, int Bpc)>();
+            foreach (var el in parsed.RootElement.EnumerateArray())
+            {
+                refs.Add((
+                    el.GetProperty("id").GetUInt32(),
+                    el.GetProperty("width").GetInt32(),
+                    el.GetProperty("height").GetInt32(),
+                    el.GetProperty("components").GetInt32(),
+                    el.GetProperty("color_space").GetString()!,
+                    el.GetProperty("bits_per_component").GetInt32()
+                ));
+            }
+            Assert.Equal(want.Count, refs.Count);
+            Assert.Equal(2, refs.Count);
+            refs.Sort((a, b) => a.Width != b.Width ? a.Width.CompareTo(b.Width) : a.Height.CompareTo(b.Height));
+            using var sha = SHA256.Create();
+            for (int i = 0; i < want.Count; i++)
+            {
+                Assert.Equal(want[i].Width, refs[i].Width);
+                Assert.Equal(want[i].Height, refs[i].Height);
+                Assert.Equal(NormSpace(want[i].Space), NormSpace(refs[i].Space));
+                Assert.Equal(want[i].Bpc, refs[i].Bpc);
+                DecodedImage decoded = doc.DecodeImagePixels(refs[i].Id);
+                Assert.Equal(want[i].Width, decoded.Width);
+                Assert.Equal(want[i].Height, decoded.Height);
+                Assert.Equal(want[i].Comps, decoded.Components);
+                Assert.Equal(want[i].Width * want[i].Height * want[i].Comps, decoded.Pixels.Length);
+                string digest = BitConverter.ToString(sha.ComputeHash(decoded.Pixels)).Replace("-", "").ToLowerInvariant();
+                Assert.Equal(want[i].Sha, digest);
+            }
         }
     }
 }

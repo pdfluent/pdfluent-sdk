@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pdfluent.com/schemas/compat-api-1.json",
+  "title": "PyMuPDF compatibility surface, one class per file",
+  "description": "Contract for specs/api/<class>.yaml. Seeded from the pinned black box (interface shapes only); tiers arrive from specs/api/usage.json via scripts/compat/apply_usage.py. Checked by scripts/compat/validate_spec.py.",
+  "type": "object",
+  "required": ["class", "rust_path", "names", "members"],
+  "additionalProperties": false,
+  "properties": {
+    "class": {
+      "type": "string",
+      "description": "Black-box class name, or 'module' for module-level functions."
+    },
+    "rust_path": {
+      "type": "string",
+      "pattern": "^pdfluent::compat(::[A-Z][A-Za-z0-9]*)?$",
+      "description": "Planned path under the pdfluent::compat module (may not exist yet)."
+    },
+    "names": {
+      "$ref": "#/$defs/bindingNames",
+      "description": "Class name per binding."
+    },
+    "members": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "kind", "signature", "names", "rust", "tier", "lane", "status", "tests"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Black-box member name."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["method", "property", "operator", "constructor", "function"]
+          },
+          "signature": {
+            "type": "string",
+            "pattern": "^\\(",
+            "description": "Parameter list from inspect.signature only, receiver stripped; '()' for properties, '(...)' when not introspectable."
+          },
+          "names": {
+            "$ref": "#/$defs/bindingNames",
+            "description": "Member name per binding (planned; unique within the class)."
+          },
+          "rust": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Planned Rust path relative to pdfluent::compat (Class::member, Class::new, or a bare function name)."
+          },
+          "tier": {
+            "type": "string",
+            "enum": ["T1", "T2", "T3", "unranked"],
+            "description": "Usage tier (T1 = top 80% of calls, T2 = next 15%); unranked until the usage job fills it."
+          },
+          "lane": {
+            "type": "string",
+            "enum": ["P0", "L1", "L2", "L3", "L4", "L5"],
+            "description": "P0 value types; L1 text; L2 document ops; L3 pixmap/images; L4 editing; L5 module-level entry points."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["missing", "partial", "done", "differs"],
+            "description": "Whether our tree already carries an equivalent with compatible semantics."
+          },
+          "tests": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_]+([.-][A-Za-z0-9_]+)*$",
+              "description": "Differential case id, tests/compat/cases/<lane>/<case_id>.py; dotted or kebab, first segment a lane."
+            }
+          },
+          "contract": {
+            "type": "string",
+            "description": "Guaranteed behaviour where the member deliberately differs from the reference; only with status differs."
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "bindingNames": {
+      "type": "object",
+      "required": ["python", "node", "java", "dotnet"],
+      "additionalProperties": false,
+      "properties": {
+        "python": {"type": "string", "minLength": 1},
+        "node": {"type": "string", "minLength": 1},
+        "java": {"type": "string", "minLength": 1},
+        "dotnet": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

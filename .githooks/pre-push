@@ -26,11 +26,59 @@
 # more work rather than less.
 BAAN=--fast
 LANDING=--landing
+# WHO STARTED THIS (23-09-2026). git is this hook's parent. A push that is
+# aborted leaves the hook, the lane script and the remote gate orphaned, and
+# the gate kept its place in the machine queue for an hour and a half, twice.
+# remote_gate.sh checks this pid while it waits and leaves when it is gone.
+export XFA_GATE_PUSH_PID="$PPID"
 [ "${LANE:-}" = full ] && LANDING=--full
 refs=0
 deletions_only=1
+# A TAG THAT ADDS NO COMMIT (#541). A release tag is pushed on a commit that is
+# already on master, so it publishes nothing the landing lane has not already
+# judged -- and running the lane for it does not merely waste ten minutes: the
+# commit-message guard reads `github/master..HEAD`, which is empty for such a
+# push, and refuses, correctly, because an empty range approves everything. So
+# `git push --tags` could not pass the gate at all, and every release tag had to
+# go around it.
+#
+# Measured, not assumed: `adds_nothing` stays 1 only while every ref is a tag
+# whose object is already reachable from the remote's master. A tag on a commit
+# that never landed is a way to publish code, and that one takes the full lane.
+tags_only=1
+adds_nothing=1
 while read -r _local_ref local_sha remote_ref _remote_sha; do
   refs=$((refs + 1))
+  case "$remote_ref" in
+    refs/tags/*)
+      # `^{}` peels an annotated tag to the commit it names; for a lightweight
+      # tag it is the commit already.
+      _doel="$(git rev-parse -q --verify "${local_sha}^{commit}" 2>/dev/null || true)"
+      # FAIL CLOSED WHEN THERE IS NO MASTER TO COMPARE WITH (codex, #1896).
+      # This used to fall back to HEAD, and in a fresh clone -- or one whose
+      # remote is called something else -- a tag on the current unlanded commit
+      # is its own ancestor, so it took the shortcut and skipped the gate. The
+      # question is "does master already have this", and without master the
+      # answer is not yes.
+      _meester="$(git rev-parse -q --verify refs/remotes/github/master 2>/dev/null || true)"
+      if [ -z "$_doel" ] || [ -z "$_meester" ] \
+         || ! git merge-base --is-ancestor "$_doel" "$_meester" 2>/dev/null; then
+        adds_nothing=0
+        # A tag on an unlanded commit is judged like a branch (codex, #1954).
+        [ -n "$_doel" ] && pushed_refs="${pushed_refs:-} $_doel:"
+      fi
+      ;;
+    *) tags_only=0; adds_nothing=0
+       # EVERY updated ref, with the base it is measured from (codex, #1954):
+       # a push of master and a branch together must not be judged by the
+       # last one alone.
+       case "$local_sha" in ''|*[!0]*)
+         # Each ref from its own remote tip -- the change this push makes,
+         # not everything the branch ever held (codex, #1954); a new ref has
+         # none and falls back to where it left master.
+         pushed_refs="${pushed_refs:-} $local_sha:$_remote_sha" ;;
+       esac ;;
+  esac
   # NOT a comparison with forty zeros, and not a prefix test. Every hash width
   # spells "no object" as all zeros -- a sha-256 repository writes sixty-four --
   # while a real sha may well begin with a zero. So: empty, or holding any
@@ -53,6 +101,13 @@ done
 # in a way this cannot read -- by hand, or by a git that changed its contract --
 # and answering "deletions only" there would skip every gate on a push that may
 # carry anything. Not understanding the input has to cost more work, never less.
+if [ "$refs" -gt 0 ] && [ "$tags_only" = 1 ] && [ "$adds_nothing" = 1 ] \
+   && [ "$deletions_only" = 0 ]; then
+  echo "[pre-push] tags only ($refs ref(s)), each on a commit master already has —"
+  echo "  nothing is added, so nothing the gates measure has changed. The commits"
+  echo "  under these tags passed the landing lane when they landed. (#541)"
+  exit 0
+fi
 if [ "$refs" -gt 0 ] && [ "$deletions_only" = 1 ]; then
   # The one guard a deletion can fail. Nothing else here has an input: no commit
   # is published, no tree changes, and the message guard below would judge the
@@ -96,15 +151,88 @@ fi
 if [ "$BAAN" = --full ]; then
   echo "[pre-push] pushing to master — running the FULL local CI gate (this compiles)…"
 elif [ "$BAAN" = --landing ]; then
-  echo "[pre-push] pushing to master — running the LANDING local CI gate: every gate that"
-  echo "  does not compile, and a build and test of the crates this landing touches."
+  echo "[pre-push] pushing to master — running the LANDING local CI gate: production guards,"
+  echo "  relevant infrastructure regressions, and the affected crates and dependents."
   echo "  The whole workspace runs on master, on the runner. LANE=full to compile it all here."
 else
   echo "[pre-push] running the fast local CI gate; the compiling gates run on the push to master…"
 fi
 
-bash scripts/ci/local_ci_gate.sh "$BAAN"
-rc=$?
+# A PUSH THAT TOUCHES NO CRATE NEVER BUYS A MACHINE (owner, 23-09-2026). What
+# an instance buys is a compiler, and a diff of scripts, workflows and docs has
+# nothing to compile: its gates are file scans, and they run here in minutes.
+# The base is the one the landing is measured from, or where the branch left
+# master. A crate, the workspace manifest, the lock file or the toolchain pin
+# in the diff keeps the choice as it was; so does a base that cannot be found,
+# because not knowing what changed must never be the cheaper answer.
+if [ "${XFA_GATE_REMOTE:-0}" = 1 ] && [ -n "${pushed_refs:-}" ]; then
+  _geen_krat=1; _bestanden=0
+  for _paar in $pushed_refs; do
+    _sha="${_paar%%:*}"; _basis="${_paar#*:}"
+    case "$_basis" in *[!0]*) : ;; *) _basis="" ;; esac
+    if [ -z "$_basis" ]; then
+      for _m in refs/remotes/github/master refs/remotes/origin/master; do
+        _basis="$(git merge-base "$_m" "$_sha" 2>/dev/null)" && [ -n "$_basis" ] && break
+        _basis=""
+      done
+    fi
+    if [ -z "$_basis" ] || ! _veranderd="$(git diff --name-only "$_basis" "$_sha" 2>/dev/null)"; then
+      _geen_krat=0; break
+    fi
+    _bestanden=$(( _bestanden + $(printf '%s\n' "$_veranderd" | grep -c .) ))
+    # A workspace member outside crates/ is a crate too: tools/ (codex, #1954).
+    if printf '%s\n' "$_veranderd" | grep -qE '^(crates/|tools/|Cargo\.toml$|Cargo\.lock$|rust-toolchain(\.toml)?$|\.cargo/)'; then
+      _geen_krat=0; break
+    fi
+  done
+  if [ "$_geen_krat" = 1 ]; then
+    echo "[pre-push] no crate in this push ($_bestanden file(s), none in a workspace member):"
+    echo "  the $BAAN lane runs on this machine and buys nothing (owner rule 23-09-2026)."
+    XFA_GATE_REMOTE=0
+    GATE_LOCAL_OK=1
+  fi
+fi
+
+# WHERE THE GATE RUNS IS A CHOICE, AND IT IS NEVER MADE IN SILENCE (#591).
+# XFA_GATE_REMOTE=1 runs the lane on an instance bought for it. Anything else
+# would run it on this Mac -- and on 23-09-2026 two landings did exactly that
+# for fifty-four minutes each, holding the gate lock, because the landing
+# script never set the variable and this hook said nothing about it. So a gate
+# on this machine is taken only when asked for with GATE_LOCAL_OK=1; otherwise
+# the push stops here with the reason, and nothing has been checked.
+if [ "${XFA_GATE_REMOTE:-0}" != 1 ] || [ ! -x scripts/cos/remote_gate_lane.sh ]; then
+  if [ "${XFA_GATE_REMOTE:-0}" = 1 ]; then
+    waarom="XFA_GATE_REMOTE=1 but scripts/cos/remote_gate_lane.sh is not in this checkout"
+  else
+    waarom="XFA_GATE_REMOTE is '${XFA_GATE_REMOTE:-<unset>}', not 1"
+  fi
+  if [ "${GATE_LOCAL_OK:-0}" != 1 ]; then
+    echo "[pre-push] GATE REFUSED TO RUN ON THIS MAC: $waarom." >&2
+    echo "  XFA_GATE_REMOTE=1 runs the $BAAN lane on an instance; GATE_LOCAL_OK=1 runs" >&2
+    echo "  it here on purpose. NOTHING WAS CHECKED: this is not a verdict on your code." >&2
+    exit 1
+  fi
+  echo "[pre-push] GATE ON THIS MAC, as asked (GATE_LOCAL_OK=1): $waarom."
+fi
+if [ "${XFA_GATE_REMOTE:-0}" = 1 ] && [ -x scripts/cos/remote_gate_lane.sh ]; then
+  bash scripts/cos/remote_gate_lane.sh "$BAAN"
+  rc=$?
+  if [ $rc -eq 124 ]; then
+    echo "[pre-push] BLOCKED: the remote gate ran out of time." >&2
+    echo "  NOTHING WAS CHECKED: this is not a verdict on your code. Push again, or" >&2
+    echo "  raise GATE_TIMEOUT_SECONDS if the lane has genuinely grown." >&2
+    exit 1
+  fi
+  if [ $rc -eq 75 ]; then
+    echo "[pre-push] BLOCKED: no instance could be had and no local fallback ran." >&2
+    echo "  NOTHING WAS CHECKED: this is not a verdict on your code. GATE_LOCAL_OK=1" >&2
+    echo "  lets the remote gate fall back to this machine, on purpose." >&2
+    exit 1
+  fi
+else
+  bash scripts/ci/local_ci_gate.sh "$BAAN"
+  rc=$?
+fi
 if [ $rc -eq 3 ]; then
   # Its own message, because these two states are not the same thing and used to
   # print the same sentence. A gate that fails has judged your code; a disk below
@@ -113,6 +241,36 @@ if [ $rc -eq 3 ]; then
   echo "[pre-push] BLOCKED: not enough disk to measure anything — see the headroom" >&2
   echo "  report above for what can be swept. NOTHING WAS CHECKED: this is not a" >&2
   echo "  verdict on your code. PRE_PUSH_SKIP=1 would push code no gate has read." >&2
+  exit 1
+fi
+if [ $rc -eq 5 ]; then
+  # Third state, next to the disk floor at 3 and the moved tree at 4: the gate
+  # never ran. Another gate held the machine past the wait, and this push is
+  # unjudged rather than judged badly (#359).
+  echo "[pre-push] BLOCKED: another local gate held this machine for the whole wait." >&2
+  echo "  NOTHING WAS CHECKED: this is not a verdict on your code. See who has it" >&2
+  echo "  with 'bash scripts/ci/_one_gate_at_a_time.sh --holder' and push again when" >&2
+  echo "  it is finished. PRE_PUSH_SKIP=1 would push code no gate has read." >&2
+  exit 1
+fi
+if [ $rc -eq 6 ]; then
+  # Fourth state: the machine, not the code. A missing CA bundle or a missing
+  # pyyaml surfaces deep inside whichever guard happens to need it, as a red
+  # gate about an upstream check -- which is where an afternoon goes (#425).
+  echo "[pre-push] BLOCKED: this machine is missing what the gates run on." >&2
+  echo "  The install line is printed above. NOTHING WAS CHECKED: this is not a" >&2
+  echo "  verdict on your code, and PRE_PUSH_SKIP=1 would push code no gate read." >&2
+  exit 1
+fi
+if [ $rc -eq 7 ]; then
+  # Fifth state: the requirements preflight (m482), which runs first inside the
+  # lane this hook already calls. Same shape as the interpreter refusal above:
+  # the complete list of what is missing is printed above, and nothing was
+  # judged.
+  echo "[pre-push] BLOCKED: this machine is missing what the gates run on." >&2
+  echo "  The complete list is printed above. NOTHING WAS CHECKED: this is not" >&2
+  echo "  a verdict on your code, and PRE_PUSH_SKIP=1 would push code no gate" >&2
+  echo "  read. 'bash scripts/ci/local_ci_gate.sh --preflight-only' re-checks." >&2
   exit 1
 fi
 if [ $rc -ne 0 ]; then

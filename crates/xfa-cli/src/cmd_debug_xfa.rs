@@ -4,7 +4,7 @@
 //! the XFA flatten pipeline.  Not a user-facing feature.
 //!
 //! Usage:
-//!   pdfluent debug-xfa <input.pdf> [--format tree|json]
+//!   xfa-runner debug-xfa <input.pdf> [--format tree|json]
 
 // Copyright (c) 2026 Innovation Trigger B.V.
 //

@@ -143,7 +143,24 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    if "trap sweep_logs EXIT" not in GATE.read_text(encoding="utf-8"):
+    # THE EXIT TRAP MAY CARRY MORE THAN ONE HANDLER.
+    #
+    # This was a literal search for `trap sweep_logs EXIT` until 07-09-2026,
+    # when the gate gained a second thing to do on the way out -- hand back the
+    # machine-wide gate lock (#359) -- and the trap became
+    # `trap 'release_the_gate_lock; sweep_logs' EXIT`. The sweep was still
+    # wired; the search was for one spelling of the wiring. A guard that fails
+    # on a correct change teaches people to route around it, which costs more
+    # than the thing it guards.
+    #
+    # What matters is the property, so that is what is asked: an EXIT trap that
+    # names sweep_logs, alone or beside another handler.
+    trap_wired = re.search(
+        r"^trap\s+(?:'[^']*\bsweep_logs\b[^']*'|\"[^\"]*\bsweep_logs\b[^\"]*\"|sweep_logs)\s+EXIT",
+        GATE.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    if not trap_wired:
         print(
             "[gate-logs] `sweep_logs` is defined but no longer hangs on EXIT, "
             "so nothing runs it.",

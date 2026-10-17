@@ -87,6 +87,13 @@ if [[ -n "$(git status --porcelain || true)" ]]; then
     exit 1
 fi
 
+# THE MILESTONE GATE, BEFORE ANYTHING IS AUDITED OR PUBLISHED (#575).
+# One file, called by every publish path, because a rule that lives in one of
+# two of them is a rule with a way round it (codex, #1930).
+if ! bash "${SCRIPT_DIR}/the_structured_extraction_is_at_parity.sh"; then
+    exit 1
+fi
+
 # Summary table.
 echo "Release-train guard"
 echo "==================="

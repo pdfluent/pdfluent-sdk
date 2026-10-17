@@ -1,0 +1,26 @@
+[package]
+name = "markup-extract"
+version.workspace = true
+edition.workspace = true
+# publish = false: MVP. The block mapping is not settled yet, so the crate
+# stays out of the publish set until then (the same shape as docx-extract).
+publish = false
+# AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+repository.workspace = true
+homepage = "https://pdfluent.com"
+documentation = "https://pdfluent.com/docs"
+description = "HTML, Markdown and plain-text extraction onto pdf-engine blocks"
+readme = "README.md"
+keywords = ["html", "markdown", "extraction", "text"]
+categories = ["text-processing", "parser-implementations"]
+
+# Dependency licences, reviewed for this crate (allowed: MIT, Apache-2.0 or
+# BSD only):
+# - html5ever 0.38: MIT OR Apache-2.0 (https://github.com/servo/html5ever).
+# - pulldown-cmark 0.13: MIT (https://github.com/pulldown-cmark/pulldown-cmark).
+# - pdf-engine: first-party, AGPL-3.0-only OR LicenseRef-PDFluent-Commercial.
+[dependencies]
+pdf-engine = { path = "../pdf-engine", version = "=1.1.0" }
+html5ever = "0.38"
+pulldown-cmark = "0.13"

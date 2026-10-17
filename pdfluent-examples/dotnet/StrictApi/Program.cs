@@ -37,25 +37,9 @@ Console.WriteLine(new string('─', 50));
 
 try
 {
-    // ── G0: License activation ──────────────────────────────────────────────
-    // Optional in Trial mode. Reads PDFLUENT_LICENSE_KEY from env when set, or
-    // falls back to a Developer-tier demo key for this offline example.
-    string envKey = Environment.GetEnvironmentVariable("PDFLUENT_LICENSE_KEY") ?? string.Empty;
-    string demoKey = envKey.Length > 0 ? envKey : "tier:developer";
-    try
-    {
-        Licensing.ActivateKey(demoKey);
-    }
-    catch (PdfluentLicenseException ex) when (ex.NativeStatus == PdfStatus.ErrorLicenseAlreadySet)
-    {
-        // Another component already activated this process — fine, continue.
-    }
-
-    LicenseStatus license = Licensing.GetStatus();
-    Console.WriteLine($"License : tier={license.Tier} source={license.Source} " +
-                      $"active={license.Active}");
-    Console.WriteLine($"EffectiveTier (int): {Licensing.EffectiveTier}");
-    Console.WriteLine();
+    // There is no licence step. The package has no key, no activation call
+    // and no tier: every feature works in every build (#226). The licence you
+    // accept is AGPL-3.0 or the commercial one, and neither is checked here.
 
     // ── G1: Open ─────────────────────────────────────────────────────────────
     using PdfDocument doc = useFile
@@ -131,12 +115,6 @@ catch (PdfluentRenderException ex)
 {
     Console.Error.WriteLine($"Render error [{ex.NativeStatus}]: {ex.Message}");
     Environment.Exit(6);
-}
-catch (PdfluentLicenseException ex)
-{
-    Console.Error.WriteLine($"License error [{ex.Code}] [{ex.NativeStatus}]: {ex.Message}");
-    Console.Error.WriteLine("Tip: set PDFLUENT_LICENSE_KEY or call Licensing.ActivateKey first.");
-    Environment.Exit(7);
 }
 catch (PdfluentException ex)
 {

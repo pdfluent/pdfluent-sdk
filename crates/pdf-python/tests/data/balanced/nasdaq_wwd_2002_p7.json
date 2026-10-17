@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "fixture": "crates/pdf-engine/tests/fixtures/doclaynet/nasdaq_wwd_2002_p7.pdf",
+  "quality": "balanced",
+  "argv": [
+    "extract",
+    "crates/pdf-engine/tests/fixtures/doclaynet/nasdaq_wwd_2002_p7.pdf",
+    "--format",
+    "md",
+    "--quality",
+    "balanced",
+    "--model-dir",
+    "<model-dir>",
+    "--table-model-dir",
+    "<table-model-dir>"
+  ],
+  "notes": "CLI reference recorded with --quality balanced plus --table-model-dir (TATR v1.1-all table structure over the balanced tier's kept table regions) and --model-dir (layout-heron-ep03): the tier's exact markdown plus the block kinds in order, the headings, and the table cell grids parsed from it with the test parser's rules.",
+  "markdown": "Market Drivers Shape Our Energy Control Technologies Strategy\n\nEMISSIONS RELIABILITY COST GLOBAL SOURCING\n\n## Power Generation\n\n- Power Plants\n\n- Distributed Power\n\n- Back-Up Power\n\n## Transportation\n\n- Marine Propulsion\n\n- Locomotive\n\n- Off-Highway Equipment\n\n- Alternative Fuel Trucks and Buses\n\n## Process Industries\n\n- Oil and Gas\n\n- Petro Chemical\n\n- Paper\n\n- Sugar\n\n## Our customers include:\n\n## Our customers include:\n\n## Our customers include:\n\nAlstom Caterpillar Emerson Electric GE Power Systems Kawasaki Mitsubishi Pratt & Whitney Siemens-Westinghouse Wärtsilä\n\nCaterpillar Caterpillar Kiel Cummins General Motors EMD GE Transportation Systems MAN Group Wärtsilä\n\nDresser-Rand Ebara GE Power Systems Mitsubishi Rolls-Royce\n\n**Aerospace**\n\n- Commercial\n\n- Military\n\n- Business/General Aviation\n\n- Aftermarket Services and Support\n\n## Our customers include:\n\nGE Aircraft Engines Honeywell Pratt & Whitney Pratt & Whitney Canada Rolls-Royce Rolls-Royce Deutschland U.S. Government Williams International Major airlines worldwide",
+  "kinds": [
+    "paragraph",
+    "paragraph",
+    "heading",
+    "list_item",
+    "list_item",
+    "list_item",
+    "heading",
+    "list_item",
+    "list_item",
+    "list_item",
+    "list_item",
+    "heading",
+    "list_item",
+    "list_item",
+    "list_item",
+    "list_item",
+    "heading",
+    "heading",
+    "heading",
+    "paragraph",
+    "paragraph",
+    "paragraph",
+    "paragraph",
+    "list_item",
+    "list_item",
+    "list_item",
+    "list_item",
+    "heading",
+    "paragraph"
+  ],
+  "headings": [
+    {
+      "level": 2,
+      "text": "Power Generation"
+    },
+    {
+      "level": 2,
+      "text": "Transportation"
+    },
+    {
+      "level": 2,
+      "text": "Process Industries"
+    },
+    {
+      "level": 2,
+      "text": "Our customers include:"
+    },
+    {
+      "level": 2,
+      "text": "Our customers include:"
+    },
+    {
+      "level": 2,
+      "text": "Our customers include:"
+    },
+    {
+      "level": 2,
+      "text": "Our customers include:"
+    }
+  ],
+  "tables": []
+}

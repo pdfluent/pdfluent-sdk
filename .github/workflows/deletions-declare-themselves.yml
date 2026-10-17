@@ -34,15 +34,29 @@ on:
 
 permissions:
   contents: read
+  # For the base lookup below, and nothing else.
+  actions: read
 
 concurrency:
-  # A push gets its OWN group, and is never cancelled. Two pushes to master in
-  # quick succession used to share one: A carries an undeclared deletion, B is
-  # innocent, A's run is cancelled, and B compares A..B where the file is already
+  # ONE RUN PER REF, AND THE NEWEST ONE WINS (#350).
+  #
+  # This block used to give every push its own group so that no run was ever
+  # cancelled, and the reason was real: A carries an undeclared deletion, B is
+  # innocent, A is cancelled, and B compares A..B where the file is already
   # absent on both sides -- green, with A never judged. A cancelled run is not a
-  # passing run, and here it silently became one. (codex, #1635)
-  group: deletions-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # passing run, and there it silently became one. (codex, #1635)
+  #
+  # What that bought was a run per landing on one desktop runner: forty to
+  # ninety a day, and on 06-09-2026 twenty-nine of them queued at once with the
+  # oldest commit under test two hours old.
+  #
+  # Both hold now, because the range moved. The step below starts from the head
+  # of the last run of this workflow that SUCCEEDED rather than from this push's
+  # `before`, so a cancelled A is re-judged by B -- the commits of a superseded
+  # run are inside the next run's range by construction. Superseding is safe
+  # exactly because the range no longer assumes the previous run finished.
+  group: deletions-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   deletions-guard:
@@ -69,7 +83,7 @@ jobs:
     # rule in orchestration_stays_hosted.py is about code a caller chooses --
     # a pull request's head or a dispatch ref -- and a push to master is neither:
     # it is already merged.
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: [self-hosted, xfa-local-checks]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -96,6 +110,9 @@ jobs:
       - name: The deletion guard bites in both directions
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_a_deletion_declares_itself.py
+      - name: The baseline guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_rerendered_baseline_declares_itself.py
       - name: The wiring guard bites in both directions
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_every_test_is_run.py
@@ -108,11 +125,51 @@ jobs:
       - name: Every test file is executed by something
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/every_test_is_run.py
+      # THE LAST COMMIT THIS GUARD ACTUALLY JUDGED, not the last one it was
+      # started for.
+      #
+      # `github.event.before` is the previous push's head, so consecutive runs
+      # tile the history -- as long as every run finishes. A cancelled or
+      # infrastructure-failed run leaves a hole nothing ever looks at again,
+      # which is why this workflow used to refuse to be cancelled at all, and
+      # why it then queued behind itself forty times a day (#350).
+      #
+      # The head of the last SUCCEEDED run is a base that closes the hole: it is
+      # the newest commit about which this guard has actually reached a verdict.
+      # Cancel that run and its commits are simply inside the next run's range.
+      #
+      # Failure to read it is not a failure here: the step falls back to
+      # `before`, which is the behaviour that stood before this change, and says
+      # so. A guard that stops working when an API call does is worse than one
+      # with a narrower range.
+      - name: The last commit this guard reached a verdict about
+        id: laatste
+        if: ${{ !cancelled() && github.event_name == 'push' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/deletions-declare-themselves.yml/runs"
+          antwoord=$(curl -sS --fail -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "${api}?status=success&branch=master&per_page=1") || {
+            echo "::warning::could not read the last successful run of this workflow; falling back to this push's before-sha, which leaves a cancelled run's commits unjudged."
+            exit 0
+          }
+          sha=$(printf '%s' "$antwoord" | python3 -c 'import json, sys; runs = json.load(sys.stdin).get("workflow_runs", []); print(runs[0]["head_sha"] if runs else "")')
+          # An ancestor of HEAD or nothing. A rewritten history, or a first run
+          # of a renamed workflow, gives a sha this checkout cannot reach, and a
+          # range from an unrelated commit is a diff of everything.
+          if [ -n "$sha" ] && git merge-base --is-ancestor "$sha" HEAD 2>/dev/null; then
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+            echo "base is the head of the last successful run: $sha"
+          else
+            echo "::notice::no reachable head from an earlier successful run (${sha:-none}); falling back to this push's before-sha."
+          fi
+
       - name: Every deletion is declared by the commit that performs it
         if: ${{ !cancelled() }}
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_BEFORE: ${{ steps.laatste.outputs.sha || github.event.before }}
         run: |
           set -euo pipefail
           BASE="${PR_BASE:-}"
@@ -136,3 +193,31 @@ jobs:
           esac
           git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin "$BASE"
           python3 scripts/ci/a_deletion_declares_itself.py --base "$BASE" $EXACT
+      # The same range, the same question one step over (#293): a declaration
+      # that a reference image moved on purpose. It shares this workflow rather
+      # than starting another because it needs exactly what the step above
+      # needs -- a base revision and a checkout -- and a second workflow to run
+      # two Python scripts is a second thing to keep alive.
+      - name: Every re-rendered baseline is declared by the commit that moves it
+        if: ${{ !cancelled() }}
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          BASE="${PR_BASE:-}"
+          EXACT=""
+          if [ -z "$BASE" ]; then
+            BASE="${PUSH_BEFORE:-}"
+            EXACT="--exact-base"
+          fi
+          case "$BASE" in
+            ""|0000000000000000000000000000000000000000)
+              echo "SKIPPED (not a pass): this event carries no base revision, so" >&2
+              echo "  there is nothing to compare against and no re-render could be" >&2
+              echo "  detected. That is not the same as an unchanged reference." >&2
+              exit 3
+              ;;
+          esac
+          git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin "$BASE"
+          python3 scripts/ci/a_rerendered_baseline_declares_itself.py --base "$BASE" $EXACT

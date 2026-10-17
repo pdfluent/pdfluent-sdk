@@ -1,0 +1,21 @@
+[package]
+name = "pdf-substitute-fonts"
+version = "1.1.0"
+edition = "2021"
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+description = "A PDF library's bundled substitute fonts. Metric-compatible replacements for the common non-Standard-14 typefaces, so a PDF/A conversion produces the same bytes on every machine."
+repository = "https://github.com/pdfluent/pdfluent-sdk"
+keywords = ["pdf", "pdfa", "fonts", "liberation", "reproducible"]
+categories = ["text-processing"]
+include = ["src/**", "assets/**", "LICENSE", "LICENSE-COMMERCIAL", "LICENSE-Liberation.txt", "LICENSE-NotoNaskhArabic.txt", "PROVENANCE.sha256", "README.md"]
+
+[features]
+default = ["bundled"]
+# The fonts themselves, compiled in. Off gives a crate that answers "no" to
+# every lookup, for builds where four megabytes matter more than a substitute
+# that keeps the original's widths. Reachable only for someone who depends on
+# pdf-manip on its own: inside this workspace cargo unifies the feature back on
+# through pdfluent and pdf-redact.
+bundled = []
+
+[dependencies]

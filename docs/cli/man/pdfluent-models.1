@@ -1,0 +1,34 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH PDFLUENT-MODELS 1  "pdfluent 1.1.0" PDFluent
+.SH NAME
+pdfluent\-models \- Install and inspect the opt\-in model tiers\*(Aq files
+.SH SYNOPSIS
+\fBpdfluent models\fR [\fB\-\-json\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Install and inspect the opt\-in model tiers\*(Aq files
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Machine\-readable JSON envelope on stdout
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Quiet: human mode prints data only (no warnings or progress notes)
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose stderr diagnostics (repeat for more)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+pdfluent\-models\-install(1)
+Download and verify model packages into the per\-user model dir. The only command that ever downloads a model or runtime library
+.TP
+pdfluent\-models\-status(1)
+Show what is installed in the per\-user model dir, and whether the pins verify
+.SH VERSION
+v1.1.0

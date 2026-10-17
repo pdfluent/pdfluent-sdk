@@ -110,3 +110,10 @@ Adding a re-export because a page of copy mentions it is how this happened.
   deliberately not one of the four: a block naming an API that does not exist is
   the thing being measured, and moving it into the register would be moving the
   goalposts.
+- On the pages a reader is sent to in order to copy code — `how-to-guides/` and
+  `how-to/`, where the page is not hidden — that gate judges by name and not by
+  number. Such a program compiles, or it stands in `docs/site/guides_debt.toml`,
+  and that list may only shrink. The ceiling in `docs/SITE_BLOCKS.md` could not
+  see who carried the damage: `fix_pdf_a_errors` and `PdfAFixOptions` stood on a
+  page in the sitemap for months, three broken programs inside a ceiling of 97,
+  paid for by repairs elsewhere (#499).

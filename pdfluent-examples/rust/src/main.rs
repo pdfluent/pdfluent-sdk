@@ -4,11 +4,14 @@
 //!
 //! Demonstrates the canonical SDK lifecycle:
 //!
-//! 1. Optional license activation (placeholder key — replace with your own).
-//! 2. Open a PDF from disk.
-//! 3. Read page count + metadata.
-//! 4. Extract text from the first page.
-//! 5. Typed error handling using the `Error` enum (no string matching).
+//! 1. Open a PDF from disk.
+//! 2. Read page count + metadata.
+//! 3. Extract text from the first page.
+//! 4. Typed error handling using the `Error` enum (no string matching).
+//!
+//! There is no licence step. The crate has no key, no activation call and no
+//! tier: every feature works in every build (#226). The licence you accept is
+//! AGPL-3.0 or the commercial one, and neither is checked at runtime.
 //!
 //! Build:
 //!     cargo build
@@ -24,32 +27,13 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use pdfluent::{license_info, set_license_key, Error, PdfDocument, ResourceLimitKind};
-
-/// Placeholder license key. **Replace this with your own key**, or
-/// set the `PDFLUENT_LICENSE_KEY` environment variable instead. Do NOT
-/// commit real keys to source control.
-const PLACEHOLDER_LICENSE_KEY: &str = "<YOUR_LICENSE_KEY>";
+use pdfluent::{Error, PdfDocument, ResourceLimitKind};
 
 /// Default fixture used when the binary is run without arguments.
 const DEFAULT_FIXTURE: &str = "../../tests/corpus-mini/multi-page.pdf";
 
 fn main() -> ExitCode {
-    // ── 1. License activation (optional). ────────────────────────────────
-    //
-    // The SDK runs in Trial mode without a key. In production, pass a real
-    // key here or set `PDFLUENT_LICENSE_KEY` in the environment.
-    if let Err(err) = activate_license_if_configured() {
-        eprintln!("license activation failed: {err}");
-        return ExitCode::from(2);
-    }
-    let info = license_info();
-    println!(
-        "License : tier={:?} output_marked={}",
-        info.tier, info.output_is_marked
-    );
-
-    // ── 2. Resolve the input path. ───────────────────────────────────────
+    // ── 1. Resolve the input path. ───────────────────────────────────────
     let arg = std::env::args().nth(1);
     let path: PathBuf = arg
         .map(PathBuf::from)
@@ -66,26 +50,16 @@ fn main() -> ExitCode {
     }
 }
 
-fn activate_license_if_configured() -> pdfluent::Result<()> {
-    // Skip the placeholder; only activate if the caller has rewritten it
-    // or supplied PDFLUENT_LICENSE_KEY via the environment (handled
-    // internally by the SDK when no explicit key is provided).
-    if PLACEHOLDER_LICENSE_KEY.starts_with('<') {
-        return Ok(());
-    }
-    set_license_key(PLACEHOLDER_LICENSE_KEY)
-}
-
 fn run(path: &Path) -> pdfluent::Result<()> {
     println!("Opening : {}", path.display());
 
-    // ── 3. Open the PDF. ─────────────────────────────────────────────────
+    // ── 2. Open the PDF. ─────────────────────────────────────────────────
     let doc = PdfDocument::open(path)?;
 
     println!("Pages   : {}", doc.page_count());
     println!("Version : {:?}", doc.version());
 
-    // ── 4. Metadata. ─────────────────────────────────────────────────────
+    // ── 3. Metadata. ─────────────────────────────────────────────────────
     let meta = doc.metadata();
     println!(
         "Title   : {}",
@@ -100,7 +74,7 @@ fn run(path: &Path) -> pdfluent::Result<()> {
         meta.producer.as_deref().unwrap_or("(none)")
     );
 
-    // ── 5. Text extraction (first 200 chars of the document). ────────────
+    // ── 4. Text extraction (first 200 chars of the document). ────────────
     let text = doc.extract_text()?;
     let preview: String = text.chars().take(200).collect();
     let suffix = if text.chars().count() > 200 { "…" } else { "" };
@@ -135,16 +109,6 @@ fn format_error(err: &Error) -> String {
         Error::DecryptionFailed { reason } => {
             format!("decryption failed: {reason:?}")
         }
-        Error::InvalidLicense { reason } => {
-            format!("invalid license: {reason}")
-        }
-        Error::FeatureNotInTier {
-            capability,
-            current_tier,
-            required_tier,
-        } => format!(
-            "feature {capability:?} requires {required_tier:?} tier (current: {current_tier:?})"
-        ),
         Error::ResourceLimitExceeded {
             kind,
             observed,
@@ -167,8 +131,6 @@ fn exit_code_for(err: &Error) -> u8 {
         Error::InvalidPdf { .. } => 12,
         Error::UnsupportedPdfVersion { .. } => 13,
         Error::DecryptionFailed { .. } => 14,
-        Error::InvalidLicense { .. } => 15,
-        Error::FeatureNotInTier { .. } => 16,
         Error::ResourceLimitExceeded { .. } => 17,
         _ => 1,
     }

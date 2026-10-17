@@ -58,9 +58,37 @@ pub trait Device<'a> {
     ///
     /// The tag is the marked content tag (e.g. b"P", b"Span"). The mcid is
     /// the marked content identifier from the properties dict, if present.
-    fn begin_marked_content(&mut self, _tag: &[u8], _mcid: Option<i32>) {}
+    /// The actual text is the decoded `/ActualText` replacement from the
+    /// properties dict, if present.
+    fn begin_marked_content(
+        &mut self,
+        _tag: &[u8],
+        _mcid: Option<i32>,
+        _actual_text: Option<&str>,
+    ) {
+    }
     /// Called at the end of a marked content sequence (EMC).
     fn end_marked_content(&mut self) {}
+    /// Called around the appearance stream of one annotation.
+    ///
+    /// `rect` is the annotation's rectangle, already in the device's own
+    /// coordinate system, like [`Self::draw_placed_text`]. A text device
+    /// reads a glyphless replacement inside as the value the widget shows,
+    /// which is the only place that value is painted. The default
+    /// implementation ignores the bracket.
+    fn begin_annotation_appearance(&mut self, _rect: Rect) {}
+    /// Called after the appearance stream of one annotation.
+    fn end_annotation_appearance(&mut self) {}
+    /// Text the page carries at a known place with no glyph drawn for it.
+    ///
+    /// `rect` is where that text sits, already in the device's own coordinate
+    /// system. The one producer today is a form field whose widget has no
+    /// appearance stream to draw: the value is in `/V` and nothing paints it,
+    /// so a device that reads glyphs would never see it (#549). A rendering
+    /// device has nothing to draw either -- synthesising the missing
+    /// appearance is a different job -- and the default implementation
+    /// ignores it.
+    fn draw_placed_text(&mut self, _text: &str, _rect: Rect) {}
     /// Called when a TJ-array numeric adjustment is encountered between
     /// substrings. Positive values shift text backward, negative values shift
     /// it forward (1/1000 em units, per PDF §9.4.3). Text extractors use this

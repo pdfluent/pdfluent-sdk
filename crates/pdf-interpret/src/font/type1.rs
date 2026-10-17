@@ -3,8 +3,9 @@ use crate::font::glyph_simulator::GlyphSimulator;
 use crate::font::standard_font::{StandardFont, StandardKind, select_standard_font};
 use crate::font::true_type::{Width, read_encoding, read_widths};
 use crate::font::{
-    Encoding, FallbackFontQuery, UNITS_PER_EM, glyph_name_to_unicode, normalized_glyph_name,
-    read_to_unicode, synthesize_unicode_map_from_encoding,
+    Encoding, FallbackFontQuery, NamedEntry, UNITS_PER_EM, glyph_name_to_bfstring,
+    glyph_name_to_unicode, is_control_only, normalized_glyph_name, read_to_unicode,
+    synthesize_unicode_map_from_encoding, table_entry,
 };
 use crate::util::decode_or_warn;
 use crate::{CMapResolverFn, CacheKey, FontResolverFn, InterpreterWarning, WarningSinkFn};
@@ -12,14 +13,18 @@ use kurbo::BezPath;
 use log::warn;
 use pdf_font::cmap::{BfString, CMap};
 use pdf_syntax::object::Dict;
+use pdf_syntax::object::Name;
 use pdf_syntax::object::Stream;
-use pdf_syntax::object::dict::keys::{FONT_DESC, FONT_FILE, FONT_FILE3, MISSING_WIDTH};
+use pdf_syntax::object::dict::keys::{
+    ASCENT, BASE_FONT, CAP_HEIGHT, DESCENT, FONT_DESC, FONT_FILE, FONT_FILE3, MISSING_WIDTH,
+    XHEIGHT,
+};
 use skrifa::GlyphId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Debug)]
-pub(crate) struct Type1Font(u128, Kind, Option<CMap>, Option<[Option<char>; 256]>);
+pub(crate) struct Type1Font(u128, Kind, Option<CMap>, Option<[Option<NamedEntry>; 256]>);
 
 impl Type1Font {
     pub(crate) fn new(
@@ -59,7 +64,7 @@ impl Type1Font {
                     resolver,
                 )?),
                 to_unicode.clone(),
-                encoding_unicode,
+                encoding_unicode.clone(),
             ))
         };
 
@@ -140,15 +145,57 @@ impl Type1Font {
         }
     }
 
-    /// Vertical font metrics in /1000 em. Returns canonical Standard-14 AFM
-    /// values when the font resolves to a known standard font, or `None` when
-    /// no metrics source is available (e.g. CFF fonts without a standard-font
-    /// fallback).
+    /// The font dictionary's /BaseFont, subset prefix and all (#623).
+    ///
+    /// [`Self::postscript_name`] answers with the standard face a font fell
+    /// back to or was resolved against, which is what metrics and the
+    /// renderer need. This is the name the page set its text in: a
+    /// CFF-embedded `RotisSansSerif-Light` is `Helvetica` there and itself
+    /// here, and its weight is only readable from this one.
+    pub(crate) fn declared_name(&self) -> Option<&str> {
+        match &self.1 {
+            Kind::Standard(s) => s.declared_name(),
+            Kind::Type1(t) => t.base_font.as_deref(),
+            Kind::Cff(c) => c.base_font.as_deref(),
+        }
+    }
+
+    /// The name text extraction reports for a span: the font dictionary's
+    /// /BaseFont, subset prefix and all (callers strip), for an embedded
+    /// font -- the name the page set its text in. A font whose dictionary
+    /// names none, and every non-embedded font, still reports the
+    /// substitute face, which is what those spans merge and restyle on.
+    pub(crate) fn document_name(&self) -> Option<&str> {
+        match &self.1 {
+            Kind::Standard(s) => Some(s.postscript_name()),
+            Kind::Type1(t) => t.base_font.as_deref().or_else(|| t.postscript_name()),
+            Kind::Cff(c) => c.base_font.as_deref().or_else(|| c.postscript_name()),
+        }
+    }
+
+    /// Vertical font metrics in /1000 em. An embedded font reports its
+    /// descriptor's /Ascent /Descent first -- the pair the producer asserts
+    /// for layout -- and only falls back to the substitute face's
+    /// canonical AFM values when the descriptor carries none. Returns
+    /// `None` when no metrics source is available (e.g. CFF fonts without
+    /// descriptor metrics or a standard-font fallback).
     pub(crate) fn font_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
         match &self.1 {
             Kind::Standard(s) => s.font_metrics(),
-            Kind::Type1(t) => t.standard_font.and_then(|sf| sf.canonical_metrics()),
-            Kind::Cff(c) => c.standard_font.and_then(|sf| sf.canonical_metrics()),
+            Kind::Type1(t) => t.font_metrics(),
+            Kind::Cff(c) => c.font_metrics(),
+        }
+    }
+
+    /// The substitute face's AFM pair, ignoring the descriptor: the metrics
+    /// [`Self::font_metrics`] reported before E4, kept for the default
+    /// extraction path (#643 follow-up). `None` where no standard face was
+    /// resolved, exactly as before.
+    pub(crate) fn substitute_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+        match &self.1 {
+            Kind::Standard(s) => s.font_metrics(),
+            Kind::Type1(t) => t.substitute_metrics(),
+            Kind::Cff(c) => c.substitute_metrics(),
         }
     }
 
@@ -160,28 +207,27 @@ impl Type1Font {
             // lookup. Some PDFs have incorrect ToUnicode mappings that map
             // to U+0000.
             if c != BfString::Char('\0') {
-                return Some(c);
+                if !is_control_only(&c) {
+                    return Some(c);
+                }
+                // A value of only control characters is no text: the glyph
+                // name speaks first, and the value stands when it cannot.
+                return self.kind_char_code_to_unicode(char_code as u8).or(Some(c));
             }
         }
 
         if let Some(map) = &self.3
-            && let Some(ch) = usize::try_from(char_code)
+            && let Some(text) = usize::try_from(char_code)
                 .ok()
                 .and_then(|code| map.get(code))
-                .copied()
-                .flatten()
+                .and_then(table_entry)
         {
-            return Some(BfString::Char(ch));
+            return Some(text);
         }
 
         let code = char_code as u8;
-        let kind_unicode = match &self.1 {
-            Kind::Standard(s) => s.char_code_to_unicode(code),
-            Kind::Cff(c) => c.char_code_to_unicode(code),
-            Kind::Type1(t) => t.char_code_to_unicode(code),
-        };
-        if let Some(ch) = kind_unicode {
-            return Some(BfString::Char(ch));
+        if let Some(text) = self.kind_char_code_to_unicode(code) {
+            return Some(text);
         }
 
         // Final-resort fallbacks for fonts that ship no ToUnicode CMap, no
@@ -212,6 +258,16 @@ impl Type1Font {
 
         None
     }
+
+    /// The text the code's glyph name reads as, through the font's
+    /// /Encoding (or its built-in encoding).
+    fn kind_char_code_to_unicode(&self, code: u8) -> Option<BfString> {
+        match &self.1 {
+            Kind::Standard(s) => s.char_code_to_unicode(code),
+            Kind::Cff(c) => c.char_code_to_unicode(code),
+            Kind::Type1(t) => t.char_code_to_unicode(code),
+        }
+    }
 }
 
 impl CacheKey for Type1Font {
@@ -239,6 +295,52 @@ fn is_type1(dict: &Dict<'_>) -> bool {
         .unwrap_or(false)
 }
 
+/// /Ascent /Descent (/CapHeight /XHeight) from the /FontDescriptor, in
+/// /1000 em: the vertical metrics the producer asserts for layout.
+#[derive(Debug, Clone, Copy)]
+struct DescriptorMetrics {
+    ascent: f64,
+    descent: f64,
+    cap_height: Option<f64>,
+    x_height: Option<f64>,
+}
+
+impl DescriptorMetrics {
+    /// Read the descriptor's metrics. Ascent and descent are a pair (both
+    /// required by ISO 32000 except for Type 3): without both, there is no
+    /// descriptor source and the caller falls back. Cap and x heights are
+    /// optional in the descriptor.
+    fn read(descriptor: &Dict<'_>) -> Option<Self> {
+        let ascent = descriptor.get::<f64>(ASCENT)?;
+        let descent = descriptor.get::<f64>(DESCENT)?;
+        Some(Self {
+            ascent,
+            descent,
+            cap_height: descriptor.get::<f64>(CAP_HEIGHT),
+            x_height: descriptor.get::<f64>(XHEIGHT),
+        })
+    }
+}
+
+/// The reported metrics for an embedded font: the descriptor's pair when it
+/// carries one, else the substitute face's AFM pair. Cap and x heights come
+/// from the descriptor when present so the keys stay populated as before.
+fn embedded_metrics(
+    desc: Option<DescriptorMetrics>,
+    standard_font: Option<StandardFont>,
+) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+    let afm = standard_font.and_then(|sf| sf.canonical_metrics());
+    if let Some(d) = desc {
+        return Some((
+            d.ascent,
+            d.descent,
+            d.cap_height.or_else(|| afm.and_then(|m| m.2)),
+            d.x_height.or_else(|| afm.and_then(|m| m.3)),
+        ));
+    }
+    afm
+}
+
 #[derive(Debug)]
 struct Type1Kind {
     font: Type1FontBlob,
@@ -248,6 +350,10 @@ struct Type1Kind {
     encodings: HashMap<u8, String>,
     glyph_simulator: GlyphSimulator,
     standard_font: Option<StandardFont>,
+    /// The font dictionary's /BaseFont, subset prefix and all.
+    base_font: Option<String>,
+    /// The descriptor's own metrics, when it carries /Ascent and /Descent.
+    desc_metrics: Option<DescriptorMetrics>,
 }
 
 impl Type1Kind {
@@ -264,6 +370,10 @@ impl Type1Kind {
         let standard_font = select_standard_font(dict, &descriptor).map(|(f, _)| f);
 
         let glyph_simulator = GlyphSimulator::new();
+        let base_font = dict
+            .get::<Name>(BASE_FONT)
+            .map(|name| name.as_str().to_string());
+        let desc_metrics = DescriptorMetrics::read(&descriptor);
 
         Some(Self {
             font,
@@ -273,6 +383,8 @@ impl Type1Kind {
             missing_width,
             encodings,
             standard_font,
+            base_font,
+            desc_metrics,
         })
     }
 
@@ -346,19 +458,24 @@ impl Type1Kind {
         }
     }
 
-    fn char_code_to_unicode(&self, code: u8) -> Option<char> {
-        self.code_to_ps_name(code).and_then(glyph_name_to_unicode)
+    fn char_code_to_unicode(&self, code: u8) -> Option<BfString> {
+        self.code_to_ps_name(code).and_then(glyph_name_to_bfstring)
     }
 
-    /// PostScript name fallback for embedded Type1 fonts.
-    ///
-    /// Embedded Type1 streams do not carry an explicit PostScript
-    /// name in our blob representation. We surface the standard-font
-    /// fallback that `select_standard_font` resolved during
-    /// construction, which matches how the renderer chose metrics
-    /// for missing glyphs.
+    /// PostScript name fallback for embedded Type1 fonts: the standard
+    /// font `select_standard_font` resolved during construction, which
+    /// matches how the renderer chose metrics for missing glyphs. The
+    /// page's own name is [`Type1Font::declared_name`].
     fn postscript_name(&self) -> Option<&'static str> {
         self.standard_font.map(|f| f.postscript_name())
+    }
+
+    fn font_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+        embedded_metrics(self.desc_metrics, self.standard_font)
+    }
+
+    fn substitute_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+        self.standard_font.and_then(|sf| sf.canonical_metrics())
     }
 }
 
@@ -370,6 +487,10 @@ struct CffKind {
     missing_width: Option<f32>,
     encodings: HashMap<u8, String>,
     standard_font: Option<StandardFont>,
+    /// The font dictionary's /BaseFont, subset prefix and all.
+    base_font: Option<String>,
+    /// The descriptor's own metrics, when it carries /Ascent and /Descent.
+    desc_metrics: Option<DescriptorMetrics>,
 }
 
 impl CffKind {
@@ -384,6 +505,10 @@ impl CffKind {
             .contains_key(MISSING_WIDTH)
             .then_some(missing_width);
         let standard_font = select_standard_font(dict, &descriptor).map(|(f, _)| f);
+        let base_font = dict
+            .get::<Name>(BASE_FONT)
+            .map(|name| name.as_str().to_string());
+        let desc_metrics = DescriptorMetrics::read(&descriptor);
 
         Some(Self {
             font,
@@ -392,6 +517,8 @@ impl CffKind {
             missing_width,
             encodings,
             standard_font,
+            base_font,
+            desc_metrics,
         })
     }
 
@@ -459,8 +586,8 @@ impl CffKind {
         }
     }
 
-    fn char_code_to_unicode(&self, code: u8) -> Option<char> {
-        self.code_to_ps_name(code).and_then(glyph_name_to_unicode)
+    fn char_code_to_unicode(&self, code: u8) -> Option<BfString> {
+        self.code_to_ps_name(code).and_then(glyph_name_to_bfstring)
     }
 
     /// PostScript name fallback for embedded CFF Type1C fonts.
@@ -474,6 +601,14 @@ impl CffKind {
     /// matched.
     fn postscript_name(&self) -> Option<&'static str> {
         self.standard_font.map(|f| f.postscript_name())
+    }
+
+    fn font_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+        embedded_metrics(self.desc_metrics, self.standard_font)
+    }
+
+    fn substitute_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+        self.standard_font.and_then(|sf| sf.canonical_metrics())
     }
 }
 
@@ -571,6 +706,7 @@ cleartomark\n"
 
     fn load_type1_kind(widths: Vec<Width>, missing_width: Option<f32>) -> Type1Kind {
         Type1Kind {
+            base_font: None,
             font: Type1FontBlob::new(test_type1_font_data())
                 .expect("embedded test font should parse"),
             encoding: Encoding::WinAnsi,
@@ -579,6 +715,7 @@ cleartomark\n"
             encodings: HashMap::new(),
             glyph_simulator: GlyphSimulator::new(),
             standard_font: None,
+            desc_metrics: None,
         }
     }
 
@@ -610,5 +747,28 @@ cleartomark\n"
 
         assert_eq!(font.glyph_width(b'A'), Some(600.0));
         assert_eq!(font.glyph_width(b'B'), Some(0.0));
+    }
+
+    #[test]
+    fn substitute_metrics_ignores_the_descriptor() {
+        let mut font = load_type1_kind(build_widths(&[(b'A', 600.0)]), None);
+        font.standard_font = Some(StandardFont::Helvetica);
+        font.desc_metrics = Some(DescriptorMetrics {
+            ascent: 952.0,
+            descent: -214.0,
+            cap_height: Some(714.0),
+            x_height: Some(517.0),
+        });
+
+        // The descriptor-first answer reads the descriptor ...
+        assert_eq!(
+            font.font_metrics(),
+            Some((952.0, -214.0, Some(714.0), Some(517.0)))
+        );
+        // ... while the substitute answer stays on the AFM pair.
+        assert_eq!(
+            font.substitute_metrics(),
+            Some((718.0, -207.0, Some(718.0), Some(523.0)))
+        );
     }
 }

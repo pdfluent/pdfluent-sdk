@@ -38,8 +38,17 @@ on:
     - cron: '17 4 * * *'
 
 concurrency:
-  group: desktop-maintenance
-  cancel-in-progress: false
+  # ONE RUN PER REF, AND THE NEWEST ONE WINS (#350).
+  #
+  # This job measures how much disk the desktop has left. Two answers about the
+  # same machine differ only in age, so an older run still in flight has nothing
+  # to add -- and the machine it is asking about is the machine it queues on.
+  #
+  # The push trigger is filtered to this file, so in practice the cadence is the
+  # daily cron; the group is per ref so a dispatch on a branch cannot cancel the
+  # scheduled run on master.
+  group: desktop-maintenance-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -47,7 +56,7 @@ permissions:
 jobs:
   measure:
     name: The desktop says where its disk went
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && fromJSON('["self-hosted","xfa-local-checks"]') || 'ubuntu-latest' }}
     steps:
       # `clean: false`: actions/checkout runs `git clean -ffdx` and `reset
       # --hard` on a reused workspace, which would remove part of what this job

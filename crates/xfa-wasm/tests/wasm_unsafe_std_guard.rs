@@ -39,6 +39,10 @@ const WASM_CRATES: &[&str] = &[
     "pdf-redact",
     "pdf-render",
     "pdf-syntax",
+    // Missing from this list until #617, which is how a `SystemTime::now()` in
+    // the CMS builder made every browser signature trap unnoticed.
+    "pdf-sign",
+    "pdf-extract",
 ];
 
 /// Calls that compile on wasm32 and panic when reached.
@@ -56,6 +60,12 @@ const ALLOWED: &[(&str, &str)] = &[
          function reaches batch processing",
     ),
     (
+        "pdf-engine/src/structured_batch.rs",
+        "the structured benchmark's batch (#623): threads and a clock, native \
+         by nature, reached only from examples/structured_markdown.rs and no \
+         wasm-exported function",
+    ),
+    (
         "pdf-engine/src/ocr.rs",
         "OCR shells out to native engines (Tesseract/Paddle) that do not exist \
          in a browser build",
@@ -64,6 +74,11 @@ const ALLOWED: &[(&str, &str)] = &[
         "pdf-compliance/src/pdfa.rs",
         "timing instrumentation behind an eprintln diagnostics path; see the \
          follow-up note in BUG_WASM_CONVERTTOPDFA.md",
+    ),
+    (
+        "pdf-sign/src/tsa.rs",
+        "the nonce of an RFC 3161 request, behind the `tsa` feature (ureq), \
+         which the WASM build does not enable",
     ),
     (
         "pdf-compliance/src/bin/profile_compliance.rs",
@@ -119,8 +134,8 @@ fn nothing_in_the_wasm_bundle_calls_std_apis_that_panic_there() {
             let Ok(text) = std::fs::read_to_string(&file) else {
                 continue;
             };
-            // The clock module is the sanctioned home for the native call.
-            if rel.ends_with("pdf-manip/src/clock.rs") {
+            // The clock modules are the sanctioned home for the native call.
+            if rel.ends_with("pdf-manip/src/clock.rs") || rel.ends_with("pdf-sign/src/clock.rs") {
                 continue;
             }
 

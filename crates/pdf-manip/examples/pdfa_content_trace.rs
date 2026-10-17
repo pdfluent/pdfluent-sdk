@@ -118,6 +118,10 @@ fn main() {
         "fix_tounicode_forbidden_values",
         f::fix_tounicode_forbidden_values(&mut doc)
     );
+    step!(
+        "classic_symbolic_encoding_pre",
+        f::fix_classic_symbolic_base14_encoding(&mut doc)
+    );
     step!("fix_notdef_glyph_refs", f::fix_notdef_glyph_refs(&mut doc));
     step!(
         "fix_type3_notdef_charprocs",

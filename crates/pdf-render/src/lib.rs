@@ -63,30 +63,60 @@ fn render_trace_enabled() -> bool {
 /// deterministic and byte-identical to single-threaded (verified by test).
 ///
 /// Default: `available_parallelism` on native; overridable via the
-/// `PDF_RENDER_THREADS` env var (e.g. `1` to force single-threaded for A/B).
+/// `PDF_RENDER_THREADS` env var. Both `0` and `1` select the single-threaded
+/// path (`0`): vello takes the multi-threaded path for any nonzero count, so
+/// `1` would still build its own pool and wait on it, for no gain.
+///
+/// A page rendered from inside a rayon worker always uses `0`: the outer pool
+/// is already parallel, so nothing is lost, and dispatching to vello's own
+/// pool from a worker that then waits lets rayon steal further queued page
+/// jobs onto the same stack, which grows with every queued page until the
+/// process aborts (#636).
 fn render_num_threads() -> u16 {
+    // Not cached: the same process renders both inside and outside pools, and
+    // only the configured base below is stable across calls.
+    #[cfg(not(target_arch = "wasm32"))]
+    if rayon::current_thread_index().is_some() {
+        return 0;
+    }
     use std::sync::OnceLock;
     static N: OnceLock<u16> = OnceLock::new();
-    *N.get_or_init(|| {
-        if let Some(n) = std::env::var("PDF_RENDER_THREADS")
-            .ok()
-            .and_then(|v| v.parse::<u16>().ok())
-        {
-            return n;
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            std::thread::available_parallelism()
-                .map(|n| n.get().min(u16::MAX as usize) as u16)
-                .unwrap_or(1)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            0
-        }
-    })
+    *N.get_or_init(configured_num_threads)
 }
 
+/// Configured base thread count: `PDF_RENDER_THREADS` when set and parseable,
+/// else the machine default. Both `0` and `1` mean single-threaded (`0`).
+fn configured_num_threads() -> u16 {
+    configured_num_threads_from_env(std::env::var("PDF_RENDER_THREADS").ok().as_deref())
+}
+
+/// Same, with the raw variable value injected so tests can pin the mapping
+/// without touching process state.
+fn configured_num_threads_from_env(raw: Option<&str>) -> u16 {
+    if let Some(n) = raw.and_then(|v| v.parse::<u16>().ok()) {
+        return normalize_num_threads(n);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        normalize_num_threads(
+            std::thread::available_parallelism()
+                .map(|n| n.get().min(u16::MAX as usize) as u16)
+                .unwrap_or(1),
+        )
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        0
+    }
+}
+
+/// Map a raw thread count onto vello's two paths: `0` and `1` both select the
+/// single-threaded path (`0`); anything larger passes through.
+fn normalize_num_threads(n: u16) -> u16 {
+    if n <= 1 { 0 } else { n }
+}
+
+pub use glyph_cache::GlyphOutlineCache;
 pub use pdf_interpret;
 pub use pdf_interpret::pdf_syntax;
 pub use vello_cpu;
@@ -97,6 +127,7 @@ use vello_cpu::color::palette::css::TRANSPARENT;
 use vello_cpu::color::palette::css::WHITE;
 use vello_cpu::{Level, Pixmap, RenderMode};
 
+mod glyph_cache;
 mod renderer;
 
 /// Rasterization precision / speed trade-off for the vello_cpu pipeline.
@@ -112,16 +143,30 @@ mod renderer;
 /// alpha blending, anti-aliasing or images compose (8-bit vs f32 compositing
 /// precision). Pages built only from opaque vector fills are byte-identical in
 /// both modes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RasterQuality {
     /// Higher-precision `f32` compositing pipeline. Default; matches historical
     /// output byte-for-byte.
-    #[default]
     Quality,
     /// Faster `u8` compositing pipeline (~1.4–1.6× on content-heavy pages).
     /// Opt-in; output differs from [`RasterQuality::Quality`] by sub-perceptual
     /// rounding where blending/AA/images compose.
     Speed,
+}
+
+/// The default raster mode everywhere: engine `RenderOptions`, facade
+/// `ToImagesOptions`/`RenderPageOptions`, and the CLI when `--raster` is
+/// absent all resolve through [`RasterQuality::default`], which returns this.
+///
+/// Do not change here casually: flipping to [`RasterQuality::Speed`] is the
+/// one-line follow-up gated on the T5 measurement (SSIM ≥ 0.999 vs current
+/// output on every page).
+pub const DEFAULT_RASTER_QUALITY: RasterQuality = RasterQuality::Quality;
+
+impl Default for RasterQuality {
+    fn default() -> Self {
+        DEFAULT_RASTER_QUALITY
+    }
 }
 
 impl RasterQuality {
@@ -170,10 +215,40 @@ impl Default for RenderSettings {
 }
 
 /// Render the page with the given settings to a pixmap.
+///
+/// Uses a fresh per-page glyph outline cache; to share outlines across the
+/// pages of a document, see [`render_with_glyph_cache`]. Output is identical
+/// either way.
 pub fn render(
     page: &Page<'_>,
     interpreter_settings: &InterpreterSettings,
     render_settings: &RenderSettings,
+) -> Pixmap {
+    render_with_glyph_cache(
+        page,
+        interpreter_settings,
+        render_settings,
+        &mut GlyphOutlineCache::new(),
+    )
+}
+
+/// Render the page with the given settings to a pixmap, reusing (and
+/// warming) a caller-owned [`GlyphOutlineCache`].
+///
+/// Pass the same cache for every page of a document to build each distinct
+/// glyph outline once per document instead of once per page. The cache only
+/// avoids rebuilds — the same path in the same order under the same
+/// transform — so output is byte-identical to [`render`], and rendering
+/// stays pure per page. [`GlyphOutlineCache::hits`] and
+/// [`GlyphOutlineCache::misses`] report how the cache served the render.
+///
+/// Pattern tiles and soft masks render into private bounded caches; only the
+/// page's own glyphs go through `glyph_cache`.
+pub fn render_with_glyph_cache(
+    page: &Page<'_>,
+    interpreter_settings: &InterpreterSettings,
+    render_settings: &RenderSettings,
+    glyph_cache: &mut GlyphOutlineCache,
 ) -> Pixmap {
     let (x_scale, y_scale) = (render_settings.x_scale, render_settings.y_scale);
     let (width, height) = page.render_dimensions();
@@ -218,6 +293,7 @@ pub fn render(
     };
 
     let mut device = Renderer::new(pix_width, pix_height, vc_settings);
+    device.set_glyph_cache(std::mem::take(glyph_cache));
 
     device.ctx.set_paint(render_settings.bg_color);
     device
@@ -277,6 +353,8 @@ pub fn render(
             vc_settings.num_threads,
         );
     }
+
+    *glyph_cache = device.take_glyph_cache();
 
     pixmap
 }
@@ -389,6 +467,98 @@ mod tests {
         assert_eq!(pixmaps.unwrap().len(), 1);
     }
 
+    /// Assemble a PDF from numbered object bodies (index `i` becomes object
+    /// `i + 1`), computing byte-accurate xref offsets.
+    fn raw_pdf_bytes(objects: &[Vec<u8>]) -> Vec<u8> {
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::with_capacity(objects.len());
+
+        for (i, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            out.extend_from_slice(body);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+
+        let xref_pos = out.len();
+        out.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+        out.extend_from_slice(b"0000000000 65535 f \n");
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+
+        out
+    }
+
+    /// LaurenzV/hayro 128996e9 (#1285): a downscaled image with a soft mask
+    /// must be filtered premultiplied, or semi-transparent edges fringe.
+    /// The fixture is a 2x1 image — red opaque next to transparent black —
+    /// drawn over a 2x1 pt page and rendered at half scale, so the RGBA
+    /// resize arm blends the two pixels into one. Premultiplied (correct),
+    /// the blend is red at half alpha, which composites to pinkish-white
+    /// over the white background; naive straight-alpha filtering fringes
+    /// the red channel down to ~191.
+    ///
+    /// Our resizer (fast_image_resize, `mul_div_alpha` default on) already
+    /// multiplies before convolution and divides after, so the defect never
+    /// reached this tree; this test pins the behavior rather than a code
+    /// change. It fails if the resize ever filters straight alpha (e.g.
+    /// with `use_alpha(false)`).
+    #[test]
+    fn downscaled_smasked_image_composites_without_fringe() {
+        let image = [
+            b"<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /BitsPerComponent 8 \
+              /ColorSpace /DeviceRGB /SMask 5 0 R /Length 6 >>\nstream\n"
+                .as_slice(),
+            [255, 0, 0, 0, 0, 0].as_slice(),
+            b"\nendstream".as_slice(),
+        ]
+        .concat();
+        let smask = [
+            b"<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /BitsPerComponent 8 \
+              /ColorSpace /DeviceGray /Length 2 >>\nstream\n"
+                .as_slice(),
+            [255, 0].as_slice(),
+            b"\nendstream".as_slice(),
+        ]
+        .concat();
+        let content = b"<< /Length 22 >>\nstream\n2 0 0 1 0 0 cm /Im0 Do\nendstream".to_vec();
+
+        let bytes = raw_pdf_bytes(&[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 2 1] \
+              /Resources << /XObject << /Im0 4 0 R >> >> /Contents 6 0 R >>"
+                .to_vec(),
+            image,
+            smask,
+            content,
+        ]);
+
+        let pdf = Pdf::new(bytes).expect("PDF should load");
+        let pixmaps = render_pdf(&pdf, 0.5, InterpreterSettings::default(), None).unwrap();
+        assert_eq!(pixmaps.len(), 1);
+        let pixmap = &pixmaps[0];
+        assert_eq!((pixmap.width(), pixmap.height()), (1, 1));
+
+        // Red at half alpha over white: full red, half green/blue. A naive
+        // straight-alpha resize would fringe red down to ~191; an undrawn
+        // image would leave all-white (green 255).
+        let px = pixmap.data_as_u8_slice();
+        assert_eq!(px.len(), 4);
+        assert!(
+            px[0] > 240 && (100..160).contains(&px[1]) && (100..160).contains(&px[2]),
+            "expected pinkish-white, got {px:?}"
+        );
+    }
+
     #[test]
     fn render_pdf_pixmap_matches_mediabox() {
         let bytes = minimal_pdf_bytes();
@@ -481,5 +651,116 @@ mod tests {
     fn raster_quality_default_is_quality() {
         assert_eq!(RasterQuality::default(), RasterQuality::Quality);
         assert_eq!(RenderSettings::default().quality, RasterQuality::Quality);
+    }
+
+    /// The default flows from the single named constant, so the T5-gated
+    /// flip (Quality -> Speed) is one line.
+    #[test]
+    fn raster_quality_default_is_the_named_constant() {
+        assert_eq!(RasterQuality::default(), DEFAULT_RASTER_QUALITY);
+        assert_eq!(DEFAULT_RASTER_QUALITY, RasterQuality::Quality);
+    }
+
+    /// Seam: each quality maps to its vello_cpu pipeline. `render()` feeds
+    /// this mapping into `RenderSettings.render_mode`, so the option reaches
+    /// the rasteriser by construction; the pixmap tests below prove both
+    /// pipelines render.
+    #[test]
+    fn raster_quality_maps_to_its_render_mode() {
+        assert!(matches!(
+            RasterQuality::Quality.render_mode(),
+            RenderMode::OptimizeQuality
+        ));
+        assert!(matches!(
+            RasterQuality::Speed.render_mode(),
+            RenderMode::OptimizeSpeed
+        ));
+    }
+
+    /// A one-page fixture of our own with filled + stroked content (the
+    /// diagonal stroke exercises anti-aliased edges), generated in-test.
+    fn aa_edge_pdf_bytes() -> Vec<u8> {
+        let content = b"<< /Length 55 >>\nstream\n1 0 0 rg 10 10 50 30 re f 0 0 1 RG 2 w 0 0 m 72 72 l S\nendstream"
+            .to_vec();
+        raw_pdf_bytes(&[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] /Contents 4 0 R >>".to_vec(),
+            content,
+        ])
+    }
+
+    /// Both modes produce a valid pixmap of the same size on content that
+    /// exercises fills, strokes and anti-aliased edges.
+    #[test]
+    fn raster_quality_modes_produce_same_size_pixmap() {
+        let bytes = aa_edge_pdf_bytes();
+        let pdf = Pdf::new(bytes).expect("PDF should load");
+        let page = &pdf.pages()[0];
+        let mut pixmaps = Vec::new();
+        for quality in [RasterQuality::Quality, RasterQuality::Speed] {
+            let pixmap = render(
+                page,
+                &InterpreterSettings::default(),
+                &RenderSettings {
+                    x_scale: 2.0,
+                    y_scale: 2.0,
+                    bg_color: WHITE,
+                    quality,
+                    ..Default::default()
+                },
+            );
+            assert_eq!((pixmap.width(), pixmap.height()), (144, 144));
+            assert!(!pixmap.data_as_u8_slice().is_empty());
+            pixmaps.push(pixmap);
+        }
+        assert_eq!(
+            (pixmaps[0].width(), pixmaps[0].height()),
+            (pixmaps[1].width(), pixmaps[1].height()),
+            "Quality and Speed must agree on dimensions"
+        );
+    }
+
+    /// `0` and `1` both select the single-threaded path; anything larger
+    /// passes through. Vello takes the multi-threaded path for any nonzero
+    /// count, so `1` must not reach it (#636).
+    #[test]
+    fn normalize_num_threads_maps_zero_and_one_to_single_threaded() {
+        assert_eq!(normalize_num_threads(0), 0);
+        assert_eq!(normalize_num_threads(1), 0);
+        assert_eq!(normalize_num_threads(2), 2);
+        assert_eq!(normalize_num_threads(8), 8);
+    }
+
+    /// `PDF_RENDER_THREADS=1` resolves to the single-threaded path, like `0`.
+    /// An unset or unparseable value falls back to the machine default.
+    #[test]
+    fn configured_num_threads_treats_one_as_single_threaded() {
+        assert_eq!(configured_num_threads_from_env(Some("1")), 0);
+        assert_eq!(configured_num_threads_from_env(Some("0")), 0);
+        assert_eq!(configured_num_threads_from_env(Some("4")), 4);
+        assert_eq!(
+            configured_num_threads_from_env(Some("bogus")),
+            configured_num_threads_from_env(None),
+            "an unparseable value must fall back to the default"
+        );
+    }
+
+    /// A page rendered from inside a rayon worker must use the single-threaded
+    /// path: dispatching to vello's own pool from a worker that then waits
+    /// overflows the worker's stack once enough page jobs are queued (#636).
+    /// Reads through the real (cached) entry point, because the worker guard
+    /// must hold no matter what the base resolved to.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn render_num_threads_is_zero_inside_rayon_worker() {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .expect("test pool should build");
+        pool.install(|| {
+            assert!(rayon::current_thread_index().is_some());
+            assert_eq!(render_num_threads(), 0);
+        });
     }
 }

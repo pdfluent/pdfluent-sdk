@@ -4,14 +4,17 @@ Pinned to ``pdfluent==1.0.0b8`` (see ``requirements.txt``).
 
 Demonstrates the canonical lifecycle:
 
-1. Optional license activation (placeholder key — replace with your own).
-2. Open a PDF (file path or bytes).
-3. Read page count + metadata.
-4. Extract text from the first page.
-5. Typed error handling — uses the typed exception hierarchy exposed by the
+1. Open a PDF (file path or bytes).
+2. Read page count + metadata.
+3. Extract text from the first page.
+4. Typed error handling — uses the typed exception hierarchy exposed by the
    binding (``PdfluentError`` and its subclasses). Falls back to ``ValueError``
    and ``RuntimeError`` for older binding builds where the typed hierarchy
    is not yet exported.
+
+There is no licence step. The binding has no key, no activation call and no
+tier: every feature works in every build (#226). The licence you accept is
+AGPL-3.0 or the commercial one, and neither is checked at runtime.
 
 Run:
     python main.py path/to/file.pdf
@@ -38,11 +41,6 @@ from typing import Tuple, Type
 
 import pdfluent
 
-# Placeholder license key. **Replace this with your own key**, or set the
-# ``PDFLUENT_LICENSE_KEY`` environment variable instead. Do NOT commit real
-# keys to source control.
-PLACEHOLDER_LICENSE_KEY: str = "<YOUR_LICENSE_KEY>"
-
 # Default fixture used when the script is run without arguments.
 DEFAULT_FIXTURE: Path = (
     Path(__file__).resolve().parent.parent.parent
@@ -66,7 +64,6 @@ def _resolve_error_types() -> Tuple[Type[BaseException], ...]:
         "PdfluentIoError",
         "PdfluentEncryptedError",
         "PdfluentPageRangeError",
-        "PdfluentLicenseError",
         "PdfluentValidationError",
         "PdfluentRenderError",
         "PdfluentError",
@@ -77,36 +74,6 @@ def _resolve_error_types() -> Tuple[Type[BaseException], ...]:
     # Always include builtins as a safety net for older binding builds.
     typed.extend([ValueError, RuntimeError, OSError])
     return tuple(typed)
-
-
-def activate_license_if_configured() -> None:
-    """Activate the placeholder license if the caller has supplied a real key.
-
-    Tries the canonical API names in order. If neither is available, this is
-    a no-op and the SDK runs in Trial mode.
-    """
-    if PLACEHOLDER_LICENSE_KEY.startswith("<"):
-        # User has not customised the placeholder — skip activation so the
-        # example runs in Trial mode out of the box.
-        return
-
-    activate = getattr(pdfluent, "activate_license", None) or getattr(
-        pdfluent, "activate_license_key", None
-    )
-    if activate is not None:
-        activate(PLACEHOLDER_LICENSE_KEY)
-
-
-def report_license() -> None:
-    """Print the current license tier in a binding-version-agnostic way."""
-    status_fn = getattr(pdfluent, "license_status", None) or getattr(
-        pdfluent, "license_info", None
-    )
-    if status_fn is None:
-        print("License : (binding does not expose license_status)")
-        return
-    status = status_fn()
-    print(f"License : {status}")
 
 
 def run(path: Path) -> int:
@@ -139,15 +106,6 @@ def run(path: Path) -> int:
 
 
 def main(argv: list[str]) -> int:
-    # ── License activation (optional). ───────────────────────────────────
-    try:
-        activate_license_if_configured()
-    except _resolve_error_types() as err:  # noqa: PERF203
-        print(f"license activation failed: {err}", file=sys.stderr)
-        return 2
-
-    report_license()
-
     # ── Resolve the input path. ──────────────────────────────────────────
     path = Path(argv[1]) if len(argv) > 1 else DEFAULT_FIXTURE
     if not path.exists():

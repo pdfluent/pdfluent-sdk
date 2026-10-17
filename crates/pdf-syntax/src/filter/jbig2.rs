@@ -16,8 +16,11 @@ pub(crate) fn decode(data: &[u8], params: Dict<'_>) -> Option<Vec<u8>> {
 
     let image = hayro_jbig2::decode_embedded(data, globals.as_deref()).ok()?;
 
-    let row_bytes = (image.width as usize).div_ceil(8);
-    let mut packed = vec![0_u8; row_bytes * image.height as usize];
+    // Accessors rather than fields since pdfluent-jbig2 0.3.0: upstream 0.3.0
+    // made them private, which is the right shape -- the dimensions are read
+    // out of the file and the type is what validates them.
+    let row_bytes = (image.width() as usize).div_ceil(8);
+    let mut packed = vec![0_u8; row_bytes * image.height() as usize];
 
     struct BitWriterDecoder<'a> {
         writer: BitWriter<'a>,
@@ -43,7 +46,11 @@ pub(crate) fn decode(data: &[u8], params: Dict<'_>) -> Option<Vec<u8>> {
 
     let writer = BitWriter::new(&mut packed, 1)?;
     let mut decoder = BitWriterDecoder { writer };
-    image.decode(&mut decoder);
+    // Fallible since 0.3.0. A decode that stops halfway leaves `packed` partly
+    // written, and half an image handed back as a whole one is the failure this
+    // crate least wants: the caller cannot tell it from a document that really
+    // is mostly blank.
+    image.decode(&mut decoder).ok()?;
 
     Some(packed)
 }

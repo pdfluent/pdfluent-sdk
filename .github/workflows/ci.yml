@@ -65,21 +65,27 @@ on:
     branches: [master]
 
 concurrency:
-  # A push gets its OWN group and is never cancelled; only a pull request
-  # supersedes itself.
+  # ONE RUN PER REF, AND THE NEWEST COMMIT WINS (#350).
   #
-  # On master every ref is the same ref, so each merge cancelled the previous
-  # merge's run. Measured 02-09-2026 on the last 30 runs against master: the CI
-  # workflow is 10 cancelled, 4 failed, 0 succeeded, and a run takes 246-1320 s
-  # while 6 of the last 11 merges arrived within 1320 s of the one before. Half
-  # of them land inside the previous run's lifetime; one cancelled run had been
-  # going 7600 s.
+  # This block said the opposite until 06-09-2026, for a reason worth keeping in
+  # view: on master every ref is the same ref, so each merge cancelled the
+  # previous merge's run. Measured 02-09-2026 over the last 30 runs against
+  # master: 10 cancelled, 4 failed, 0 succeeded, a run taking 246-1320 s, and 6
+  # of the last 11 merges arriving inside 1320 s of the one before. A merge's
+  # result was observed only when nobody merged for the length of a run.
   #
-  # So a merge's result was observed only when nobody merged for the length of a
-  # run, which is not this repository's pattern. Every "we will catch it on
-  # master" argument rested on that. Same fix as the deletions workflow (#1635).
-  group: ci-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Giving every push its own group answered that by never cancelling, and the
+  # bill arrived four days later: forty to ninety landings a day, one desktop
+  # runner, and on 06-09 twenty-nine runs queued at once with the oldest commit
+  # under test two hours old. Both shapes lose the same thing -- a per-commit
+  # verdict -- and only one of them also blocks the machine.
+  #
+  # What replaces the per-commit verdict is the two-hourly wave in
+  # ci-ephemeral.yml: the whole workspace, on a bought-and-thrown-away instance,
+  # against whatever master is at the time. This job is then the fast signal
+  # about the newest commit, which is the one anybody would act on anyway.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -119,13 +125,13 @@ jobs:
     #
     # WHY TWO GUARDS ARE NOT IN HERE
     #
-    # `orchestration-guard` and `commit-identity-guard` stay separate jobs
-    # because scripts/cos/ff3.sh -- the landing script -- filters expected-red
-    # jobs BY NAME, and those two are the two that are permanently red. Merge
-    # them in and the merged job is permanently red, ff3 has to excuse it, and
-    # from then on no guard failure of any kind blocks a landing. That trades a
-    # gate that works for a few minutes a run. They join this job on the day
-    # they are green.
+    # `orchestration-guard` and `commit-identity-guard` are separate jobs
+    # because scripts/cos/ff3.sh -- the landing script -- used to filter them
+    # BY NAME as permanently red. #592 made the three red steps of the first
+    # green for their real reasons (an interpreter that could not start, a
+    # remote read by its Mac name, 34 deletions that could never be declared)
+    # and took the exclusion out of ff3.sh, so a red in either now blocks a
+    # landing like any other. Merging them in is a separate change.
     # The desktop runner, plainly. The per-event expression that used to stand
     # here chose a hosted runner for a pull request; with no pull_request
     # trigger left (#333) its condition can only be true, so the expression
@@ -136,7 +142,7 @@ jobs:
     # rule in orchestration_stays_hosted.py is about code a caller chooses --
     # a pull request's head or a dispatch ref -- and a push to master is neither:
     # it is already merged.
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: [self-hosted, xfa-local-checks]
     permissions:
       contents: read
     steps:
@@ -151,6 +157,45 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install --quiet pyyaml
+      - name: No workflow can restore automatic paid provisioning
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/paid_compute_policy.py
+      - name: Paid-compute lock rejects missing permission and unsafe workflow mutations
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_paid_compute_policy.py
+      - name: Development scope defers only unrelated infrastructure regressions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_development_gate_scope.py
+      - name: A failed remote lane names every gate it failed
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/test_the_failed_gates_are_named.sh
+      - name: Rig pages are refused off the round machine
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_rig_data_stays_on_the_rig.py
+      - name: A failing gate run names what failed, whole, even across a poll
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/test_a_failed_run_names_its_gates.sh
+      - name: The landing lane runs the snapshot path audit
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/test_the_landing_runs_the_snapshot_audit.sh
+      # A red audit must name its finding where the log readers look: the
+      # gate prints the last fifteen lines and the failed-gates block the
+      # first lines saying fail, and the verdict said neither (#636).
+      - name: A red snapshot audit names its finding on its last line
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_public_snapshot_check.py
+      - name: The landing skips only the script tests a change cannot reach
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_landing_test_scope.py
+      - name: No sort comparator in the engine decides equality by a tolerance
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_sort_comparator_is_a_total_order.py
+      - name: The comparator guard refuses a tolerance and nothing else
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_sort_comparator_is_a_total_order.py
+      - name: Unchanged automatic waves cannot buy another instance
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_wave_needs_instance.py
       # ---- from baseline-hardware-guard ----
       - name: Every baseline names the machine it came from
         if: ${{ !cancelled() }}
@@ -166,39 +211,68 @@ jobs:
       - name: The published-figure guard still bites
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_a_published_number_names_its_run.py
+      # The improvement loop (#366). The ratchet itself needs the corpus,
+      # veraPDF and mutool, so it runs on the wave; its comparison is the half
+      # that can go wrong in silence, and that half is fixture-driven and takes
+      # a second. Two guards that have never been red have never been tested.
+      - name: A quality baseline goes down only with a ticket and a reason
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/a_baseline_only_moves_with_a_ticket.py
+      - name: The baseline guard still refuses a number lowered in silence
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/test_a_baseline_only_moves_with_a_ticket.py
+      - name: A quality baseline is not older than the code it measures
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/a_baseline_is_not_older_than_what_it_measures.py
+      - name: The age guard still goes red on a baseline left behind
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/test_a_baseline_is_not_older_than_what_it_measures.py
+      - name: The baseline builder writes a reason where a value moved down
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/test_build_extraction_baseline.py
+      - name: The PDF/A ratchet still goes red on each of the four axes
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/test_pdfa_ratchet.py
       # ---- from licence-registry-guard ----
       - name: Every crate's licence matches the canonical register
         if: ${{ !cancelled() }}
         run: python3 scripts/release/license_registry_check.py
 
       # ---- from promise-guard ----
+      # THE STEP IS A FILE NOW (#516). Two jobs beside this one needed cargo
+      # and did not have it -- `public-snapshot-build` here, and every run of
+      # publication-guards.yml since 09-09 -- while this block got it right in
+      # one job. A step that has to be repeated is a step that will be repeated
+      # incompletely, so it moved to scripts/ci/cargo_on_path.sh and all three
+      # call it.
       - name: Cargo on PATH
         if: ${{ !cancelled() }}
-        run: |
-          # `$HOME` for the runner service is not necessarily where cargo was
-          # installed, so adding the directory is not the same as making cargo
-          # runnable. Source the env file when it is there, and then CHECK --
-          # measured on master 02-09-2026, this step ran and a later guard still
-          # died on `FileNotFoundError: [Errno 2] No such file or directory:
-          # 'cargo'`, which is a confusing way to learn that the toolchain is not
-          # on PATH. (#292)
-          set -euo pipefail
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
-          export PATH="$HOME/.cargo/bin:$PATH"
-          if ! command -v cargo >/dev/null 2>&1; then
-            echo "::error::cargo is not runnable on this runner. \$HOME is $HOME; \$HOME/.cargo/bin is $([ -d "$HOME/.cargo/bin" ] && echo present || echo absent). Every step below that needs the toolchain will fail with a FileNotFoundError that says nothing about this." >&2
-            exit 1
-          fi
-          # Status-checked, not `echo $(…)`: if cargo resolves but cannot run --
-          # a rustup shim with no toolchain installed -- the substitution fails,
-          # `echo` still returns 0, `set -e` sees nothing, and the step reports
-          # success with an empty version. The one case this check exists for
-          # would pass it. (codex, #1659)
-          cargo --version || {
-            echo "::error::cargo is on PATH but does not run. A rustup shim without an installed toolchain does this: `command -v cargo` succeeds and every build fails." >&2
-            exit 1
-          }
+        run: bash scripts/ci/cargo_on_path.sh
+      # EVERY GENERATED REGISTER IN ONE QUESTION (#526), and after the step
+      # above because the capability register runs `cargo metadata` -- which the
+      # guard from #516 said, since nothing in this step's own line says the
+      # word. The three `--check` gates further down and the NOTICE copy, asked
+      # together so a stale one is named with the others and with the command
+      # that writes them all, rather than one gate run at a time.
+      - name: Every generated register is current
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/regenerate_registers.sh --check
+      # Next to its subject: on 11-10 a refused sccache wrapper failed the
+      # capability register inside that script and the run still ended exit 0.
+      # The test drives stub generators through both modes; milliseconds, no
+      # cargo, and it never touches the real registers.
+      - name: A failing register generator fails loudly
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_regenerate_registers.py
+      # Here rather than with the other guard steps, because it asks
+      # `cargo package --list` for all 32 publishable crates and this is the
+      # job that has cargo on PATH. It is minutes rather than seconds, which is
+      # why the pre-push gate defers it to the landing lane -- but a pull
+      # request from outside never runs that lane, and this is the guard that
+      # would have stopped the 1.0.0 publish before the first upload (#358).
+      - name: No published file names an internal path
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_published_file_names_no_internal_path.py
       # In promise-guard because it is the job that already has cargo on PATH,
       # and DEBUG rather than --release: measured profile-independent, the
       # generator produces the same 1090 bytes either way, and debug shares
@@ -275,12 +349,48 @@ jobs:
       - name: The Java binding fixture is the one we generate
         if: ${{ !cancelled() && steps.fixture-diff.outputs.moved == 'true' }}
         run: python3 scripts/ci/the_java_fixture_is_the_one_we_generate.py
+      # The known-images fixture the four binding suites read: the generator
+      # writes it byte-identically twice in a row, and the committed outputs
+      # match a fresh generation. Stdlib only, no engine, so it runs here on
+      # every push rather than scoped below with the suites that read it.
+      - name: The known-images fixture is what its generator writes
+        if: ${{ !cancelled() }}
+        run: python3 fixtures/gen/test_known_images.py
+      # The published npm package, type-checked the way a consumer gets it:
+      # packed, installed, and compiled under node16 (ESM and CJS) and bundler,
+      # then read by attw. The strict-ts example had run none of this since the
+      # beta -- it resolved the package through a tsconfig `paths` entry, which
+      # never touches the `exports` map, and nothing in any workflow ran it. On
+      # 22-09-2026 it produced twelve type errors and the package was
+      # masquerading as CJS for every ESM consumer (#585). This is the slowest
+      # step in this job (three npm installs); it is also the only thing that
+      # reads what we actually publish.
+      - name: The published Node types resolve under every module resolution
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/node_types_gate.sh
+      # The types gate reads declarations only; it cannot see that index.mjs
+      # never re-exported TextEditor (#585). The static half of the Node suites
+      # can, and node-bindings.yml runs them only on a tag. Here they run on
+      # every push without the native addon: the static tests assert, the
+      # addon-dependent suites announce "SKIPPED (not a pass)" on stderr.
+      - name: The Node entry points export the same surface
+        if: ${{ !cancelled() }}
+        working-directory: crates/pdf-node
+        run: npx --yes jest@30.3.0 --ci tests/
       # Which exported symbols does no test call? A floor, not a percentage:
-      # 198 of 262 is not 100, and a soft job at that number is one everybody
+      # 191 of 249 is not 100, and a soft job at that number is one everybody
       # scrolls past -- so the floor passes at today's count and fails on a drop.
       - name: Every exported symbol a test calls, still called
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/api_coverage.py
+      # And the matcher it reads the tree with. A ratchet on a wrong reading is
+      # worse than no ratchet: it lowers a floor on an invented gap, or lets a
+      # real one through. Three readings were wrong on 10-09-2026 and nothing
+      # said so, because this job is hosted and hosted Actions had been stopped
+      # for five days (#333, #510).
+      - name: The coverage matcher reads exports and calls correctly
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_api_coverage.py
       # The product question rather than the binding one: does every capability
       # the website and the editor advertise map to a test, and is it reachable
       # from the pdfluent facade at all? OCR, Excel and PowerPoint each had tests
@@ -293,6 +403,15 @@ jobs:
       - name: The capability register matches the code
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/capability_register.py --check
+      # A conformance level we say we produce, with nothing that has ever
+      # measured it, is a claim rather than a capability. 2b was measured; 1b
+      # and 3b were advertised in the C header and on the website. (#443)
+      - name: Every PDF/A flavour we claim to produce has a baseline
+        if: ${{ !cancelled() }}
+        run: |
+          python3 scripts/ci/test_a_pdfa_flavour_has_a_baseline.py
+          python3 scripts/ci/a_pdfa_flavour_has_a_baseline.py
+          python3 scripts/ci/test_pdfa_conformance_gate.py
       # crates/pdf-python sits outside the workspace on purpose; a second
       # Cargo.lock drifting on its own was never the decision. It had 35 packages
       # pinned older than the workspace.
@@ -325,6 +444,13 @@ jobs:
       - name: The skip lint reads a bail-out a macro performs
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_the_skip_lint_reads_a_returning_macro.py
+      # And JavaScript (#588). The lint read Rust only, so the Node suites
+      # skipped in silence until #585 repaired them by hand. The third fixture
+      # is the one that matters: an announcement through console.error must be
+      # reported, because jest prints no console output for a skipped suite.
+      - name: The skip lint reads JavaScript and is not fooled by console output
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_skip_lint_reads_javascript.py
       # The tool a person runs before starting a story. It cannot run as a job
       # -- see its ALLOWED entry -- but the three answers it has to keep apart
       # ("nothing is open", "nothing matches", "I could not look") are ordinary
@@ -375,6 +501,28 @@ jobs:
       - name: The retention gate still prints its distribution
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_retention_report.py
+      # The extraction rig grades us against two foreign readers, and the ways it
+      # could report a comfortable number while being wrong are all arithmetic:
+      # a length ratio calls substituted text perfect, an empty oracle scores
+      # 100, and a corpus whose buckets overlap excludes documents twice. The
+      # corpus run itself needs 500 documents and a release build and lives in
+      # the wave; this is the half that runs in a second (#367).
+      - name: The extraction axes measure what they claim
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_extraction_axes.py
+      # The competitor comparison on the same rig (#390). A table of six tools
+      # is wrong in a way no column is wrong on its own: measured on different
+      # documents, or on a machine that was busy for one of them. This reads the
+      # run files the round left behind and regenerates the document list.
+      - name: The extraction comparison is reproducible
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_extraction_comparison.py
+      # A ratchet that has never been red has never been tested. Four deliberate
+      # single-document regressions, one per axis, plus the rule that a wall
+      # clock is only comparable between two quiet runs (STRATEGY_2026H2 4.4.6).
+      - name: The extraction ratchet goes red on each of its four axes
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/extraction_ratchet.py --self-test
       # #286: measured.json wrote "govdocs (fixed 300-document sample)" while
       # sample_size said 1000. A conformance figure has to name the sample it
       # came from, and the two gates have to be tellable apart.
@@ -403,6 +551,34 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_fixtures_are_wellformed.py
 
+      # The golden set is 2.4 GB on the runner's own disk and, until 07-09-2026,
+      # nowhere else -- while the disk that held the working corpus had already
+      # died. The backup is a directory that goes on a stick; what makes it a
+      # backup is that a restore refuses to finish until every file has been read
+      # back. This runs that argument on a small tree: a backup, a restore, and
+      # the ways a backup lies. (#374)
+      - name: A backup of the golden set can be turned back into the golden set
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_restore_golden.py
+
+      # And the other half of the same promise: the part of the corpus that is
+      # not curated has to come back from the bucket on the machine that needs
+      # it. Measured 07-09-2026 it could not -- the fetcher went through the
+      # AWS CLI and the runner has none, so a corpus that was reproducible on
+      # paper had never once been reproduced. (#374)
+      - name: The corpus can be fetched by a machine with no AWS CLI
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_corpus_download_govdocs.py
+
+      # The backup of this repository is kept by an hourly agent on one Mac.
+      # A scheduled job that stops looks exactly like one with nothing to do --
+      # the previous cron stopped on 02-09-2026 and the mirror was 348 commits
+      # behind before anybody noticed (#231). The guard itself judges only the
+      # machine that has the agent; this runs its test, which is hermetic.
+      - name: Unloading the mirror agent turns something red
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_mirror_agent_is_running.py
+
       # Where the code lives. The guard itself asks this machine which
       # repository `origin` resolves to and how many checkouts of it are on the
       # disk -- neither is expressible in a workspace with one remote and one
@@ -420,6 +596,12 @@ jobs:
       - name: The hook guard's layers are told apart
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_the_commit_msg_hook_is_wired.py
+      # The guard itself is machine-local (a checkout here has one worktree and
+      # never has core.hooksPath set), so what runs on a pull request is its
+      # test, which builds its own clone with a second worktree and an override.
+      - name: A worktree that runs somebody else's hooks is found
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_worktree_runs_the_tracked_hooks.py
       # The pre-push hook is not reachable from a pull request -- it runs on a
       # developer's machine or nowhere -- so what can be judged here is that its
       # lane choice and its two refusals still behave. The test runs the hook
@@ -472,6 +654,31 @@ jobs:
       - name: The packaging guard bites
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_every_package_manifest_names_the_same_release.py
+      # The same five channels, one question further out (#205): the guard
+      # above says which release each registry page describes, this says
+      # whether the page tells a visitor where the source is. Tree-only, no
+      # network, so it can answer in full on a hosted runner.
+      - name: Every registry page names the repository
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_registry_readme_names_the_repository.py
+      - name: The registry-README guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_registry_readme_names_the_repository.py
+      # And what those pages say (#358): a figure in a README carries a claim
+      # ID, no README sells the withdrawn licence model, and the licence is
+      # stated as AGPL-3.0 or a commercial licence. Tree-only, no network.
+      - name: Every README figure carries a claim ID
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_readme_figure_carries_a_claim_id.py
+      - name: The README-claims guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_readme_figure_carries_a_claim_id.py
+      # Structured extraction ships as Preview in 1.1.0 (#636): the label
+      # sentence sits on every structured entry point and on none of the
+      # plain-text ones. Tree-only, no network.
+      - name: Structured extraction carries the Preview label
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/extraction_preview_label.py
       - name: No commit carries AI attribution
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/no_ai_attribution.py
@@ -553,6 +760,67 @@ jobs:
           if [ -n "${BASE_SHA:-}" ]; then KEUZE="$RUNNER_TEMP/base/scripts/ci/internal_matter_range.sh"; fi
           BEREIK="$(sh "$KEUZE")" || exit 1
           PYTHONPATH= PDFLUENT_INTERNE_TERMEN="$LIJST" "$PY" "$WACHT" --bereik "$BEREIK"
+      # The semver gate itself runs only before a publish, on rustdoc JSON
+      # from the pinned nightly against the v1.0.0 baseline -- nothing a push
+      # can carry. Its mechanism is covered here instead, over canned JSON
+      # pairs: a new sealed or allowlisted enum passes, a new exhaustive one
+      # fails with its path, and an unknown format_version is SKIPPED, never
+      # guessed at. (#574)
+      - name: A new public enum fails unless it is sealed or allowlisted
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/test_check_new_public_enums.sh
+      # The feature pass of the same check, over a fake crate: a new
+      # exhaustive enum behind a feature is flagged in the feature run and
+      # not in the default run, with a HEAD-only feature enabled on HEAD
+      # only. The first cases need no toolchain; the end-to-end cases need
+      # the pinned nightly and skip loudly without it. (#636)
+      - name: A new enum behind a feature is flagged in the feature run only
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/test_feature_gated_enums.sh
+      # The gate selects crates by "published at v1.0.0", never by their
+      # current version: selecting on "is 1.0.0 today" checks nothing once
+      # the workspace moves to 1.1.0. A fixture repo carrying the tag, no
+      # toolchain. (#574)
+      - name: The semver gate selects crates by what v1.0.0 shipped
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/test_semver_gate_selection.sh
+      # The clean-room scanner's own tests, hermetic: each case plants one
+      # violation shape in a scratch tree and asserts the scan names it, or
+      # plants a clean tree and asserts silence. Every case fails when the
+      # scanner rule it covers is removed. (#643)
+      - name: The clean-room scanner names every planted violation
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_cleanroom_scan.py
+      # The compat tooling's unit tests: usage tiers merge, coverage
+      # arithmetic, usage measurement and spec validation. Standalone,
+      # stdlib only. (#643)
+      - name: The compat usage tiers merge and check
+        if: ${{ !cancelled() }}
+        run: python3 scripts/compat/test_apply_usage.py
+      - name: The compat coverage arithmetic holds
+        if: ${{ !cancelled() }}
+        run: python3 scripts/compat/test_coverage.py
+      - name: The compat usage measurement holds
+        if: ${{ !cancelled() }}
+        run: python3 scripts/compat/test_usage_measure.py
+      - name: The compat spec validation holds
+        if: ${{ !cancelled() }}
+        run: python3 scripts/compat/test_validate_spec.py
+      # The differential harness's own tests: verdicts, tolerances and the
+      # KNOWN_RED judge, over canned data. The full `check` against the
+      # tree wheel is not wired: five tests/parity fixtures it reads were
+      # removed with the parity suite and it exits 1 without them. (#643)
+      - name: The compat harness judges its canned verdicts
+        if: ${{ !cancelled() }}
+        run: python3 tests/compat/test_self.py
+      # The SVG rasteriser is a test tool only: neither a shipped manifest
+      # nor a shipped source may name it. (#643)
+      - name: No shipped manifest names the SVG rasteriser
+        if: ${{ !cancelled() }}
+        run: python3 tests/compat/no_cairosvg_in_shipped_manifests.py
+      - name: No shipped source imports the SVG rasteriser
+        if: ${{ !cancelled() }}
+        run: python3 tests/compat/no_cairo_in_shipped_sources.py
 
   orchestration-guard:
     name: No ref-dispatchable job on the persistent runner
@@ -578,7 +846,7 @@ jobs:
     # rule in orchestration_stays_hosted.py is about code a caller chooses --
     # a pull request's head or a dispatch ref -- and a push to master is neither:
     # it is already merged.
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: [self-hosted, xfa-local-checks]
     steps:
       # Full history, because half of what this job checks needs a base to
       # compare against. `territories_do_not_overlap` diffs the branch against
@@ -597,7 +865,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install --quiet pyyaml
+      # python-docx, python-pptx and openpyxl feed the Office truth tool's
+      # controlled-set generator further down; setup belongs above every guard.
+      - run: pip install --quiet pyyaml python-docx python-pptx openpyxl
       - name: Guards do not hide behind each other
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/guards_do_not_hide_behind_each_other.py
@@ -612,6 +882,34 @@ jobs:
       - name: No connecting script carries a literal address
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/no_dead_host_in_a_connecting_script.py
+      - name: The dead-host guard refuses an address and lets a version pin pass
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_no_dead_host_in_a_connecting_script.py
+      # A Windows checkout writes every tracked symlink as a text file holding
+      # the link target -- four fixture links broke 63 node smokes this way.
+      - name: No tracked file is a symlink
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/no_tracked_symlinks.py
+      - name: The symlink guard bites on a link and passes a clean tree
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_no_tracked_symlinks.py
+      # And one address in particular, anywhere at all -- comments included.
+      # It was released and reissued, so those four octets name a stranger's
+      # machine, and a comment is where the next person copies one from (#424).
+      - name: The released VPS address is nowhere in the tree
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/no_retired_host.py
+      - name: And the guard that says so catches what it claims to
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_no_retired_host.py
+      # Rig page text never goes into the repo: a committed run file keeps
+      # per-page scores + hashed page ids only, no snippets, no filenames.
+      - name: No committed run file carries rig text or a public filename
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/no_rig_text_in_runs.py
+      - name: The rig-text guard bites on text and passes scores
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_no_rig_text_in_runs.py
       - name: One owner per path, and branches stay inside their own
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/territories_do_not_overlap.py
@@ -637,6 +935,163 @@ jobs:
       - name: A damaged shared build directory heals instead of failing the next job
         if: ${{ !cancelled() }}
         run: bash scripts/ci/test_cargo_target_health.sh
+      # Two dummy gates on a private lock directory, so this says nothing about
+      # and does nothing to the runner's own gate lock. (#359)
+      - name: Two local gates queue instead of thrashing the machine
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/test_one_gate_at_a_time.sh
+      # The blob guard's own boundary, which it had no test for until the rule
+      # refused a round's evidence: generated code over a megabyte is caught
+      # wherever it is, a measured round's run files are not caught on size, and
+      # nothing is exempt from the extension check. (#574, #599)
+      - name: The blob guard catches generated code and not measured evidence
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/test_check_large_blobs.sh
+      # A fake hcloud and a fake ssh, so this buys nothing and reads no token.
+      # What it proves is that every exit path of the throwaway-instance gate
+      # deletes the instance -- the one defect whose cost grows by the hour
+      # rather than showing up as a red build. (#474)
+      - name: A gate run always deletes the instance it bought
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/test_remote_gate.sh
+      # The other half of the same bill: the EUR 30 ceiling the owner approved
+      # for throwaway instances, and the ledger it is read from. A fake hcloud
+      # and a fake actions API, so this buys nothing and reads no token. (#490)
+      - name: A gate refuses to buy past the ceiling, and books what it bought
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/test_hetzner_ledger.sh
+      # Twice a fixture has booked machines that never existed into the
+      # operator's ledger, and the second time it took the day over its cap and
+      # sent every gate into a local fallback. (#517, #454)
+      - name: No fixture can book into the operator's ledger
+        if: ${{ !cancelled() }}
+        run: |
+          python3 scripts/ci/a_fixture_cannot_touch_the_real_ledger.py
+          python3 scripts/ci/test_a_fixture_cannot_touch_the_real_ledger.py
+      # Two gates inside one paid hour must buy one server. Nothing else goes
+      # red when that stops being true. (#491)
+      - name: Two gates in one paid hour buy one instance
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/test_gate_pool.sh
+      - name: Preparing an instance keeps the master ref the gate pushed
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/test_gate_instance_prepare.sh
+      - name: The orphan sweep reaps a gate whose trap never ran
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_orphan_sweep_reaps_a_gate_instance.py
+      - name: The two halves of a split lane cover every gate
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_gate_places_partition_the_lane.py
+      # The wave's own toolchain, after three of its jobs died on
+      # `cargo: command not found` while the one job that installs a toolchain
+      # compiled on the same instance (#495).
+      - name: A wave job that compiles brings its toolchain
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_wave_job_that_compiles_carries_its_toolchain.py
+      - name: And that guard refuses for the right reasons
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_wave_job_that_compiles_carries_its_toolchain.py
+      # The release run that restored another leg's target/ and died on
+      # GLIBC_2.28 not found: the default rust-cache key has no target, so a
+      # cache step in a target-matrix job keys per matrix target (#636).
+      - name: A rust-cache step in a target-matrix job keys per target
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_rust_cache_key_names_its_target.py
+      - name: And that guard refuses a shared key for the right reasons
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_rust_cache_key_names_its_target.py
+      # The post step that cleaned the shared ~/.cargo/bin and deleted rustup
+      # on a self-hosted runner: every rust-cache step carries cache-bin: false
+      # now, all of them, because runs-on is often an expression (#636).
+      - name: Every rust-cache step keeps the shared cargo bin
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_rust_cache_keeps_cargo_bin.py
+      - name: And that guard refuses a cleaning cache step for the right reasons
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_rust_cache_keeps_cargo_bin.py --self-test
+      # The same wall on the machine that outlives the job, and the need this
+      # file could not see: a step whose compiler is two scripts down (#516).
+      - name: A job that reaches cargo says where cargo is
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_job_that_reaches_cargo_finds_it_on_path.py
+      - name: And that guard refuses a job whose need is inside a script
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_job_that_reaches_cargo_finds_it_on_path.py
+      # The tag that published a release candidate (#358). `v1.0.0-rc.2`
+      # matched `tags: ['v*.*.*']` in five workflows, armed every publish job
+      # in them at once, and the one that was live put
+      # @pdfluent/sdk-wasm@1.0.0 on npm under `latest`.
+      - name: A pre-release tag arms no publish job
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_pre_release_tag_arms_no_publish.py
+      - name: And that guard is not fooled by the clause behind an ||
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_pre_release_tag_arms_no_publish.py
+      - name: The nightly snapshot refresh releases its machine and publishes only a good image
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_refresh_the_gate_snapshot.py
+      # One image for both lanes, so a parked instance can be handed from an SDK
+      # gate to an editor one (#508). The editor's half of that image has no
+      # test in this repository that would notice it rotting.
+      - name: The shared gate image still carries the editor's layers
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_gate_image_carries_the_editor_layers.py
+      - name: And that guard refuses for the right reasons
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_gate_image_carries_the_editor_layers.py
+      - name: A gate that counts compiler errors is not measuring a cache
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_counted_compile_ignores_the_compiler_cache.py
+      - name: And this tree obeys that rule
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_counted_compile_ignores_the_compiler_cache.py
+      # The budget guard itself is machine-local -- it reads a table this runner
+      # has never written, and would only ever skip here. Its TEST is what runs
+      # in CI: the guard's failure mode is being green for the wrong reason, and
+      # that is a property of the code, not of this machine. (#425)
+      - name: The fast-lane budget guard refuses, and says why
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_fast_lane_stays_under_its_budget.py
+      # Both halves here, unlike the budget guard above: this one reads the gate
+      # script and the scripts it calls, which every checkout has, so a pull
+      # request answers it as well as the pushing machine does. It is the guard
+      # that keeps the push lane cheap -- a cargo step added to the fast list is
+      # minutes on every push, on an instance bought per push (#473).
+      - name: No gate on the push lane reaches a compiler
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_push_gate_does_not_compile_the_workspace.py
+      - name: And that guard cannot be green for the wrong reason
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_push_gate_does_not_compile_the_workspace.py
+      # Both halves here, unlike the budget guard above: this one reads the
+      # manifests rather than the machine, so a hosted runner can answer it as
+      # well as this Mac can -- and the answer is about a published claim (B07,
+      # 9.6 MB unpacked), which is precisely the kind a stranger's pull request
+      # should not be able to break unseen. (#383)
+      - name: The browser bundle carries no substitute fonts
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_browser_bundle_carries_no_fonts.py
+      - name: That guard refuses for the right reasons
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_browser_bundle_carries_no_fonts.py
+      # The default build stays pure Rust (#641). `cargo tree` resolves without
+      # compiling, so this stands on a push; the manifest half answers even
+      # where cargo is absent.
+      - name: The default tree carries no ort
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_default_tree_carries_no_ort.py
+      - name: That guard refuses for the right reasons
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_default_tree_carries_no_ort.py
+      # The compiling half of the same question is not here and cannot be: it is
+      # a cargo build, and no workflow triggered by a push to master compiles on
+      # this machine (#350). What can stand here is the guard over it -- that
+      # the wasm32 compile is still in the fast lane, still denies warnings, and
+      # is still the file the wave runs. It reads two files and costs
+      # milliseconds. (#483)
+      - name: The lane still compiles the SDK for the browser
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_lane_compiles_for_the_browser.py
       - name: Every job building into the shared directory checks it first
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/shared_build_dir_fails_loudly.py
@@ -664,6 +1119,15 @@ jobs:
       - name: One event starts one machine
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/one_instance_per_event.py
+      # The guard before its own test, deliberately: a scanner that has stopped
+      # recognising workflows reports a clean tree in the same words as a clean
+      # tree, so the test has to be able to fail on its own.
+      - name: The heavy work stays off the desktop
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/heavy_work_leaves_the_desktop.py
+      - name: The desktop-load guard bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_heavy_work_leaves_the_desktop.py
       - name: Every needs names a job that exists
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/workflow_jobs_exist.py
@@ -725,6 +1189,33 @@ jobs:
       - name: The Java library-name check reads every caller
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_the_library_name_check_reads_every_caller.py
+      # Both halves of the SSIM skip, because a skip that reads as a failure
+      # and a failure that reads as a skip are the same mistake in opposite
+      # directions. The test runs the step's own body against a stubbed exit
+      # code, so the mapping is proved by running it.
+      - name: A skipped SSIM gate stays a skip on both sides of the exit code
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_ssim_gate_corpus_is_present.py
+      # The advisory scan has to be able to start. It could not for months --
+      # a container action on machines without docker -- and the installer that
+      # replaced it is only worth having if it refuses the wrong bytes.
+      - name: The advisory scan installs a pinned cargo-deny and refuses any other
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_install_cargo_deny.py
+      # This guard builds a probe crate and runs clippy on it, so it needs the
+      # compiler -- and said so, on every push to master: `[clippy-lane] FATAL:
+      # cargo is not on PATH`, exit 2. Third job in this repository to meet the
+      # same service-reads-no-profile wall in two days (#516).
+      - name: Cargo on PATH
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/cargo_on_path.sh
+      # The wave denies warnings and compiles test targets; before #361 no
+      # local lane did both, so test code was linted by nothing until a bought
+      # machine reported it hours later. This builds a crate with the two
+      # defects that were red and requires the shipped flag list to refuse it.
+      - name: The local lint lane reads test code, the way the wave does
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_clippy_lane_reads_test_targets.py
       # Without the token `gh api` cannot read a private repository's run
       # history, and this guard would announce SKIPPED (not a pass) on every
       # run -- honest, but not a gate. Same plumbing as pr_staleness.py above.
@@ -786,6 +1277,122 @@ jobs:
       - name: Every document states the same offer
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/one_offer_in_every_document.py
+      # The offer's second road out of here (#479). The guard above reads the
+      # four documents that quote prices; a crate README, a pyproject, a nuspec
+      # and the README hero image quote none, so none of them failed it -- and
+      # all four were still selling the model withdrawn on 6 September 2026
+      # three days later, on registries where a published version cannot be
+      # taken back. Test first, same reason as every pair on this list.
+      - name: The published-surface guard goes red where it must
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_no_retired_price_in_a_published_readme.py
+      - name: Nothing published states the retired offer
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/no_retired_price_in_a_published_readme.py
+      # One product, six registry pages, six version numbers (#358). Read on
+      # 9 September 2026 the live pages of one engine spanned two months, in
+      # six manifests written in six languages that no tool read together.
+      # Test first, same reason as every pair on this list.
+      - name: The one-release guard goes red where it must
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_registry_names_the_same_release.py
+      - name: Every registry manifest names the same release
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_registry_names_the_same_release.py
+      # One registry further, the same lesson as the wasm licence guard: a green
+      # check that is not about the thing that is wrong. `twine check` passed the
+      # 1.0.0 Linux wheel of 10-09-2026 and PyPI would have refused it at the
+      # door -- the check reads metadata, the platform tag said `linux_x86_64`
+      # (#358). The rule itself needs built wheels and runs from the runbook on
+      # the machine that has them; what runs here is its test.
+      - name: The wheel-tag rule refuses what the index refuses
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_wheel_platform_tag_is_publishable.py
+      # The Maven channel guard used to name one release: it demanded
+      # `1.0.0-beta.N` of the canonical pom, so it refused 1.0.0 on the publish
+      # morning and accepted a stale pom whose beta number was a plugin's
+      # (#358). It compares the pom with `[workspace.package]` now, through the
+      # same reader the six-manifest guard uses.
+      - name: The Maven channel guard reads the release
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_maven_channel_guard.py
+      # The crates.io half: `cargo info` from the repo root answers out of the
+      # workspace, so every crate read as already published and --live skipped
+      # all 32 and exited 0 (#358).
+      - name: The publish order asks crates.io
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_crate_version_is_on_crates_io.py
+      # The audit refuses a dirty tree and writes its reports into one, so the
+      # audit of crate N stopped the audit of crate N+1 and a 32-crate chain
+      # never got past the first one it audited (#358).
+      - name: An audit does not dirty the tree for the next one
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_audit_does_not_dirty_the_next_one.py
+      # And that both publish scripts use one rule for it: it was two, and only
+      # the audit's copy ever got the repair (#358).
+      - name: One rule for a dirty tree, in both publish scripts
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_dirty_tree_rule_is_one_rule.py
+      # crates.io is append-only, so a version already served with other content
+      # either breaks every dependent's verify build or ships the old code (#358).
+      - name: No version is republished with other content
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_published_version_matches_the_workspace.py
+      # And between releases, offline, against the registry's answer kept in
+      # scripts/release/published_crate_contents.json: crates/lopdf moved under
+      # the published 0.39.5 on 14-10-2026 and every run after it was green.
+      - name: No published crate changes under its version
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/published_version_matches_the_workspace.py --against-record
+      - name: The published-content record refuses a changed crate
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_published_version_matches_the_record.py
+      # A file that ships naming a path only this repository has. The prepublish
+      # audit refuses it one crate at a time, during the publish (#358).
+      - name: No published file names an internal path
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_published_file_names_no_internal_path.py
+      # The shape that hid it: a workflow running a script that is not there.
+      - name: A workflow runs no script that is not there
+        if: ${{ !cancelled() }}
+        run: |
+          python3 scripts/ci/a_workflow_runs_no_script_that_is_not_there.py
+          python3 scripts/ci/test_a_workflow_runs_no_script_that_is_not_there.py
+      # The other half of what a registry page hands a reader: the licence
+      # document. `@pdfluent/sdk-wasm` promises `SEE LICENSE IN LICENSE-OFFER`
+      # and npm packs `files`, not the directory -- so every published version
+      # up to 1.0.0-beta.17.5 made that promise and shipped nothing to keep it.
+      - name: The wasm-licence guard goes red where it must
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_wasm_package_carries_its_licence.py
+      - name: The wasm package ships the licence its manifest names
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_wasm_package_carries_its_licence.py
+      # Whether the commands in a published package.json can run at all. `npm
+      # test` named two files deleted in #226 and failed on every invocation
+      # for four days (#515).
+      - name: The npm-script-path guard goes red where it must
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_test_script_names_a_file_that_exists.py
+      - name: Every npm script names a file that exists
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_test_script_names_a_file_that_exists.py
+      # Forty-three guards ran only in this job, and this job is hosted: hosted
+      # Actions have been stopped since the Actions budget went to EUR 1 on
+      # 05-09-2026 (#333), so those forty-three had stopped measuring. Six were
+      # red on master when somebody finally ran them (#510). They are in the
+      # local gate now; five that are still red run through this register,
+      # advisory until a date each row carries and refusing after it.
+      #
+      # Listed here as well, deliberately. This job is where a guard's job is
+      # counted, and when hosted Actions come back it is a second reader of the
+      # same answer -- not the only one, which is how the six got lost.
+      - name: The expiring-exception check goes red where it must
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_known_red_guard_expires.py
+      - name: No guard is excused past its date
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_known_red_guard_expires.py
       # And the same licence read against the binary rather than against the
       # other document (#226). §5 says as a statement of fact that nothing in
       # the software reads a key, refuses a capability or marks output. The
@@ -946,6 +1553,9 @@ jobs:
       - name: Both fork lists name the same crates
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/fork_lists_agree.py
+      - name: A worktree moved during the gate is refused
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_tree_has_not_moved.py
       - name: Every forked README sends you upstream, and claims no terms its manifest lacks
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/a_forked_readme_sends_you_upstream.py
@@ -1030,9 +1640,30 @@ jobs:
       - name: cargo-audit and cargo-deny accept the same advisories
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/the_advisory_lists_agree.py
+      - name: Every apt call in a workflow waits for the lock
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/an_apt_install_waits_for_the_lock.py
+      - name: The apt-lock guard bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_an_apt_install_waits_for_the_lock.py
+      - name: The apt wrapper waits for the lock and for nothing else
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_apt_get_waits_for_the_lock.py
+      - name: The extraction set names documents the gate corpus delivers
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_extraction_set_names_the_corpus_it_is_given.py
+      - name: The extraction-set comparison bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_extraction_set_names_the_corpus_it_is_given.py
       - name: The advisory-list comparison bites
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_the_advisory_lists_agree.py
+      - name: An advisory fixed by a version bump is still fixed
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_fixed_advisory_stays_fixed.py
+      - name: The advisory-floor guard bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_fixed_advisory_stays_fixed.py
       - name: The build-cache sweeper fails safe
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_sweep_fails_safe.py
@@ -1063,6 +1694,128 @@ jobs:
       - name: Every error code links to a section that exists
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/error_codes_have_an_anchor.py
+      - name: The error catalogue and the website's code list are generated, not typed
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/error_catalogue_is_generated.py
+      # Learned decisions (#598): never trained on a rig document, inside the
+      # size and speed budget, and each generated model is what the exporter
+      # makes of its dump. Each with its test first.
+      - name: The leakage guard refuses a rig document, by document and not by page
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_learned_training_uses_no_rig_document.py
+      - name: No learned model is trained on a document the rig measures
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/learned_training_uses_no_rig_document.py
+      # The table tracks (T5) draw train and dev from one module: no dev
+      # table, page or document trains, no rig document trains, and track B
+      # resolves the same drawn dev rows the dump holds out.
+      - name: Both table tracks share one manifest rule, and no dev or rig document trains
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_tables_manifests_share_one_rule.py
+      - name: The model budget guard refuses a model over either number
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_learned_model_stays_in_budget.py
+      - name: Every exported model stays inside its size and speed budget
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_learned_model_stays_in_budget.py
+      - name: Every generated model reproduces from its dump, byte for byte
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_learned_export_is_reproducible.py
+      # A lone header label spans the columns it heads (T4, #574), in both
+      # the Rust decoder and the Python one, under either variant.
+      - name: A lone header label spans the columns it heads
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_lone_header_label_spans.py
+      # The list lane of #599: the line features the list model reads, and the
+      # refusal to train on blocks the models already touched -- a model that
+      # learns its own output reads as progress nobody can see through.
+      - name: The list line features read what the training read
+        if: ${{ !cancelled() }}
+        run: python3 scripts/extraction/learned/list_lines.py --self-test
+      - name: A list model is never trained on its own output
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_train_lists_refuses_its_own_output.py
+      - name: The block trainer refuses a measured split, its own output and a lopsided half
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_training_rules_refuse.py
+      - name: The engine tree is the segmentation plus the feature files, on both sides
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_engine_tree_scope.py
+      - name: A stacked trainer refuses verdicts another tree's decisions wrote
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_training_decisions_refuse.py
+      - name: A trainer reuses its dump across a retrain of its own model
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_self_exclusion.py
+      - name: The heading line vector is as wide as its names
+        if: ${{ !cancelled() }}
+        run: python3 scripts/extraction/learned/train_heading_lines.py --self-test
+      - name: A line's style reads against the page's body, as the engine reads it (#574)
+        if: ${{ !cancelled() }}
+        run: python3 scripts/extraction/learned/style.py --self-test
+      - name: A list edge's label and columns are what the link model reads (#638)
+        if: ${{ !cancelled() }}
+        run: python3 scripts/extraction/learned/list_edges.py --self-test
+      - name: The drawings around a line read as the engine reads them (#574)
+        if: ${{ !cancelled() }}
+        run: python3 scripts/extraction/learned/drawings.py --self-test
+      - name: The raster around a line reads as the engine reads it (#574)
+        if: ${{ !cancelled() }}
+        run: python3 scripts/extraction/learned/raster.py --self-test
+      - name: A page that did not render reads as NaN on every line (#574)
+        if: ${{ !cancelled() }}
+        run: python3 scripts/extraction/learned/features.py --self-test
+      # The TATR Rust fixtures (P2): the generator's geometry, decode, meta
+      # refusals and schema, and the committed synthetic fixtures re-decoded
+      # through the vendored path on both Rects. Stdlib only.
+      - name: The TATR Rust fixtures generate from the eval's TATR path
+        if: ${{ !cancelled() }}
+        run: python3 scripts/extraction/tables_b/test_make_tatr_rust_fixtures.py
+      # The PubTables train draw and the final-table trainer's guards (#638).
+      # Each refuses the eval list and the strat-300 measure set by name, and
+      # each test proves its guard refuses for its own reason, not another's.
+      - name: The training fetch reads named documents, and only those
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_fetch_training_pages_documents.py
+      - name: The era-balanced train draw is stratified, closed and deterministic
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_pubtables_era_draw.py
+      - name: The PubTables truth file carries each kept page's own tables
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_pubtables_truth.py
+      - name: The strat-300 set is drawn, and only drawn, from eval pages
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_pubtables_eval_strat300.py
+      - name: The PubTables trainers refuse the strat-300 measure set by name
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_pubtables_strat300_refused.py
+      - name: The final-table trainer reads train documents only
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_train_table_is_v2_eval_guard.py
+      - name: The final-table trainer keeps its negatives
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_train_table_is_v2_cap.py
+      - name: The final-table trainer refuses the strat-300 measure set
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_train_table_is_v2_strat300.py
+      - name: The final-table trainer reads the era train list beside the old one
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_train_table_is_v2_era.py
+      - name: The final-table trainer drops only unverifiable PubTables negatives
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_train_table_is_v2_unverifiable.py
+      # The noise-clean round's startup (#638): the VM the trainer option lands
+      # with -- 24.04 image, gated tools, per-stage dumps, two arms, one dump.
+      - name: The is-table v2 clean startup is gated and reuses its dumps
+        if: ${{ !cancelled() }}
+        run: python3 scripts/gcp/test_is_table_v2_clean_startup.py
+      # The Node column named five classes that never existed (#587). Test first.
+      - name: The catalogue sync check still refuses a Node class nobody exports
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_error_catalogue_sync.py
+      - name: Every Rust error code has a catalogue row, and every Node class in it is exported
+        if: ${{ !cancelled() }}
+        run: bash scripts/release/error_catalogue_sync.sh
       # `always()` on both, and not for tidiness. A step that fails takes
       # every later step in the job with it, so parking these behind twenty
       # other guards would mean an unrelated red quietly stops the corpus
@@ -1083,6 +1836,221 @@ jobs:
       - name: The gate-corpus guard rejects what it should
         if: always()
         run: python3 scripts/ci/test_gate_corpus_is_pinned.py
+      # The same rule one size up (#377). The gate corpus is 500 documents that
+      # travel with a pull request; this is the 20,000 that carry every PDF/A
+      # number #376 will publish, and none of them are in the tree. The manifest
+      # is the whole of what stands between "measured on the corpus" and
+      # "measured on whatever was in that directory" -- and it is also where the
+      # holdout's seal is checked, which is the only mechanical thing standing
+      # between #365's number and a number measured on documents somebody had
+      # already looked at.
+      - name: The PDF/A corpus manifests pin every file, and the halves are disjoint
+        if: always()
+        run: python3 scripts/ci/a_manifest_pins_every_file.py
+      - name: The PDF/A corpus guard rejects what it should
+        if: always()
+        run: python3 scripts/ci/test_a_manifest_pins_every_file.py
+      # The layer above the ten thousand (#461): a thousand-document tuning set
+      # and a three-hundred-document test set per capability, drawn by a seeded
+      # rule out of the same populations. This redraws all four on every push and
+      # refuses a manifest that is not what the rule produces, which is what
+      # keeps a document from being swapped out of the test set on the morning of
+      # a round -- and it checks, by content and not only by name, that no test
+      # document is in any tuning set.
+      - name: The tuning and test sets are the sets the rule draws
+        if: always()
+        run: python3 scripts/ci/the_tuning_and_test_sets_are_the_drawn_sets.py
+      - name: That guard is red on every way the split can be broken
+        if: always()
+        run: python3 scripts/ci/test_the_tuning_and_test_sets_are_the_drawn_sets.py
+      # The set #365 publishes off, on the same footing: a thousand names that
+      # had no digests and overlapped the ten thousand in fifty-three places
+      # until they were excluded by name and by content. This redraws it on
+      # every push, so a document cannot be edited into the holdout on the
+      # morning of the run, and checks that the ledger's seal is the seal of
+      # what the manifest names.
+      - name: The holdout is the set the rule draws
+        if: always()
+        run: python3 scripts/ci/the_holdout_1000_is_the_drawn_set.py
+      - name: That guard is red on every way the holdout can be spoiled
+        if: always()
+        run: python3 scripts/ci/test_the_holdout_1000_is_the_drawn_set.py
+      - name: The overfitting gate catches a round that fitted its tuning set
+        if: always()
+        run: python3 scripts/ci/loop/overfitting_gate.py --self-test
+      # The wasm bundle's std rule as a source scan (#623): the Rust test lives in
+      # xfa-wasm, which no native lane builds, so this reads its lists and runs it.
+      - name: Nothing in the wasm bundle calls a std API that panics there
+        if: always()
+        run: python3 scripts/ci/wasm_bundle_calls_no_panicking_std.py
+      - name: The wasm std guard refuses what the Rust test refuses
+        if: always()
+        run: python3 scripts/ci/test_wasm_bundle_calls_no_panicking_std.py
+      # The structured-extraction baseline of #566, in the half that runs in a
+      # second. The five axes are arithmetic and every one of them can be wrong
+      # while looking comfortable -- a reader that infers a heading from a short
+      # line reports a capability we do not ship, and a TEDS that normalises by
+      # the ground truth alone lets a tool emit the table twice.
+      - name: The structured axes measure what they claim
+        if: always()
+        run: python3 scripts/extraction/structured_axes.py --self-test
+      # The Office ground-truth reader (O2) reproduces its controlled set
+      # exactly; the Office libraries feed the generator only.
+      - name: The Office truth tool reproduces the controlled set
+        if: ${{ !cancelled() }}
+        run: python3 scripts/office_bench/test_truth.py
+      # The Docling Office job (O4) is pinned, default-optioned and reads its
+      # corpus from the metadata; a file scan, no compilation.
+      - name: The Docling Office startup job is pinned and default
+        if: ${{ !cancelled() }}
+        run: python3 scripts/gcp/test_docling_office_startup.py
+      # The zero-shot local smoke (J3f): the pre-launch step that runs each
+      # model's real load()+predict() on dev tables on this machine, after
+      # the TATR L4 run billed 41 minutes before dying in preprocessing.
+      # Its suite mocks the adapter both ways: a raise fails naming the
+      # model, a table passes, an empty decode fails.
+      - name: The zero-shot smoke fails loud and passes on a table
+        if: ${{ !cancelled() }}
+        run: python3 scripts/gcp/test_smoke_zeroshot_local.py
+      # Track B on ParseBench as a round add-on (T5): the gates, guards,
+      # page lists and replace step. No torch, no binaries, no network --
+      # the shell runs against fixture manifests and every refusal lands
+      # before the venvs exist.
+      - name: The track-B ParseBench add-on refuses and replaces rightly
+        if: ${{ !cancelled() }}
+        run: python3 scripts/extraction/tables_b/test_pb_round_addon.py
+      # GCE runs startup scripts as root with no HOME, under `set -u`: the
+      # track-A train ended after three minutes on `HOME: unbound variable`
+      # (03-10). A file scan over every scripts/gcp/*startup*.sh.
+      - name: Every startup script sets HOME before its first use
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_startup_script_sets_home.py
+      - name: The startup-HOME guard refuses a use before the set
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_startup_script_sets_home.py
+      # The second set's ground truth is a grid rather than a box (#575), and
+      # the translation from its cells to the HTML a TEDS axis reads is the
+      # one place a table can silently come out of the annotation wrongly.
+      - name: The table set's cells come out as the grid they describe
+        if: always()
+        run: python3 scripts/extraction/pubtables_cells.py --self-test
+      # The FinTabNet lane (#574) splits by company and reads IBM's archive by
+      # HTTP Range: the rule that puts every company on one side, frozen with
+      # its 41, and the reader that refuses a wrong CRC32, a wrong LICENSE or
+      # a provenance mismatch instead of grading a tool on the wrong page.
+      - name: Every FinTabNet company lands on exactly one side of the split
+        if: always()
+        run: python3 scripts/ci/test_fintabnet_split.py
+      - name: No FinTabNet train/tuning draw holds an eval-overlap page
+        if: always()
+        run: python3 scripts/ci/test_fintabnet_eval_overlap.py
+      - name: The FinTabNet archive reads by range and refuses loudly
+        if: always()
+        run: python3 scripts/extraction/fintabnet_archive.py --self-test
+      # And the protocol around them: that a set or a tool whose licence says no
+      # cannot be measured by passing a flag. #566 asked for two that are
+      # refused, which is exactly how a register stops being read.
+      - name: The structured baseline obeys its registers
+        if: always()
+        run: python3 scripts/ci/loop/structured_bench.py --self-test
+      - name: The run carries the order provenance per page
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/test_structured_bench_order_provenance.py
+      - name: FinTabNet draws a pinned list and a failed read fails the run
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/test_structured_bench_fintabnet_pinned.py
+      - name: A pinned FinTabNet page is identified by its bytes, not re-aligned
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/test_structured_bench_fintabnet_norealign.py
+      - name: FinTabNet reads the GCS mirror without leaking its URL
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/test_structured_bench_fintabnet_mirror.py
+      - name: The structured bench refuses a missing tool instead of an empty column
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/test_structured_bench_missing_tools.py
+      - name: Our columns checkpoint per page and per document, and reuse byte-identical
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/test_structured_bench_checkpoint.py
+      # The post-AC round died of SIGPIPE in balanced_timing (08-10): the
+      # function-level red below and the whole-script dry run beside it.
+      - name: The round timing survives its 50-page cut without SIGPIPE
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/test_structured_bench_remote_sigpipe.py
+      - name: The whole remote round dry-runs green with every stub
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/loop/round_dryrun.sh
+      # Rig page text never goes into the repo: the stripper maps every public
+      # page and document name to its hash and drops the snippets, and the
+      # gate reads the stripped shelf the same way.
+      - name: The run-text stripper keeps its mapping rules
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/strip_run_text.py --self-test
+      - name: Stripping a run removes text and keeps every score
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/loop/test_strip_run_text.py
+      - name: The ParseBench round headlines one canonical summary and refuses timeouts
+        if: ${{ !cancelled() }}
+        run: python3 scripts/extraction/parsebench_round.py --self-test
+      - name: The ParseBench summary is survivor-only and joins on test_id
+        if: ${{ !cancelled() }}
+        run: python3 scripts/extraction/pb_summary.py --self-test
+      - name: The structured holdout is the set its rule draws
+        if: always()
+        run: python3 scripts/ci/the_structured_holdout_is_the_drawn_set.py
+      - name: That guard is red on every way the structured seal can be spoiled
+        if: always()
+        run: python3 scripts/ci/test_the_structured_holdout_is_the_drawn_set.py
+      # FinTabNet's first draw (T6, #574): fintabnet seals on the rig under
+      # its own seed while the guard still reads only sealed sets.
+      - name: The first FinTabNet draw can happen on the rig
+        if: always()
+        run: python3 scripts/ci/test_structured_first_draw.py
+      # The parity gate of #575. Parity with Docling is the condition for the
+      # stable label (owner 06-10-2026: 1.1.0 ships it as preview), so what a
+      # lane holds is the ratchet: a committed run worse than the one before
+      # it is red here rather than a comment somebody may or may not act on.
+      - name: The newest structured run is at least the last committed one
+        if: always()
+        run: python3 scripts/ci/loop/structured_parity.py --check
+      - name: The parity gate is red on every way it could be got past
+        if: always()
+        run: python3 scripts/ci/test_structured_parity.py
+      # The gate's own arithmetic, which no lane ran until #580: the three
+      # readings of a moving denominator, the speed ceiling and the resolution
+      # floor under the ratchet are asserted in `--self-test`, and a rule whose
+      # test nothing runs is a rule that drifts.
+      - name: The parity arithmetic says what it claims
+        if: always()
+        run: python3 scripts/ci/loop/structured_parity.py --self-test
+      # The preview publish gate (owner 06-10-2026, #574): `--release` prints
+      # parity under a PREVIEW header and exits on the ratchet, `--stable`
+      # holds parity for the label, and no publish path calls that spelling.
+      - name: The preview gate publishes on the ratchet and holds parity for stable
+        if: always()
+        run: python3 scripts/ci/test_structured_preview_gate.py
+      # The public benchmark page (#631) comes out of the run files with one
+      # command; what can be wrong without a round is the generator: that it
+      # reads master's newest round, carries a claim and a run id per table, and
+      # refuses to ship a number that is empty, unclaimed or from an older day.
+      - name: The benchmark page refuses an empty, unclaimed or stale number
+        if: always()
+        run: python3 scripts/extraction/benchmark_page.py --self-test
+      - name: the two coordinate frames convert one way
+        if: ${{ !cancelled() }}
+        run: python3 scripts/extraction/frames.py --self-test
+      # The paired numbers behind A35-A40 come from paired.py: the rescoring
+      # check reproduces the writer's round(mean, 6) before its 3-decimal
+      # comparison and still refuses a +0.0004 shift; verdict() gives GO only
+      # when the 95% low bound is above MARGIN 0.05.
+      - name: The paired numbers refuse a shifted mean and grade at the margin
+        if: always()
+        run: python3 scripts/extraction/test_paired.py
+      # The Office corpus collector (#636) plans federal + public-domain only,
+      # caps per organisation and host, verifies the magic before it writes
+      # the manifest, and splits odd sha tuning. Canned records, no network.
+      - name: The office collector plans, verifies and splits what it claims
+        if: ${{ !cancelled() }}
+        run: python3 scripts/office_bench/test_collect.py
       - name: No pull request has been left to rot
         if: ${{ !cancelled() }}
         env:
@@ -1111,6 +2079,12 @@ jobs:
       - name: Parsers still read their runners' output
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_tests_actually_ran.py
+      # The pdfluent binary takeover (#636): internal scripts name xfa-runner,
+      # the release gate checks the staged package, and the GitLab lane ships
+      # the public CLI. Needs nothing but Python and bash.
+      - name: The binary takeover left no internal consumer behind
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_cli_takeover_wiring.py
       # Costs nothing -- it drives the gate's verdict with numbers, no veraPDF
       # and no corpus -- so the cheap job can vouch for the expensive one. The
       # first case is the report `verapdf.yml` published on #1543: five
@@ -1141,6 +2115,289 @@ jobs:
       - name: Every guard has a job, and it is not only on the mirror
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/every_guard_has_a_job.py
+      - name: The requirements preflight covers every gate and goes red per kind
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_gate_preflight.py
+      # Build 6 reddened Windows on CRLF goldens: the serializers produce LF
+      # and the tests compare byte-for-byte, so the golden dirs check out LF.
+      - name: The byte-compared golden dirs check out LF
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/golden_dirs_check_out_lf.py
+      # The musl CRT split (P0): -crt-static rides only the cdylibs, never the
+      # whole musl target — the config form dynamically linked the musl CLI.
+      - name: The musl CRT flag rides only the cdylibs
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_musl_crt_split.py
+      # The release remap block is computed from the builder's own paths, not
+      # one Mac's — helper output over fake runner envs plus the workflow
+      # shape that sources it.
+      - name: The release builds scrub the runner's own paths
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_release_rustflags.py
+      # The shipped natives name no build host: the checker over fixtures
+      # (a leaking native and wheel must fail) plus the release gates and
+      # build-wheels legs that run it.
+      - name: No shipped native embeds its build host's paths
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_binary_host_paths.py
+      # The same rules over the Rust sources, so a literal that only one
+      # target compiles (the 1.1.0 Windows-only file-URL message) fails here,
+      # on every runner, before any release leg builds that target.
+      - name: No shipped Rust literal reads as a build host's path
+        if: ${{ !cancelled() }}
+        run: |
+          python3 scripts/release/test_source_literals_name_no_host_path.py
+          python3 scripts/release/source_literals_name_no_host_path.py
+      # The artefact gate judges every native on its own: per-native size,
+      # kind/arch/libc off the bytes, mac wheels plus abi3, one table, licences.
+      - name: Every artefact covers every platform, judged per native
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_artifacts_cover_every_platform.py
+      - name: The licence audit requires both halves of the dual licence
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_license_audit.py
+      - name: The stagers never stage a host build under a named platform
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_stage_natives_have_no_host_fallback.py
+      - name: The smokes test exactly the given artefact
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_smoke_runner_requires_artifact.py
+      - name: The npm publish is manual, gated, and builds all seven targets
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_node_bindings_publish_gate.py
+      - name: The wasm publish is manual and gated
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_wasm_publish_gate.py
+      - name: The binary release is manual and gated
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_release_binaries_gate.py
+      - name: Every publish section requires the gate and the smoke runner
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_runbook_publish_gates.py
+      - name: The smokes refuse typos and foreign platforms
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_smoke_args_and_platform.py
+      # NuGet keys its global packages folder by id and version: a smoke that
+      # restored there reused an earlier run's PDFluent.<version>, never the
+      # nupkg under test.
+      - name: The .NET smoke restores into its own packages dir
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_smoke_dotnet_packages_dir.py
+      - name: Release downloads retry the network and verify the artefact
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_fetch_artefact.py
+      - name: The guard job runs no build
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_orchestration_guard_runs_no_build.py
+      # The NativeLoader test compiles Java, so it needs a JDK and the JNA
+      # jar on the runner: without either it skips as SKIPPED (not a pass),
+      # which is the right answer on a Mac without a JDK and the wrong one
+      # here. The step runs in the release lane, so a provisioning failure
+      # goes red instead of SKIPPED-green. The JNA version is read off
+      # bindings/java/pom.xml, so a bump there moves this fetch with it.
+      - name: Set up JDK
+        if: ${{ !cancelled() }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Fetch the JNA jar the NativeLoader test compiles against
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          JNA_VER="$(python3 - <<'PY'
+          import re, sys
+          text = open('bindings/java/pom.xml').read()
+          m = re.search(r"<artifactId>jna</artifactId>\s*<version>([^<]+)</version>", text)
+          sys.stdout.write(m.group(1))
+          PY
+          )"
+          DEST="$HOME/.m2/repository/net/java/dev/jna/jna/$JNA_VER"
+          mkdir -p "$DEST"
+          curl -fsSL -o "$DEST/jna-$JNA_VER.jar" \
+            "https://repo1.maven.org/maven2/net/java/dev/jna/jna/$JNA_VER/jna-$JNA_VER.jar"
+          test -s "$DEST/jna-$JNA_VER.jar" && echo "JNA $JNA_VER ready under ~/.m2"
+      - name: NativeLoader reads musl off the JVM's own interpreter
+        if: ${{ !cancelled() }}
+        env:
+          PDFLUENT_RELEASE_LANE: '1'
+        run: python3 scripts/release/test_native_loader_musl.py
+      - name: The Java sources stay compilable under source 11
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_java_stays_source11.py
+      - name: The build lane gates complete sets or says partial
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_build_all_platforms.py
+      - name: Every napi build line passes only flags the pinned CLI lists
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_napi_build_flags.py
+      - name: The linux-gnu Node bindings need no glibc above 2.17
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_node_glibc_floor.py
+      - name: The wheel scrub leaves no build-host path in the SBOM
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_scrub_wheel.py
+      - name: No reserved word as a parameter in the Node typings
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/node_typings_have_no_reserved_parameter.py
+      - name: The CLI crates.io gate holds the manifest
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_cli_cratesio_gate.py
+      - name: The release Dockerfile stays glibc-free and static
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_cli_dockerfile.py
+      - name: The Homebrew formula renders off the sums
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_render_homebrew_formula.py
+      - name: The CLI smoke refuses a missing binary
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_smoke_cli.py
+      - name: The consumer smokes pass only flags the CLI lists
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_smoke_cli_surface.py
+      - name: The binary smoke reads flat and top-dir archives
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_smoke_binary_layout.py
+      - name: The archive builder derives its triples and refuses dynamic musl
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_cli_build_archives.py
+      - name: The sdist builder refuses the maturin that panics on this layout
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_build_pdfluent_sdist.py
+      - name: Every workflow builds Python with the measured maturin
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_python_build_pin.py
+      - name: The C API collector assembles the judged dir and seven tarballs
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_collect_capi_release.py
+      - name: package_cabi.sh cuts one tarball per platform from a prebuilt lib
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_package_cabi.py
+      - name: The ORT pin table stages five verified runtime libraries
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_fetch_ort_libs.py
+      - name: The GCS model weights stage verified, or refuse
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_stage_models.py
+      - name: The release workflows ship the ort variant on all targets
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_release_ort_variant.py
+      # 16-10 win-x64: "file://" glued to a Git Bash path gave file:///c/...,
+      # which the native CLI read as \c\... on the current drive.
+      - name: The ort smoke hands the native CLI a file URL it can read
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_smoke_file_url.py
+      # The win-x64 release smoke refused a correct models-v1 release: Git for
+      # Windows' autocrlf checked the pinned licence texts out CRLF. Proven
+      # both ways on an autocrlf clone, offline.
+      - name: The release texts pinned to tree bytes check out LF on every OS
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_pinned_texts_check_out_lf.py
+      - name: The publish order puts every dependency before its dependent
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_publish_order.py
+      - name: Release-smoke packages a crate with its workspace dependencies
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_package_with_workspace_deps.py
+      - name: The package audit judges what the packages carry
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_audit_all_packages.py
+      - name: release-natives.yml builds the gate's seven platforms, every channel
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_release_natives_matrix_matches_the_gate.py
+      - name: release-natives.yml smokes the artefacts on all seven platforms
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_release_smoke_matrix_matches_the_gate.py
+      - name: No workflow schedules a retired runner label
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_no_retired_runner_labels.py
+      - name: The release path never forgives an unbuilt platform
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_release_path_never_allows_missing.py
+      - name: The consistency gate knows which crates are new
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_check_release_consistency.py
+      - name: The release workflows route through the runner pool
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_release_workflows_route_through_runner_pool.py
+      - name: No bash step on a Windows leg runs under the default shell
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_release_windows_steps_run_under_bash.py
+      - name: No Windows-reachable bash step calls a bare python3
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_release_windows_python_resolves_its_interpreter.py
+      - name: No release step reaches for gh or pipes into a quiet grep
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_release_steps_use_no_gh.py
+      - name: Every package name the release workflows look up exists
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_release_package_names_exist.py
+      - name: Self-hosted runs never publish
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_self_runs_never_publish.py
+      - name: A release run shows every error, not the first
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_release_runs_show_every_error.py
+      - name: The runner scripts pass shellcheck
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_runner_scripts_pass_shellcheck.py
+      - name: The self-hosted setup keeps present tools
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_selfhosted_setup_keep_checks.py
+      - name: The node tarball install lands once and keeps it
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_selfhosted_node_install.py
+      # The extract-js suite installs the tree-built binding with its own
+      # binary beside it: the tarball excludes the .node and the =1.1.0
+      # platform packages are unpublished, so the registry would hand back
+      # the 1.0.0 binary instead of the tree's (#636).
+      - name: The extract-js suite tests the tree build, not the registry
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_run_extract_js_tests.py
+      - name: The self-hosted python runs from a versioned venv
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_selfhosted_python_venv.py
+      - name: The macOS runner starts native with its own tool tree
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_mac_runner.py
+      - name: The Darwin setup pins both-arch tools under PDFLUENT_TOOLS
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_selfhosted_setup_darwin.py
+      - name: The Rosetta wrapper runs the x64 side or refuses
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_rosetta_x64.py
+      - name: The runner dry run prints its flags
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_gcp_runner_dry_run.py
+      - name: The setup action resolves its scripts from the repo root
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_setup_action_resolves_its_scripts.py
+      - name: Runner down deregisters the GitHub runner
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_gcp_runner_down_deregisters.py
+      - name: The Windows setup works on a bare windows-2022 VM
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/test_selfhosted_setup_ps1.py
+      # The PDF-header routing test is hermetic (engine stubbed): fast, always.
+      - name: PDF header routing in the first 1024 bytes
+        if: ${{ !cancelled() }}
+        run: python3 integrations/pdfluent-extract/tests/test_pdf_header_routing.py
+      # The compiling suites moved to binding-suites.yml, dispatch-only:
+      # this job is seconds of file scanning, no compilation.
+      # Test first, then the guard, for the reason above.
+      - name: The caller-grants guard still catches a missing scope
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_caller_grants_what_it_calls.py
+      - name: A job that calls a workflow grants what that workflow asks for
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_caller_grants_what_it_calls.py
+      # Test first, then the guard, for the reason above.
+      - name: The one-source-render guard still catches a second call
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_wave_renders_the_source_once.py
+      - name: A job renders the corpus for the page eval once
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_wave_renders_the_source_once.py
       - name: The mirror pipeline still parses
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/ci_config_lint.py
@@ -1216,6 +2473,12 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/de_gedeelde_config_breekt_geen_worktrees.py
 
+  # A `binding-suites` job stood here: the compiling binding suites, on the
+  # desktop on every push. That is the heavy work heavy_work_leaves_the_desktop
+  # refuses there (#267, #350), so the job moved to binding-suites.yml --
+  # dispatch-only, on ubuntu-latest, where a dispatch is a decision that may
+  # cost. The same scripts ride the landing lane beside it.
+
 
   # --------------------------------------------------------------------------
   # #288. Until 31-08-2026 the guards below ran in .gitlab-ci.yml and nowhere
@@ -1255,7 +2518,7 @@ jobs:
     # rule in orchestration_stays_hosted.py is about code a caller chooses --
     # a pull request's head or a dispatch ref -- and a push to master is neither:
     # it is already merged.
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: [self-hosted, xfa-local-checks]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1315,135 +2578,36 @@ jobs:
       - name: No tracked file names a repository path we have retired
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/no_tracked_file_names_the_old_repository.py
+      # Evidence lives outside the tree: train Q carried meas/p4l-3f/ into the
+      # repo because meas/ was never ignored, and meas/p4l-3l/ was one landing
+      # away from following it. The guard refuses any tracked path under either
+      # evidence root; the test plants one in a fixture repository.
+      - name: The tracked-evidence guard fails on planted paths and spares the rest
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_no_tracked_evidence.py
+      - name: No tracked file sits under the evidence roots
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/no_tracked_evidence.py
 
-  public-snapshot-build:
-    name: The published tree builds from a clean clone
-    # #222's own gate, written into that issue as "somebody who clones the
-    # repository can build the SDK and run the smoke tests, without access to
-    # anything private -- test that by actually doing it".
-    #
-    # WHY IT WAS RUNNING NOWHERE, AND WHY THAT IS NOT A REASON TO LEAVE IT THERE
-    #
-    # `public_snapshot_check.sh` has two halves. The path audit is 154 seconds and
-    # runs in the pre-push gate and in publication-guards.yml. The build half --
-    # assemble the published tree, copy it into an empty directory, give it a
-    # fresh HOME with no keychain, no gitconfig and no corpus mount, and compile
-    # it -- is minutes and gigabytes, and that is written down in the script as
-    # the reason it does not run on every push. Measured 05-09-2026: it had never
-    # run in any job at all, and the only evidence for the criterion was a person
-    # running it by hand that morning.
-    #
-    # Minutes and gigabytes is an argument about WHERE, not about WHETHER. Here it
-    # is: on the push to master, once per merge, on the machine that already
-    # compiles this workspace.
-    #
-    # NOT ON HOSTED MINUTES (#333). The 2,000 included minutes were spent on
-    # 05-09 and the account had begun billing; a cold `cargo build --workspace` on
-    # ubuntu-latest is the single most expensive thing this repository could put
-    # there. The desktop runner's minutes are free however long it takes, and a
-    # push to master is merged code, so the rule in
-    # pr_code_stays_off_the_desktop.py is satisfied by the event and not by an
-    # exception.
-    runs-on: [self-hosted, xfa-fast]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      # One step and not two: the audit runs first inside the same script, so a
-      # tree that names our machines fails before the slow half starts. A build
-      # failure would otherwise bury the finding that actually matters.
-      - name: Assemble the published tree, then build it with an empty HOME
-        run: bash scripts/ci/public_snapshot_audit.sh --with-build
-
-  workspace:
-    name: The whole workspace, on master
-    # THE OTHER HALF OF #343, and the reason that ticket is a trade rather than
-    # a loss.
-    #
-    # The landing lane compiles and tests only the crates a landing touches. That
-    # is only safe if something compiles and tests ALL of them afterwards, and on
-    # 05-09-2026 nothing did: `ci-ephemeral.yml` held the workspace build for a
-    # push to master, its Hetzner provider was cancelled on 24-08, and the
-    # workflow was disabled by hand -- so between then and here `cargo test
-    # --workspace` ran in exactly one place on this planet, the pre-push gate of
-    # whoever was landing. Measured before this job was written: no run of any
-    # workflow had built the workspace on master since 02-09.
-    #
-    # So the sentence "the runner already does the whole workspace on master" was
-    # false when #343 was written, and making it true is part of the same change.
-    # Without this job the landing lane would not be trading where a finding
-    # appears; it would be dropping the finding.
-    #
-    # ON THE DESKTOP, NOT ON HOSTED MINUTES (#333): a cold workspace build is the
-    # most expensive thing this repository could put on ubuntu-latest, and the
-    # desktop's minutes are free. A push to master is merged code, so the rule in
-    # pr_code_stays_off_the_desktop.py is satisfied by the event and not by an
-    # exception. The persistent build directory is what makes this affordable at
-    # all: the workspace is warm here, so an ordinary landing recompiles its own
-    # crates and links, rather than paying the cold 45 minutes the landing lane
-    # was paying per landing.
-    #
-    # NOT CANCELLED BY THE NEXT LANDING. ci.yml's concurrency group is the SHA for
-    # a push, and this job keeps it: on 02-09 every master run was cancelled by
-    # the merge behind it, so a result was observed only when nobody landed for
-    # the length of a run. A queue that drains is a delay; a queue that cancels
-    # itself is no gate at all.
-    runs-on: [self-hosted, xfa-fast]
-    # Long enough for a cold build after a toolchain bump, which is the case that
-    # would otherwise fail at the default and look like a broken workspace.
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v4
-      # The persistent runner hands every job the state the last one left. Which
-      # of the three it is -- gone, dead or unwritable -- before a build spends
-      # forty minutes finding out. (#264)
-      - name: A mount, a dead disk and a rights problem are told apart
-        run: bash scripts/ci/shared_build_dir_is_there.sh
-      - name: The shared build directory is there and undamaged
-        run: bash scripts/ci/cargo_target_health.sh
-      # THE RUNNER SERVICE'S PATH DOES NOT CARRY ~/.cargo/bin, and this job's
-      # first run proved it again: all three steps below died on `cargo: command
-      # not found`, exit 127, seconds apart. Every job on this runner that
-      # compiles carries this step -- `guards` in this file, java-bindings.yml,
-      # visual-regression.yml -- and a fourth one was written without it. (#292,
-      # #343)
-      #
-      # `$HOME` for the runner service is not necessarily where cargo was
-      # installed, so adding the directory is not the same as making cargo
-      # runnable. Source the env file when it is there, and then CHECK.
-      - name: Cargo on PATH
-        run: |
-          set -euo pipefail
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
-          export PATH="$HOME/.cargo/bin:$PATH"
-          if ! command -v cargo >/dev/null 2>&1; then
-            echo "::error::cargo is not runnable on this runner. \$HOME is $HOME; \$HOME/.cargo/bin is $([ -d "$HOME/.cargo/bin" ] && echo present || echo absent). The three steps below would each fail with exit 127 and say nothing about this." >&2
-            exit 1
-          fi
-          # Status-checked, not `echo $(...)`: if cargo resolves but cannot run --
-          # a rustup shim with no toolchain installed -- the substitution fails,
-          # `echo` still returns 0, `set -e` sees nothing, and the step reports
-          # success with an empty version.
-          cargo --version || {
-            echo "::error::cargo is on PATH but does not run. A rustup shim without an installed toolchain does this: command -v cargo succeeds and every build fails." >&2
-            exit 1
-          }
-      # The same three scripts the landing lane runs, with no crate list -- which
-      # is what makes them the whole workspace. One source for the flags, so the
-      # scoped lane and this job cannot drift into testing different things.
-      #
-      # Each step carries `if: ${{ !cancelled() }}`: clippy says nothing about
-      # whether the tests pass, and a landing that broke two things should be
-      # told about both rather than one a day.
-      - name: check
-        if: ${{ !cancelled() }}
-        run: bash scripts/ci/run_build.sh
-      - name: clippy
-        if: ${{ !cancelled() }}
-        run: bash scripts/ci/run_clippy.sh
-      - name: test
-        if: ${{ !cancelled() }}
-        run: bash scripts/ci/run_test.sh
+  # THE WORKSPACE BUILD IS NOT HERE ANY MORE (#350).
+  #
+  # A `workspace` job stood here from 05-09-2026: checkout, build-directory
+  # check, and the same three scripts the landing lane runs with no crate list,
+  # which makes them the whole workspace. It was written for a true reason --
+  # the landing lane compiles only the crates a landing touches, and at that
+  # moment nothing compiled the rest, because ci-ephemeral.yml had been disabled
+  # by hand and its provider was believed gone.
+  #
+  # The provider was not gone: measured 06-09-2026 over all 318 runs of that
+  # workflow, 104 succeeded, the last on 01-09. So the premise of this job was
+  # repaired rather than the job kept. `ci-ephemeral.yml` now runs the whole
+  # workspace every two hours on a bought-and-thrown-away instance, next to the
+  # four heavy suites, and this file goes back to what it says at the top: light
+  # guards, seconds of file scanning, on the machine that also has to serve
+  # everything else.
+  #
+  # What that leaves per landing is the pre-push gate, which compiles and tests
+  # the crates the landing touches before the push happens. What it costs is a
+  # workspace verdict that is up to two hours old rather than one that queued
+  # for three -- on 06-09 the oldest master commit under test on this runner was
+  # two hours old with twenty-eight runs behind it.

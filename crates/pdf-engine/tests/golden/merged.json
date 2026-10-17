@@ -1,0 +1,191 @@
+{
+  "blocks": [
+    {
+      "index": 0,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": true,
+      "page": 0,
+      "bbox": [72, 680, 105.89000044822693, 690],
+      "text": "Region",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "Region", "x": 72, "y": 680, "width": 33.89000044822693, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 1,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 2,
+      "header": true,
+      "page": 0,
+      "bbox": [240, 680, 320.0100002861023, 690],
+      "text": "Reported figures",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "Reported figures", "x": 240, "y": 680, "width": 80.0100002861023, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 2,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [72, 662, 96.45000010490418, 672],
+      "text": "North",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "North", "x": 72, "y": 662, "width": 24.450000104904177, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 3,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [240, 662, 256.6799998855591, 672],
+      "text": "120",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "120", "x": 240, "y": 662, "width": 16.679999885559084, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 4,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [360, 662, 380.00999988555907, 672],
+      "text": "41%",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "41%", "x": 360, "y": 662, "width": 20.00999988555907, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 5,
+      "kind": "tableCell",
+      "row": 2,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [72, 644, 98.1299999332428, 654],
+      "text": "South",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "South", "x": 72, "y": 644, "width": 26.1299999332428, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 6,
+      "kind": "tableCell",
+      "row": 2,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [240, 644, 251.11999994277954, 654],
+      "text": "95",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "95", "x": 240, "y": 644, "width": 11.119999942779543, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 7,
+      "kind": "tableCell",
+      "row": 2,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [360, 644, 380.00999988555907, 654],
+      "text": "32%",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "32%", "x": 360, "y": 644, "width": 20.00999988555907, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 8,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [72, 626, 92.01000001907349, 636],
+      "text": "East",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "East", "x": 72, "y": 626, "width": 20.010000019073487, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 9,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [240, 626, 251.11999994277954, 636],
+      "text": "78",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "78", "x": 240, "y": 626, "width": 11.119999942779543, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 10,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [360, 626, 380.00999988555907, 636],
+      "text": "27%",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "27%", "x": 360, "y": 626, "width": 20.00999988555907, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    }
+  ]
+}

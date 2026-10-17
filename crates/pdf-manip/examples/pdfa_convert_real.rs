@@ -42,6 +42,7 @@ fn main() {
             if let Some(path) = diagnostics {
                 let value = serde_json::json!({
                     "pages": report.page_count,
+                    "text_streams_repositioned": report.text_streams_repositioned,
                     "warnings": report.warnings,
                     "page_tree_repaired": report.page_tree_repaired,
                     "output_intent_added": report.output_intent_added,
@@ -58,6 +59,7 @@ fn main() {
                     value["font_subsetting"] = serde_json::json!({
                         "programs_subsetted": report.subsets.programs_subsetted,
                         "encoded_bytes_saved": report.subsets.bytes_saved,
+                        "form_protected": report.subsets.form_protected,
                         "skipped": report.subsets.skipped.iter().map(|(id, reason)|
                             serde_json::json!({"object": id.0, "generation": id.1, "reason": reason})
                         ).collect::<Vec<_>>()

@@ -134,6 +134,17 @@ forbidden_change = true
 heritage = "PDFluent original. JSON serialization for XFA layout."
 
 [[crate]]
+published_name = "epub-extract"
+workspace_dir  = "epub-extract"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+required_files = ["LICENSE", "LICENSE-COMMERCIAL"]
+license_first_line_check = { file = "LICENSE", literal = "                    GNU AFFERO GENERAL PUBLIC LICENSE" }
+forbidden_change = true
+heritage = "PDFluent original. EPUB content extraction to structured blocks."
+
+[[crate]]
 published_name = "pdf-annot"
 workspace_dir  = "pdf-annot"
 license_kind   = "agpl-or-commercial"
@@ -237,6 +248,17 @@ forbidden_change = true
 heritage = "PDFluent original. PDF↔PowerPoint conversion."
 
 [[crate]]
+published_name = "pptx-extract"
+workspace_dir  = "pptx-extract"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+required_files = ["LICENSE", "LICENSE-COMMERCIAL"]
+license_first_line_check = { file = "LICENSE", literal = "                    GNU AFFERO GENERAL PUBLIC LICENSE" }
+forbidden_change = true
+heritage = "PDFluent original. PowerPoint→blocks extraction (Epic #636)."
+
+[[crate]]
 published_name = "pdf-redact"
 workspace_dir  = "pdf-redact"
 license_kind   = "agpl-or-commercial"
@@ -281,6 +303,17 @@ forbidden_change = true
 heritage = "PDFluent original. PDF↔Excel conversion."
 
 [[crate]]
+published_name = "xlsx-extract"
+workspace_dir  = "xlsx-extract"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+required_files = ["LICENSE", "LICENSE-COMMERCIAL"]
+license_first_line_check = { file = "LICENSE", literal = "                    GNU AFFERO GENERAL PUBLIC LICENSE" }
+forbidden_change = true
+heritage = "PDFluent original. XLSX workbook extraction to engine blocks."
+
+[[crate]]
 published_name = "pdfluent"
 workspace_dir  = "pdfluent"
 license_kind   = "agpl-or-commercial"
@@ -290,6 +323,17 @@ required_files = ["LICENSE", "LICENSE-COMMERCIAL"]
 license_first_line_check = { file = "LICENSE", literal = "                    GNU AFFERO GENERAL PUBLIC LICENSE" }
 forbidden_change = true
 heritage = "PDFluent original. Umbrella facade crate."
+
+[[crate]]
+published_name = "pdfluent-cli"
+workspace_dir  = "pdfluent-cli"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+required_files = ["LICENSE", "LICENSE-COMMERCIAL"]
+license_first_line_check = { file = "LICENSE", literal = "                    GNU AFFERO GENERAL PUBLIC LICENSE" }
+forbidden_change = true
+heritage = "PDFluent original. Public command-line interface over the facade."
 
 [[crate]]
 published_name = "pdfluent-extract"
@@ -432,3 +476,26 @@ required_files = ["LICENSE"]
 license_first_line_check = { file = "LICENSE", contains = "Junfeng Liu" }
 forbidden_change = true
 heritage = "Fork of upstream J-F-Liu/lopdf by Junfeng Liu (MIT). Relicensing prohibited."
+
+# Added 08-09-2026 with #383. It carries rights-bearing files that are not ours:
+# twelve Liberation faces under SIL OFL 1.1, whose licence text has to travel
+# with them. LICENSE-Liberation.txt and PROVENANCE.sha256 are in required_files
+# so neither can quietly disappear, and the checksums make a face swap visible.
+[[crate]]
+published_name = "pdf-substitute-fonts"
+workspace_dir  = "pdf-substitute-fonts"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+required_files = ["LICENSE", "LICENSE-COMMERCIAL", "LICENSE-Liberation.txt", "LICENSE-NotoNaskhArabic.txt", "PROVENANCE.sha256"]
+license_first_line_check = { file = "LICENSE", literal = "                    GNU AFFERO GENERAL PUBLIC LICENSE" }
+forbidden_change = true
+heritage = """PDFluent original code. Bundles twelve unmodified Liberation 2.1.5 \
+faces and two unmodified Noto Naskh Arabic v2.021 faces (both SIL OFL 1.1), \
+which keep their own licences in LICENSE-Liberation.txt and \
+LICENSE-NotoNaskhArabic.txt and are attributed in THIRD_PARTY_LICENSES.txt. \
+OFL-1.1 permits embedding in a PDF; the reserved font names hold because the \
+faces are unmodified, which PROVENANCE.sha256 records against the upstream \
+release archives. Noto is a trademark of Google LLC, named as a fact about the \
+bytes and not as an endorsement (#502)."""
+

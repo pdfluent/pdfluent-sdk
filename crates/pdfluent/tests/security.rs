@@ -74,12 +74,12 @@ fn encrypt_output_refuses_reparse_without_password() {
     let reloaded_lopdf = lopdf::Document::load_mem(&bytes).expect("lopdf parse");
     assert!(pdf_manip::encrypt::is_encrypted(&reloaded_lopdf));
 
-    // NOTE: reparsing through `PdfDocument::from_bytes_with(&bytes,
-    // OpenOptions::new().with_password("secret"))` currently fails on the
-    // pdf-engine side for PDF 2.0 AES-256 output. This is documented in the
-    // encrypt() rustdoc as a post-1.0 improvement. Not asserted here to
-    // avoid flaky tests — when the pdf-engine upgrade lands, a positive
-    // round-trip test is added.
+    // The note that stood here said reparsing our own AES-256 output through
+    // `PdfDocument::from_bytes_with(..., with_password(...))` failed on the
+    // pdf-engine side, and that a positive round-trip test would follow the
+    // upgrade. It does open now; the round trip is pinned in
+    // `password_failures_are_named.rs`, where it also keeps that file's two
+    // failure reasons honest (#450).
 }
 
 #[test]

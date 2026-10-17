@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "fixture": "crates/pdf-engine/tests/fixtures/doclaynet/uksi_20200121_p50.pdf",
+  "quality": "balanced",
+  "argv": [
+    "extract",
+    "crates/pdf-engine/tests/fixtures/doclaynet/uksi_20200121_p50.pdf",
+    "--format",
+    "md",
+    "--quality",
+    "balanced",
+    "--model-dir",
+    "<model-dir>",
+    "--table-model-dir",
+    "<table-model-dir>"
+  ],
+  "notes": "CLI reference recorded with --quality balanced plus --table-model-dir (TATR v1.1-all table structure over the balanced tier's kept table regions) and --model-dir (layout-heron-ep03): the tier's exact markdown plus the block kinds in order, the headings, and the table cell grids parsed from it with the test parser's rules.",
+  "markdown": "## SCHEDULE 3\n\nArticles 14 and 18\n\n## CLASSIFICATION OF ROADS, ETC.\n\n## PART 1\n\n## TRUNK ROADS\n\n<table>\n<tr><th colspan=\"2\">TRUNK ROADS</th></tr>\n<tr><th>(1)</th><th>(2)</th></tr>\n<tr><td>Area</td><td>Length of road</td></tr>\n<tr><td>Perranzabuloe, Kenwyn, St Allen, St Erme, St Newlyn East Civil Parishes</td><td>A30 (T) between point A on sheet 1 and point B on sheet 8 of the classification of roads plans, comprising 13820 metres</td></tr>\n<tr><td>Perranzabuloe, Kenwyn Civil Parishes</td><td>A30 (T) between points C and D on sheet 1 of the classification of roads plans, comprising 615 metres</td></tr>\n<tr><td>Perranzabuloe Civil Parish</td><td>A30 (T) between points E and F on sheet 1 of the classification of roads plans, comprising 399 metres</td></tr>\n<tr><td>Perranzabuloe Civil Parish</td><td>A30 (T) between points G and H on sheet 1 of the classification of roads plans, comprising 475 metres</td></tr>\n<tr><td>Perranzabuloe Civil Parish</td><td>A30 (T) between points I and J on sheet 1 of the classification of roads plans, comprising 513 metres</td></tr>\n<tr><td>Kenwyn Civil Parish</td><td>A30 (T) between points K and L on sheet 3 of the classification of roads plans, comprising 486 metres</td></tr>\n<tr><td>Kenwyn Civil Parish</td><td>A30 (T) between points M and N on sheet 3 of the classification of roads plans, comprising 374 metres</td></tr>\n<tr><td>St Erme, St Newlyn East Civil Parishes</td><td>A30 (T) between points O and P on sheet 8 of the classification of roads plans, comprising 569 metres</td></tr>\n<tr><td>St Newlyn East Civil Parish</td><td>A30 (T) between points Q and R on sheet 8 of the classification of roads plans, comprising 334 metres</td></tr>\n<tr><td>St Erme Civil Parish</td><td>A30 (T) between points S and T on sheet 8 of the classification of roads plans, comprising 332 metres</td></tr>\n<tr><td>St Erme, St Newlyn East Civil Parishes</td><td>A30 (T) between points U and V on sheet 8 of the classification of roads plans, comprising 611 metres</td></tr>\n</table>\n",
+  "kinds": [
+    "heading",
+    "paragraph",
+    "heading",
+    "heading",
+    "heading",
+    "table"
+  ],
+  "headings": [
+    {
+      "level": 2,
+      "text": "SCHEDULE 3"
+    },
+    {
+      "level": 2,
+      "text": "CLASSIFICATION OF ROADS, ETC."
+    },
+    {
+      "level": 2,
+      "text": "PART 1"
+    },
+    {
+      "level": 2,
+      "text": "TRUNK ROADS"
+    }
+  ],
+  "tables": [
+    [
+      [
+        "TRUNK ROADS"
+      ],
+      [
+        "(1)",
+        "(2)"
+      ],
+      [
+        "Area",
+        "Length of road"
+      ],
+      [
+        "Perranzabuloe, Kenwyn, St Allen, St Erme, St Newlyn East Civil Parishes",
+        "A30 (T) between point A on sheet 1 and point B on sheet 8 of the classification of roads plans, comprising 13820 metres"
+      ],
+      [
+        "Perranzabuloe, Kenwyn Civil Parishes",
+        "A30 (T) between points C and D on sheet 1 of the classification of roads plans, comprising 615 metres"
+      ],
+      [
+        "Perranzabuloe Civil Parish",
+        "A30 (T) between points E and F on sheet 1 of the classification of roads plans, comprising 399 metres"
+      ],
+      [
+        "Perranzabuloe Civil Parish",
+        "A30 (T) between points G and H on sheet 1 of the classification of roads plans, comprising 475 metres"
+      ],
+      [
+        "Perranzabuloe Civil Parish",
+        "A30 (T) between points I and J on sheet 1 of the classification of roads plans, comprising 513 metres"
+      ],
+      [
+        "Kenwyn Civil Parish",
+        "A30 (T) between points K and L on sheet 3 of the classification of roads plans, comprising 486 metres"
+      ],
+      [
+        "Kenwyn Civil Parish",
+        "A30 (T) between points M and N on sheet 3 of the classification of roads plans, comprising 374 metres"
+      ],
+      [
+        "St Erme, St Newlyn East Civil Parishes",
+        "A30 (T) between points O and P on sheet 8 of the classification of roads plans, comprising 569 metres"
+      ],
+      [
+        "St Newlyn East Civil Parish",
+        "A30 (T) between points Q and R on sheet 8 of the classification of roads plans, comprising 334 metres"
+      ],
+      [
+        "St Erme Civil Parish",
+        "A30 (T) between points S and T on sheet 8 of the classification of roads plans, comprising 332 metres"
+      ],
+      [
+        "St Erme, St Newlyn East Civil Parishes",
+        "A30 (T) between points U and V on sheet 8 of the classification of roads plans, comprising 611 metres"
+      ]
+    ]
+  ]
+}

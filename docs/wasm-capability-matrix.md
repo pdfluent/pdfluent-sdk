@@ -41,8 +41,8 @@ editor session. See `benchmarks/runs/wasm_sdk_dx/ROUND3_PERFORMANCE_BENCHMARK.md
 | 19 | **Page reorder** | `pdf-manip::pages` | ✅ **(Wave 2)** | ✅ | `reorderPages` |
 | 20 | **Page extract / split** | `pdf-manip::pages` | ✅ **(Wave 2)** | ✅ | `extractPages` |
 | 21 | Merge documents | `pdf-manip::pages` | ✅ | ✅ | `merge(other)` |
-| 22 | **Text watermark** | `pdf-manip::watermark` | ✅ **(Wave 2)** | ✅ | `addTextWatermark` |
-| 23 | Image watermark | `pdf-manip::watermark` + `image` | ❌ planned 1.1 | ✅ | larger bundle; deferred |
+| 22 | **Text watermark** | `pdf-manip::watermark` | ✅ **(Wave 2; full options 1.1.0)** | ✅ | `addWatermark(options)`: text or preset (draft, confidential, …), size, rotation, opacity, `#rrggbb` colour, position, layer, tiling, pages. `addTextWatermark(text, opacity)` kept as the short form |
+| 23 | Image watermark | — | ❌ not in any binding | ❌ | no binding has an image watermark, native included; the old size objection does not hold (see 1.1.0 below), the feature simply does not exist yet |
 | 24 | **Stream compress** | `pdf-manip::optimize` + `flate2` | ✅ **(Wave 2)** | ✅ | `compress()` |
 | 25 | **Redact by region** | `pdf-redact` | ✅ **(Wave 2)** | ✅ | `redactRegion` |
 | 26 | **Redact by search** | `pdf-redact` | ✅ **(Wave 2)** | ✅ | `redactSearch` |
@@ -50,10 +50,11 @@ editor session. See `benchmarks/runs/wasm_sdk_dx/ROUND3_PERFORMANCE_BENCHMARK.md
 | 28 | PDF/A convert | `pdf-manip::pdfa_*` | ✅ | ✅ | `convertToPdfa(level)` |
 | 29 | Read digital signatures | `pdf-sign` | ✅ | ✅ | `signatures()`, `verifySignatures()` |
 | 30 | DSS info | `pdf-sign` | ✅ | ✅ | `dssInfo()` |
-| 31 | Create digital signature | `pdf-sign` + crypto | ❌ planned later | ✅ | needs key-input UX |
-| 32 | Encrypt / password-protect | `pdf-manip::encrypt` + RustCrypto | ❌ planned later | ✅ | bundle cost; consumer demand low |
+| 31 | **Create digital signature** | `pdf-sign` | ✅ **(1.1.0)** | ✅ | `signPdf(bytes, p12, password, options)`: PAdES with the user's own .p12/.pfx, incremental, optional visible rectangle; no TSA/LTV in the browser |
+| 32 | **Encrypt / remove password** | `pdf-manip::encrypt` + lopdf | ✅ **(1.1.0)** | ✅ | `encryptPdf(bytes, userPw, ownerPw, permissions)` (AES-256); `decryptPdf(bytes, password)` needs the password: the owner password always, the user password only when the file has no permission restrictions |
 | 33 | OCR (PaddleOCR / Tesseract) | `pdf-ocr` | ❌ never (use `tesseract.js`) | ✅ | C++ engines + model files |
 | 34 | Export to DOCX / XLSX / PPTX | `pdf-docx`, `pdf-xlsx`, `pdf-pptx` | ❌ blocked on native | ⏳ scaffolded | wait until native produces output |
+| 37 | **Image extraction** | `pdf-extract::image_export` | ✅ **(1.1.0)** | ✅ | `extractImages(bytes)` → `{ images, skipped }`: PNG/JPEG per image; JPEG 2000, JBIG2, fax, transparency masks, Decode arrays, CMYK images, non-sRGB ICC profiles and exotic colour spaces are listed in `skipped` with the reason, never emitted wrong. Indexed (palette) images are expanded |
 | 36 | XFA field fill (enumerate + set + datasets save) | `pdf-xfa` `XfaSession` via `pdfluent::xfa` | ❌ planned (bindings follow-up) | ✅ (Rust, Phase 1) | `PdfDocument::xfa_form_model` / `set_xfa_field_value`; WASM/Node/Python/Java/C-API wiring tracked as XFA Phase-1 follow-up |
 
 Legend:
@@ -65,6 +66,15 @@ Legend:
 
 The bold rows above (rows 10, 14–22, 24–26) are the additions in
 `1.0.0-beta.9` per the Wave 2 implementation in `crates/xfa-wasm/src/edits.rs`.
+
+## 1.1.0 entries
+
+Rows 22, 31, 32 and 37 (#613). Measured on master `b8d7452fa` (release build,
+`wasm-opt -O3`): the four together add 334 KB raw / 125 KB gzip to a
+15.49 MB / 5.56 MB baseline (+2.2%). Signing is nearly all of it (+110 KB
+gzip); password protection +2.8 KB, watermark options +0.9 KB, image
+extraction +2.6 KB (the code was already in the binary through office export).
+The size objections that kept rows 31 and 32 out no longer hold.
 
 ## Bundle size
 

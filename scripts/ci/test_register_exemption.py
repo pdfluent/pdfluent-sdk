@@ -53,6 +53,17 @@ def repo(tmp: pathlib.Path) -> pathlib.Path:
         "EIGEN_LOS = {\n}\n", encoding="utf-8")
     (r / "crates" / "a.rs").write_text("pub fn a() {}\n", encoding="utf-8")
     git("init", "-q", "-b", "master", cwd=r)
+    # AN IDENTITY IN THE SANDBOX, because the seal removes every other source of
+    # one: it empties the global config and sets GIT_CONFIG_NOSYSTEM, exactly so
+    # that a fixture cannot inherit the machine's. Until now this fixture
+    # committed anyway, on the accident that git invents `user@hostname` when it
+    # can -- and it cannot on a host whose name has no domain, which is every
+    # throwaway gate instance (#474). There the commit failed, the repository
+    # stayed unborn, and the guard answered "detached HEAD ... NOT checked" for
+    # four cases: a red about the machine wearing the face of a red about the
+    # code. fixture_env's own comment names this as the fix.
+    git("config", "user.name", "fixture", cwd=r)
+    git("config", "user.email", "fixture@invalid", cwd=r)
     git("add", "-A", cwd=r)
     git("commit", "-q", "-m", "base", cwd=r)
     kaal = tmp / "bare.git"

@@ -3,7 +3,7 @@
 
 WHY (#261 family)
 
-The Hetzner VPS at 46.225.223.175 was cancelled on 24-08-2026. Addresses get
+The Hetzner VPS at <retired-vps> was cancelled on 24-08-2026. Addresses get
 reassigned, and that one now answers for somebody else. Seven scripts in this
 repository still named it -- six with the address hardcoded and no way to
 override it, one as a default behind an unset variable.
@@ -36,6 +36,9 @@ CONNECTS = re.compile(r'(?:^|[^\w-])(?:ssh|scp|rsync)\b')
 IPV4 = re.compile(r'\b(\d{1,3}(?:\.\d{1,3}){3})\b')
 RETIRED_HOSTS = ("xfa-test-runner",)
 SAFE_IPS = {"127.0.0.1", "0.0.0.0", "255.255.255.255"}
+# A four-part version pin reads like an address (opencv 4.14.0.94). It is one
+# only when nothing pins it: `NAME_VERSION="x.y.z.w"` or `pkg==x.y.z.w`.
+VERSION_PIN = re.compile(r'(?:[A-Z][A-Z0-9_]*VERSION\s*=\s*["\']?|==)$')
 SKIP_DIRS = {".git", "target", "node_modules", ".worktrees"}
 SKIP_NAMES = ("known_hosts",)
 SUFFIXES = (".sh", ".py", ".mjs", ".js", ".bash", ".zsh")
@@ -74,8 +77,11 @@ def main(argv: list[str]) -> int:
         for n, line in enumerate(text.splitlines(), 1):
             if is_comment(line):
                 continue
-            for ip in IPV4.findall(line):
+            for m in IPV4.finditer(line):
+                ip = m.group(1)
                 if ip in SAFE_IPS or ip.startswith("0."):
+                    continue
+                if VERSION_PIN.search(line[:m.start()]):
                     continue
                 problems.append(f"{rel}:{n}: literal address {ip} in a script that "
                                 "connects. Take it from the environment and fail "
@@ -97,7 +103,7 @@ def main(argv: list[str]) -> int:
         for p in problems:
             print(f"    {p}", file=sys.stderr)
         print("\n  An address that dies does not stop the script -- it points it at "
-              "whoever\n  holds that address next. 46.225.223.175 was ours until "
+              "whoever\n  holds that address next. <retired-vps> was ours until "
               "24-08-2026.", file=sys.stderr)
         return 1
     print(f"[dead-host] OK: {scanned} connecting script(s), none carries a literal "

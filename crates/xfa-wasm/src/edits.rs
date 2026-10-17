@@ -162,47 +162,23 @@ impl PdfDoc {
 
     /// Apply a diagonal text watermark to every page.
     /// `opacity` in 0.0..=1.0. Default rotation 45 deg, default colour gray.
+    ///
+    /// Kept for compatibility; `addWatermark` takes the full set of options.
     #[wasm_bindgen(js_name = "addTextWatermark")]
     pub fn add_text_watermark(&self, text: &str, opacity: f32) -> Result<Vec<u8>, JsValue> {
-        if text.is_empty() {
-            return Err(err(
-                "PdfDoc.addTextWatermark",
-                code::WASM_INVALID_ARGUMENT,
-                legacy_code::INVALID_ARGUMENT,
-                "addTextWatermark: text must be non-empty",
-            ));
-        }
-        if !(0.0..=1.0).contains(&opacity) {
-            return Err(err(
-                "PdfDoc.addTextWatermark",
-                code::WASM_INVALID_ARGUMENT,
-                legacy_code::INVALID_ARGUMENT,
-                "addTextWatermark: opacity must be in 0.0..=1.0",
-            ));
-        }
-        use pdf_manip::watermark::{
-            apply_text_watermark, Color, Layer, PageSelection, Position, TextWatermark,
+        let opts = crate::tools::WatermarkOptions {
+            text: Some(text.to_string()),
+            opacity: Some(opacity),
+            ..Default::default()
         };
-
-        let mut doc = load_doc(self)?;
-        let wm = TextWatermark {
-            text: text.to_string(),
-            font_size: 48.0,
-            rotation: 45.0,
-            opacity,
-            color: Color::Gray(0.5),
-            position: Position::Center,
-            layer: Layer::Foreground,
-        };
-        apply_text_watermark(&mut doc, &wm, &PageSelection::All).map_err(|e| {
+        crate::tools::watermark_bytes(self.pdf.data().as_ref(), &opts).map_err(|e| {
             err(
                 "PdfDoc.addTextWatermark",
-                code::INTERNAL,
-                legacy_code::OPERATION_FAILED,
-                &format!("addTextWatermark failed: {e}"),
+                e.code,
+                e.legacy,
+                &format!("addTextWatermark: {}", e.message),
             )
-        })?;
-        save_doc(&mut doc)
+        })
     }
 
     // ------ AcroForm writes -------------------------------------------------
@@ -468,7 +444,7 @@ impl PdfDoc {
 
 // ---------- internal helpers ------------------------------------------------
 
-fn parse_color_hex(hex: Option<&str>) -> Option<(f64, f64, f64)> {
+pub(crate) fn parse_color_hex(hex: Option<&str>) -> Option<(f64, f64, f64)> {
     let s = hex?.trim().trim_start_matches('#');
     if s.len() != 6 {
         return None;

@@ -39,8 +39,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: publication-guards-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # ONE RUN PER REF, AND THE NEWEST COMMIT WINS (#350).
+  #
+  # These guards read the tree that would be published -- which files it holds,
+  # what the registers say about them -- so the newest commit's verdict covers
+  # the commits behind it and a cancelled run leaves no hole. The per-commit
+  # group it replaces put one run per landing on the single desktop runner.
+  group: publication-guards-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   publication-guards:
@@ -58,7 +64,7 @@ jobs:
     # rule in orchestration_stays_hosted.py is about code a caller chooses --
     # a pull request's head or a dispatch ref -- and a push to master is neither:
     # it is already merged.
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: [self-hosted, xfa-local-checks]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,6 +89,15 @@ jobs:
       - name: NOTICE matches the tree and its second copy
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/notice_names_what_exists.py
+      # The other half of that question (#493). NOTICE names paths that exist;
+      # this asks whether every file under a crate's assets/ or resources/ is
+      # named at all. An Adobe CMap shipped to crates.io in neither register.
+      - name: The vendored-asset guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_vendored_asset_is_named.py
+      - name: Every file we ship that is not ours is named in a register
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_vendored_asset_is_named.py
       - name: The fetched-asset guard bites in both directions
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_every_fetched_asset_is_registered.py
@@ -92,6 +107,16 @@ jobs:
       - name: Every docs path cited from scripts/ci resolves
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/docs_references_resolve.py
+      - name: The docs-reference guard does not flag a scripts/docs path
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_docs_references_resolve.py
+
+      # Nothing we publish may carry the address of a machine that is now
+      # somebody else's. It was in 99 files, ninety-four of them benchmark
+      # reports that would have gone out with the tree (#424).
+      - name: The released VPS address is nowhere in what we publish
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/no_retired_host.py
       - name: The withdrawn-object guard bites in both directions
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_no_withdrawn_object.py
@@ -124,6 +149,47 @@ jobs:
       - name: No internal path or document name reaches the published tree
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/internal_stays_internal.py
+      # Wired 07-09-2026 (#205). README.md is published unchanged and is the
+      # first and often the only page a visitor to pdfluent/pdfluent-sdk reads.
+      # It belongs with the publication guards because what it protects is what
+      # the seeding puts in front of a stranger.
+      - name: The landing-page guard bites on a page that lost a row
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_public_readme_is_a_landing_page.py
+      - name: The published README still answers what, how to install, how it compares
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_public_readme_is_a_landing_page.py
+      # Wired 29-09-2026 (#637). The same README is also the front page of
+      # pdfluent/pdfluent-sdk, where changes land too; this fails the moment the
+      # two copies differ, in either direction.
+      - name: The one-README guard bites on any difference
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_sdk_readme_is_the_public_one.py
+      - name: README.md is identical to the public SDK README
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_sdk_readme_is_the_public_one.py
+      # The live check needs gh with access to private repositories and runs in
+      # the local gate; the test needs nothing and runs here (#637).
+      - name: The visibility guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_repositories_stand_as_intended.py
+      # THE COMPILER THIS STEP NEEDS IS TWO SCRIPTS DOWN (#516).
+      #
+      # `public_snapshot_audit.sh` runs `simulate_public_tree.py`, which shells
+      # out to `cargo metadata` on the tree it just assembled -- nothing in this
+      # file says the word cargo, and from 09-09-2026 this workflow was red on
+      # every one of its 38 runs on `FileNotFoundError: 'cargo'`. The runner is
+      # a service and a service reads no login profile, so the directory rustup
+      # put cargo in is not on the PATH a `run:` step gets.
+      #
+      # The same class as #495, and not the same remedy: a job on a throwaway
+      # instance installs a toolchain because the image is the unknown there,
+      # while here the toolchain is installed, pinned and warm and only the PATH
+      # is missing. a_job_that_reaches_cargo_finds_it_on_path.py is what keeps
+      # this step from being tidied away again.
+      - name: Cargo on PATH
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/cargo_on_path.sh
       # 154 seconds, measured: it assembles the published tree and greps it. That
       # is real but small on a hosted runner, and it is the check #222 rests on --
       # the whole point of #1696 was that nothing ran it. The build half stays out

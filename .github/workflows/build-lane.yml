@@ -1,0 +1,90 @@
+name: build-lane
+
+# MANUAL ONLY. The new-Linux-targets lane
+# (scripts/release/build_all_platforms.sh): cross-builds the python, node,
+# capi, java and dotnet channels for the matrix the artefact gate requires,
+# then gates what it built in --allow-missing mode. Dispatch with a channel
+# (or all); nothing here fires by itself, and nothing here publishes.
+#
+# This is NOT the release path: the lane serves the dev loop, and its
+# --allow-missing never appears in the release workflows
+# (release-natives.yml, release-binaries.yml, node-bindings.yml), which
+# judge the full set. If this file ever gates without --allow-missing,
+# it has become a release workflow and the release tests must cover it.
+#
+# The lane builds on ubuntu-latest with cargo-zigbuild — never the Mac for
+# Linux targets, per the script's own build-host rules. Maven and the .NET
+# SDK come from the runner image; the script names anything missing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Lane channel (python|node|capi|java|dotnet|all)'
+        required: false
+        default: 'python'
+        type: choice
+        options: ['python', 'node', 'capi', 'java', 'dotnet', 'all']
+
+concurrency:
+  group: build-lane-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-lane:
+    name: Build lane (${{ inputs.channel }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to rust-toolchain.toml: `@stable` adds the matrix target to
+      # stable, cargo then switches to the pinned channel and finds no std
+      # for it -- "can't find crate for `core`", naming neither.
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        with:
+          toolchain: '1.94.0'
+          targets: aarch64-unknown-linux-gnu,x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: build-lane-${{ inputs.channel }}
+          cache-bin: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install lane tools
+        run: python3 -m pip install --quiet cargo-zigbuild "maturin==1.15.0"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The input arrives through env, not pasted into run: (see
+      # workflow_inputs_are_not_shell.py).
+      - name: Run the build lane
+        env:
+          CHANNEL: ${{ inputs.channel }}
+        run: bash scripts/release/build_all_platforms.sh --channel "$CHANNEL" --out dist/linux-new-targets
+
+      - name: Upload lane artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-lane-${{ inputs.channel }}
+          path: dist/linux-new-targets
+          if-no-files-found: warn
+          retention-days: 1

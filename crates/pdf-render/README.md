@@ -14,11 +14,11 @@ extensions included.
 
 ## What it does
 
-Rasterizes PDF pages to raster images (PNG, JPEG, raw pixel buffers). Uses `vello_cpu` for content-stream rendering — no C++ dependency, compiles to WebAssembly, and produces output with high SSIM fidelity vs PDFium on the standard benchmark corpus.
+Rasterizes PDF pages to raster images (PNG, JPEG, raw pixel buffers). Uses `vello_cpu` for content-stream rendering — no C++ dependency, compiles to WebAssembly, and is compared against a reference renderer by SSIM in the release gate.
 
 ## Status
 
-Beta. Median SSIM ~0.98 vs PDFium oracle on the 1000-PDF benchmark; 87% of pages score ≥0.95 (production threshold). Improvement work continues on near-miss cases.
+Rendering fidelity is measured by SSIM against a reference renderer on a fixed corpus. The figures are published with a claim ID at <https://pdfluent.com/benchmarks/how-we-measure>; none are repeated here. Improvement work continues on near-miss cases.
 
 ## Usage
 

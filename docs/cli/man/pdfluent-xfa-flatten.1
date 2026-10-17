@@ -1,0 +1,41 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH PDFLUENT-XFA-FLATTEN 1  "pdfluent 1.1.0" PDFluent
+.SH NAME
+pdfluent\-xfa\-flatten \- Flatten an XFA/AcroForm document (not yet implemented in the public CLI)
+.SH SYNOPSIS
+\fBpdfluent xfa flatten\fR [\fB\-\-json\fR] <\fB\-o\fR|\fB\-\-out\fR> [\fB\-\-policy\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-experimental\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIINPUT\fR> 
+.SH DESCRIPTION
+Flatten an XFA/AcroForm document (not yet implemented in the public CLI).
+.PP
+XFA support is EXPERIMENTAL and feature\-gated — no Adobe Reader parity claim. `\-\-policy saved\-state` (default) honors the document\*(Aqs saved form state; `\-\-policy fresh\-merge` is EXPERIMENTAL, opt\-in, and never the default (requires `\-\-experimental`).
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Machine\-readable JSON envelope on stdout
+.TP
+\fB\-o\fR, \fB\-\-out\fR \fI<OUT>\fR
+Output PDF file
+.TP
+\fB\-\-policy\fR \fI<POLICY>\fR [default: saved\-state]
+XFA rendering policy: `saved\-state` (default) or `fresh\-merge` (experimental, opt\-in)
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Quiet: human mode prints data only (no warnings or progress notes)
+.TP
+\fB\-\-experimental\fR
+Acknowledge that you are using an experimental, opt\-in code path
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose stderr diagnostics (repeat for more)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+<\fIINPUT\fR>
+Input PDF file
+.SH VERSION
+v1.1.0

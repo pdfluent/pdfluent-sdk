@@ -155,7 +155,7 @@ with tempfile.TemporaryDirectory(prefix="boundary-") as _td:
 
     r = geval(td, basis, "pyproject no licence",
               herschrijf("crates/pdf-python/pyproject.toml",
-                         'license = { text = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial" }\n', ""))
+                         'license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"\n', ""))
     rood("crates/pdf-python/pyproject.toml declares no licence", r,
          "crates/pdf-python/pyproject.toml", "nothing")
 
@@ -316,12 +316,37 @@ with tempfile.TemporaryDirectory(prefix="boundary-") as _td:
               lambda root: (root / "LICENSE").unlink())
     rood("LICENSE is deleted", r, "LICENSE", "missing")
 
+    # The exception is exactly the pointer spelling, not a free pass: under
+    # MIT the npm twin goes red, naming what it must publish.
+    r = geval(td, basis, "extract js mit",
+              herschrijf("integrations/pdfluent-extract-js/package.json",
+                         '"SEE LICENSE IN LICENSE-OFFER"', '"MIT"'))
+    rood("extract-js under MIT", r, "SEE LICENSE IN LICENSE-OFFER")
+
 # The real tree, in place: the gate is green on master, and this file has to
 # know that too -- a suite that only ever sees fixtures cannot tell a repository
 # regression from a fixture that drifted.
 r = subprocess.run([sys.executable, str(REPO / GUARD)], cwd=REPO,
                    env=sealed_env(), capture_output=True, text=True)
 expect("the real repository passes", r.returncode == 0, r.stderr[-400:])
+
+# @pdfluent/extract carries SEE LICENSE IN LICENSE-OFFER — the documented
+# exception, because npm refuses a LicenseRef. The booking is what makes the
+# exception apply: without the row the manifest is unbooked and the gate
+# goes red.
+_map = tomllib.loads((REPO / KAART).read_text(encoding="utf-8"))
+_rows = [r for r in _map.get("package", [])
+         if r.get("manifest") == "integrations/pdfluent-extract-js/package.json"]
+expect("extract-js is booked", len(_rows) == 1, f"{len(_rows)} row(s)")
+expect("extract-js is booked ours",
+       bool(_rows) and _rows[0].get("side") == "ours",
+       str(_rows[0].get("side")) if _rows else "no row")
+_policy = tomllib.loads((REPO / "docs/LICENSE_POLICY.toml").read_text(encoding="utf-8"))
+_exc = _policy.get("channel_representation", {}).get(
+    "integrations/pdfluent-extract-js/package.json", {})
+expect("the npm pointer is the documented exception",
+       _exc.get("publishes") == "SEE LICENSE IN LICENSE-OFFER"
+       and "LicenseRef" in _exc.get("reason", ""), str(_exc))
 
 if ran < FLOOR_CASES:
     print(f"FLOOR: {ran} case(s) ran, expected >= {FLOOR_CASES}. The specification "

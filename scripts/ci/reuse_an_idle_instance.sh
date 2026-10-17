@@ -43,11 +43,17 @@ uit="${GITHUB_OUTPUT:-/dev/stdout}"
 : "${RUNNER_PAT:?RUNNER_PAT is required}"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 
+# NAME AND TYPE, because a reused instance used to arrive with no type at all.
+# The four create steps in ci-ephemeral.yml each know which type they bought and
+# say so; a reuse said only "reusing gh-runner-13086". Anything that measures a
+# clock needs the machine class, and a class nobody recorded is a number nobody
+# can compare (#283, #384). The API already carries it in the same response.
 servers="$(curl -sf -H "Authorization: Bearer ${HCLOUD_TOKEN}" \
   'https://api.hetzner.cloud/v1/servers?per_page=50' \
   | python3 -c 'import json,sys
 d = json.load(sys.stdin).get("servers", [])
-print(" ".join(s["name"] for s in d if s["name"].startswith("gh-runner-")))' 2>/dev/null)"
+print(" ".join(s["name"] + ":" + (s.get("server_type") or {}).get("name", "?")
+               for s in d if s["name"].startswith("gh-runner-")))' 2>/dev/null)"
 
 if [ -z "${servers}" ]; then
     echo "no instance is up; one will be created"
@@ -64,7 +70,9 @@ if [ -z "${runners}" ]; then
     exit 0
 fi
 
-for naam in ${servers}; do
+for paar in ${servers}; do
+    naam="${paar%%:*}"
+    soort="${paar#*:}"
     staat="$(printf '%s' "${runners}" | python3 -c 'import json,sys
 naam = sys.argv[1]
 for r in json.load(sys.stdin).get("runners", []):
@@ -75,13 +83,14 @@ else:
     print("gone")' "${naam}" 2>/dev/null)"
     case "${staat}" in
         idle)
-            echo "reusing ${naam}: already paid for, and idle"
+            echo "reusing ${naam} (a ${soort}): already paid for, and idle"
             echo "label=${naam}" >> "${uit}"
             echo "reused=true" >> "${uit}"
+            echo "server_type=${soort}" >> "${uit}"
             exit 0
             ;;
         *)
-            echo "${naam} is ${staat}"
+            echo "${naam} (a ${soort}) is ${staat}"
             ;;
     esac
 done

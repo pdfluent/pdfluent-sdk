@@ -102,8 +102,11 @@ fn every_fixture_is_in_the_contract() {
 #[test]
 fn every_fixture_yields_its_content_through_lopdf() {
     for (name, promise) in CONTRACT {
-        // `malformed.pdf` is not supposed to load; that is its promise.
-        if *name == "malformed.pdf" || *name == "encrypted.pdf" {
+        // `encrypted.pdf` cannot be read without the password nobody wrote
+        // down. `malformed.pdf` can: its cross-reference table is broken on
+        // purpose, and since #433 a broken table is rebuilt by scanning, so the
+        // document loads and its content stream must be as sound as any other.
+        if *name == "encrypted.pdf" {
             continue;
         }
         let path = corpus().join(name);

@@ -38,11 +38,19 @@ permissions:
   contents: read
 
 concurrency:
-  # A push gets its own group and is never cancelled; two pushes to master in
-  # quick succession must each be judged. (The shape from
-  # deletions-declare-themselves.yml, and the reason is written there.)
-  group: document-register-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # ONE RUN PER REF, AND THE NEWEST COMMIT WINS (#350).
+  #
+  # The per-commit group came from deletions-declare-themselves.yml, where a
+  # cancelled run genuinely lost a verdict: that guard compares a RANGE, so the
+  # commits of a cancelled run fell between two ranges and were never looked at.
+  # This one does not. It reads the tree as it stands and asks whether every
+  # document in it is registered, so the newest commit's answer covers every
+  # commit before it -- there is no hole for a cancellation to leave.
+  #
+  # What the per-commit group did cost was real: one desktop runner, forty to
+  # ninety landings a day, and on 06-09-2026 twenty-nine runs queued at once.
+  group: document-register-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   document-register-guard:
@@ -65,7 +73,7 @@ jobs:
     # rule in orchestration_stays_hosted.py is about code a caller chooses --
     # a pull request's head or a dispatch ref -- and a push to master is neither:
     # it is already merged.
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: [self-hosted, xfa-local-checks]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python

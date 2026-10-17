@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pdfluent-mcp"
+version = "0.1.0"
+description = "MCP server for PDFluent: a PDF as markdown or as blocks with page, box, kind and confidence, and which pages need a vision model."
+readme = "README.md"
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+license-files = ["LICENSE", "LICENSE-COMMERCIAL"]
+authors = [{ name = "Innovation Trigger BV", email = "team@pdfluent.com" }]
+# mcp 2.x needs 3.10.
+requires-python = ">=3.10"
+# mcp is MIT. pdfluent 1.1.0, the next release after 1.0.0, is the first with
+# `Document.vision_advice` and `pdfluent.chunks`, as langchain-pdfluent says too.
+dependencies = ["pdfluent>=1.1.0", "mcp>=2.2,<3"]
+keywords = ["mcp", "model-context-protocol", "pdf", "rag", "agent", "pdfluent"]
+
+[project.scripts]
+pdfluent-mcp = "pdfluent_mcp.server:main"
+
+[project.urls]
+Homepage = "https://pdfluent.com"
+Repository = "https://github.com/pdfluent/pdfluent-sdk"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pdfluent_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

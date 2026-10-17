@@ -318,12 +318,25 @@ impl AnnotationBuilder {
         self
     }
 
-    /// Build the annotation, add it to the document, and return the annotation object ID.
+    /// Set `/L` line endpoints from an existing dictionary.
     ///
-    /// This creates the annotation dictionary, generates the appearance stream,
-    /// and adds both as objects to the document. The annotation is NOT automatically
-    /// added to any page's /Annots array — use `add_to_page` for that.
-    pub fn build(mut self, doc: &mut Document) -> Result<ObjectId, AnnotBuildError> {
+    /// Crate-visible: the constructors cover new annotations; this covers
+    /// appearance regeneration for annotations parsed from a file.
+    pub(crate) fn set_line_endpoints(&mut self, endpoints: [f64; 4]) {
+        self.line_endpoints = Some(endpoints);
+    }
+
+    /// Set the icon name from an existing dictionary (`/Name` on text and
+    /// stamp annotations). Stamp appearances render the name as a label.
+    pub(crate) fn set_icon_name(&mut self, name: impl Into<String>) {
+        self.icon_name = Some(name.into());
+    }
+
+    /// Build only the appearance Form XObject, without an annotation dict.
+    ///
+    /// `build` uses this for new annotations; appearance regeneration for
+    /// annotations parsed from a file uses it to backfill a missing `/AP`.
+    pub fn appearance_stream(&mut self, doc: &mut Document) -> Result<ObjectId, AnnotBuildError> {
         let w = self.rect.width();
         let h = self.rect.height();
         if w < f64::EPSILON || h < f64::EPSILON {
@@ -333,8 +346,17 @@ impl AnnotationBuilder {
         // Extract custom appearance before building (avoids borrow issues).
         let custom_appearance = self.custom_appearance.take();
 
+        self.build_appearance(doc, w, h, custom_appearance)
+    }
+
+    /// Build the annotation, add it to the document, and return the annotation object ID.
+    ///
+    /// This creates the annotation dictionary, generates the appearance stream,
+    /// and adds both as objects to the document. The annotation is NOT automatically
+    /// added to any page's /Annots array — use `add_to_page` for that.
+    pub fn build(mut self, doc: &mut Document) -> Result<ObjectId, AnnotBuildError> {
         // Build appearance stream.
-        let ap_stream_id = self.build_appearance(doc, w, h, custom_appearance)?;
+        let ap_stream_id = self.appearance_stream(doc)?;
 
         // Build the annotation dictionary.
         let mut annot_dict = dictionary! {

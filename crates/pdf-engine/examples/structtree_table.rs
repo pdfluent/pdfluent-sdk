@@ -62,7 +62,7 @@ impl Device<'_> for Dev {
             self.by_mcid.entry(m).or_default().push_str(&t);
         }
     }
-    fn begin_marked_content(&mut self, _: &[u8], mcid: Option<i32>) {
+    fn begin_marked_content(&mut self, _: &[u8], mcid: Option<i32>, _: Option<&str>) {
         self.stack.push(mcid);
     }
     fn end_marked_content(&mut self) {

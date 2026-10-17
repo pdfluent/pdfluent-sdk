@@ -1,49 +1,34 @@
 # syntax=docker/dockerfile:1.4
-FROM debian:bookworm-slim AS builder
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+#
+# The `pdfluent` command-line tool, built from this checkout.
+#
+#   docker build -t pdfluent .
+#   docker run --rm -v "$PWD:/data" pdfluent info /data/file.pdf
+#
+# Everything it needs is in this repository and on crates.io, so it builds
+# from a public clone with no credentials.
+FROM rust:1.94.0-bookworm AS builder
 
-ARG TARGETARCH
-ARG PYTHON_VERSION=3.11
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python${PYTHON_VERSION}=${PYTHON_VERSION}.* \
-    python3-dev \
-    python3-pip \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN case "${TARGETARCH}" in \
-      amd64) ARCH=x86_64 ;; \
-      arm64) ARCH=aarch64 ;; \
-      *) ARCH=${TARGETARCH} ;; \
-    esac && \
-    curl -L --proto '=https' --tlsv1.2 -sSf \
-      "https://github.com/pdfluent/engine/releases/latest/download/xfa-cli-${ARCH}-unknown-linux-musl.tar.gz" \
-    | tar -xz -C /usr/local/bin/ xfa-cli && \
-    chmod +x /usr/local/bin/xfa-cli
-
-RUN pip install --no-cache-dir --break-system-packages \
-    pdfluent==1.0.0-beta.1 \
-    || true
+WORKDIR /src
+COPY . .
+RUN rustup toolchain install \
+    && cargo build --release --locked -p xfa-cli --bin pdfluent \
+    && install -m 0755 target/release/pdfluent /usr/local/bin/pdfluent
 
 FROM debian:bookworm-slim
 
-ARG TARGETARCH
-ARG PYTHON_VERSION=3.11
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python${PYTHON_VERSION}=${PYTHON_VERSION}.* \
-    python3-pip \
-    libgomp1 \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
-
-COPY --from=builder /usr/local/bin/xfa-cli /usr/local/bin/xfa-cli
-COPY --from=builder /usr/local/lib/python3.11/dist-packages /usr/local/lib/python3.11/dist-packages
-
-RUN chmod +x /usr/local/bin/xfa-cli \
-    && xfa-cli --version
+COPY --from=builder /usr/local/bin/pdfluent /usr/local/bin/pdfluent
+RUN pdfluent --version
 
 WORKDIR /data
 
-ENTRYPOINT ["xfa-cli"]
+ENTRYPOINT ["pdfluent"]
 CMD ["--help"]

@@ -36,10 +36,15 @@ permissions:
   contents: read
 
 concurrency:
-  # A push gets its own group and is never cancelled; two pushes to master in
-  # quick succession must each be judged. Same shape as document-register.yml.
-  group: licence-headers-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # ONE RUN PER REF, AND THE NEWEST COMMIT WINS (#350).
+  #
+  # Same correction as document-register.yml, and the same reason it is safe:
+  # this guard sweeps the tree for files without a licence header, so the newest
+  # commit's answer already covers every commit behind it. Only a guard that
+  # judges a RANGE loses something when its run is cancelled, and this is not
+  # one. Keeping a run per landing cost a queue on the one desktop runner.
+  group: licence-headers-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   licence-header-guard:
@@ -58,7 +63,7 @@ jobs:
     # rule in orchestration_stays_hosted.py is about code a caller chooses --
     # a pull request's head or a dispatch ref -- and a push to master is neither:
     # it is already merged.
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: [self-hosted, xfa-local-checks]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python

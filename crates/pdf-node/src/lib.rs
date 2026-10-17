@@ -10,6 +10,7 @@
 // that file travels with the copy you received, which a URL does not.
 
 mod annotation;
+mod compat;
 mod document;
 mod error;
 mod form;

@@ -85,14 +85,16 @@ FLOORS = {
 
 # `pub fn` in every shape the workspace writes it: const, async, unsafe, and
 # `extern "C"` for the C ABI. One pattern rather than four, because four
-# patterns are four chances to forget one.
+# patterns are four chances to forget one. Plain `pub` only: `pub(crate)`,
+# `pub(super)` and `pub(in path)` are not reachable from outside the crate,
+# so the register must not list them.
 PUB_FN = re.compile(
-    r"\bpub(?:\s*\([^)]*\))?\s+"
+    r"\bpub\s+"
     r"(?:const\s+|async\s+|unsafe\s+|extern\s+\"[^\"]*\"\s+)*"
     r"fn\s+(\w+)"
 )
 PUB_TYPE = re.compile(
-    r"\bpub(?:\s*\([^)]*\))?\s+(?:struct|enum|trait|union|type)\s+(\w+)"
+    r"\bpub\s+(?:struct|enum|trait|union|type)\s+(\w+)"
 )
 PUB_USE = re.compile(r"^[ \t]*pub use\s+([^;]+);", re.M)
 PUB_MOD = re.compile(r"^[ \t]*pub mod (\w+)", re.M)

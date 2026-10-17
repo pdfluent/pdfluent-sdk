@@ -1,4 +1,4 @@
-# pdf-capi — C API for XFA PDF Engine
+# pdf-capi — C API for the PDFluent engine
 
 C-compatible API layer providing a stable ABI for the PDF engine. This is the foundation for the .NET (P/Invoke), iOS (Swift/C interop), and other FFI bindings.
 

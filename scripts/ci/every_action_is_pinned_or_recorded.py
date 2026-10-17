@@ -106,7 +106,6 @@ ON_A_TAG: dict[str, str] = {
     "peter-evans/repository-dispatch@v3": "fires a dispatch at another repository with a token",
     "softprops/action-gh-release@v2": "uploads the release binaries to the GitHub release",
     "rustsec/audit-check@v2": "reads Cargo.lock and reports advisories; writes nothing",
-    "EmbarkStudios/cargo-deny-action@v2": "reads the licence and advisory policy; writes nothing",
     "docker/build-push-action@v6": "builds and pushes the CI snapshot image",
     "docker/login-action@v3": "hands the registry credential to the daemon",
     "docker/metadata-action@v5": "computes tags for the image above",

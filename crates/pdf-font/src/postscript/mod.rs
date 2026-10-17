@@ -50,8 +50,19 @@ impl<'a> Scanner<'a> {
     }
 
     /// Parse the next object.
+    ///
+    /// The reader does not move when the next token cannot be typed, so a
+    /// caller may follow a failure with [`Scanner::skip_token`].
     pub fn parse_object(&mut self) -> Result<Object<'a>> {
         object::read(&mut self.reader)
+    }
+
+    /// Step over the next token without interpreting it.
+    ///
+    /// Returns `false` at the end of the input; otherwise the scanner always
+    /// advances by at least one byte.
+    pub fn skip_token(&mut self) -> bool {
+        object::skip(&mut self.reader)
     }
 
     /// Parse the next object as a [`Number`].
@@ -163,6 +174,27 @@ endcmap"#;
         assert_eq!(scanner.parse_number().unwrap(), Number::Integer(42));
         assert_eq!(scanner.parse_name().unwrap(), Name::new(b"Name", true));
         assert!(scanner.at_end());
+    }
+
+    #[test]
+    fn a_token_we_cannot_type_leaves_the_reader_where_it_was() {
+        let mut scanner = Scanner::new(b"- 42 ");
+
+        assert!(scanner.parse_object().is_err());
+        assert!(scanner.skip_token());
+        assert_eq!(scanner.parse_number().unwrap(), Number::Integer(42));
+    }
+
+    /// Skipping has to advance even on a byte that parses to nothing at all,
+    /// or the caller that skips in a loop never leaves it.
+    #[test]
+    fn skipping_advances_past_a_stray_delimiter() {
+        let mut scanner = Scanner::new(b"]] 7");
+
+        assert!(scanner.skip_token());
+        assert!(scanner.skip_token());
+        assert_eq!(scanner.parse_number().unwrap(), Number::Integer(7));
+        assert!(!scanner.skip_token());
     }
 
     #[test]

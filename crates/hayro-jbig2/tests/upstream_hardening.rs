@@ -44,9 +44,11 @@ fn refinement_tpgr_overflow() {
     let mut decoder = NullDecoder { pixels: 0 };
 
     // The only requirement is that a malformed file is refused or decoded, not
-    // that it takes the process with it.
+    // that it takes the process with it. `let _ =` says that on purpose: the
+    // decode may legitimately answer Err here, and asserting on it would turn a
+    // smoke test into a claim about which of the two a malformed file gets.
     if let Ok(image) = pdfluent_jbig2::decode(file) {
-        image.decode(&mut decoder);
+        let _ = image.decode(&mut decoder);
     }
 }
 
@@ -67,7 +69,7 @@ fn zero_dimension_generic_region() {
         let mut decoder = NullDecoder { pixels: 0 };
 
         if let Ok(image) = pdfluent_jbig2::decode(&file) {
-            image.decode(&mut decoder);
+            let _ = image.decode(&mut decoder);
         }
     }
 }

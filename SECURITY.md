@@ -4,14 +4,16 @@
 
 | Version | Supported |
 |---------|-----------|
-| 1.0.0-beta.x | Yes |
-| < 1.0.0-beta.1 | No |
+| 1.1.x | Yes |
+| < 1.1.0 | No |
+
+Security fixes go into the latest 1.1.x release. Upgrade to it to receive them.
 
 ## Reporting a Vulnerability
 
-**Email:** security@pdfluent.com
+**Email:** hello@pdfluent.com, with "Security" in the subject line.
 
-That address is a role address and it is the whole of the reporting route.
+Email is the whole of the reporting route.
 **Do not open a public GitHub issue for a vulnerability**: an issue publishes the
 flaw to everyone who has not yet updated, including the people who will not read
 it until the fix exists.

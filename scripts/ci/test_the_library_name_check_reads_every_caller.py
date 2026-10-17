@@ -3,7 +3,7 @@
 
 The step in java-bindings.yml exists because Cargo.toml built libpdfluent_java
 while the Java side loaded pdf_java. It guarded that with three file paths typed
-out by hand, while five files under crates/pdf-java call System.loadLibrary --
+out by hand, while five files under crates/pdf-java called System.loadLibrary --
 and two of the uncovered ones arrived in the very change that added the check.
 A list kept by hand drifts away from the tree silently, which is the same shape
 of failure the step was written to catch.
@@ -13,6 +13,16 @@ out of the workflow and executes it against trees it builds, including one tree
 per caller with that caller's name changed. If any single call could be renamed
 without the step noticing, one of those runs comes back green and this test
 fails.
+
+THE FLOOR IS READ, NOT REPEATED (#361)
+
+This file held its own copy of the step's floor, and on 07-09-2026 the two said
+different things: the fifth caller was deleted on purpose with the licence key
+in f9ae3a1d7, the step still demanded five, and this test still agreed with the
+step -- so both were red on master and in the wave, for a deletion that was the
+point of the change. Two copies of one number drift apart; that is not a risk,
+it is what happened. The floor now comes out of the shipped step body, so there
+is one number and this test measures whether it matches the tree.
 """
 import pathlib
 import re
@@ -27,9 +37,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/java-bindings.yml"
 CRATE = "crates/pdf-java"
 LIB_NAME = "pdfluent_java"
-# Five today. A floor, not an equality: adding a caller is normal, and the
-# check is meant to cover it rather than to forbid it.
-FLOOR = 5
+# The floor the shipped step enforces, wherever it stands. A floor and not an
+# equality: adding a caller is normal, and the check is meant to cover a new one
+# rather than to forbid it.
+FLOOR = re.compile(r'"\$\{#loaders\[@\]\}"\s+-lt\s+(\d+)')
 
 failures: list[str] = []
 
@@ -112,10 +123,23 @@ def main() -> int:
     bronnen = real_sources()
     callers = {p: t for p, t in bronnen.items() if "System.loadLibrary" in t}
 
-    # 2. The premise: there really are more callers than the old list named.
-    if len(callers) < FLOOR:
-        fail(f"expected at least {FLOOR} System.loadLibrary callers under "
-            f"{CRATE}, found {len(callers)}: {sorted(callers)}")
+    # 2. The floor the step enforces, taken from the step and not from a second
+    #    copy here. A floor of nought would let an empty tree through, which is
+    #    the case the line exists for.
+    gevonden = FLOOR.search(lichaam)
+    if gevonden is None:
+        fail("the step no longer holds a floor on the number of callers; an empty "
+            "glob then walks the loop zero times and passes without reading a file")
+        vloer = 0
+    else:
+        vloer = int(gevonden.group(1))
+        if vloer < 1:
+            fail(f"the step's floor is {vloer}, which an empty tree satisfies")
+        if len(callers) < vloer:
+            fail(f"the step demands at least {vloer} System.loadLibrary callers "
+                f"under {CRATE} and the tree holds {len(callers)}: {sorted(callers)}. "
+                "Either a caller was lost -- restore it -- or the number is stale "
+                "and the commit that lowers it says which caller went and where.")
 
     # 3. The tree as it stands passes. Without this the red runs below prove
     #    only that the step can fail, not that it can tell the cases apart.
@@ -144,12 +168,21 @@ def main() -> int:
             fail(f"the step went red for {path} but its message does not name the "
                 f"file: {red.stderr.strip()[:200]}")
 
-    # 5. The floor. An empty glob walks the loop zero times and would otherwise
-    #    report a pass while reading nothing at all.
+    # 5. The floor bites in both of its jobs. An empty glob walks the loop zero
+    #    times and would otherwise report a pass while reading nothing at all;
+    #    and a tree one caller short of the floor is a caller that went missing,
+    #    which is the case that has to be reported rather than absorbed.
     empty = run_step(lichaam, {})
     if empty.returncode == 0:
         fail("with no Java sources at all the step passes; an empty glob must be "
             "an error, not a green loop over nothing")
+    if vloer and len(callers) >= vloer:
+        weg = dict(bronnen)
+        del weg[sorted(callers)[0]]
+        short = run_step(lichaam, weg)
+        if short.returncode == 0:
+            fail(f"a tree with {len(callers) - 1} callers passes a floor of {vloer}; "
+                "a caller that disappears has to be reported, not absorbed")
 
     # 6. bindings/java is out of bounds on purpose: its NativeLoader calls
     #    System.loadLibrary(JNI_LIB_NAME) through a constant, and a literal
@@ -169,8 +202,9 @@ def main() -> int:
             print(f"  - {f}")
         return 1
     print(f"[java-name] OK: the step reads all {len(callers)} callers under "
-          f"{CRATE}; renaming any one of them turns it red, an empty tree is an "
-          "error, and NativeLoader's constant is not mistaken for a wrong name.")
+          f"{CRATE} against its own floor of {vloer}; renaming any one of them "
+          "turns it red, so does losing one, an empty tree is an error, and "
+          "NativeLoader's constant is not mistaken for a wrong name.")
     return 0
 
 

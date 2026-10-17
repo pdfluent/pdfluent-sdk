@@ -1,13 +1,7 @@
 // Note: This is a copy of the arithmetic decoder from `hayro-jpeg2000`,
 // keep the two in sync.
 
-//! The arithmetic decoder, described in Annex E of ITU-T T.88.
-//!
-//! Upstream's copy of this file cites Annex C and Table C.1, which is the
-//! JPEG 2000 spec (T.800) -- the same decoder, described in a different
-//! document. JBIG2 is T.88 and puts it in Annex E. Keeping their code and
-//! our references is a deliberate divergence: a reader who opens the cited
-//! clause should find what the comment says is there.
+//! The arithmetic decoder, described in Annex C.
 //!
 //! The arithmetic decoder keeps track of some state and continuously receives
 //! context labels as input, each time yielding a new bit from the original data
@@ -16,9 +10,9 @@
 pub(crate) struct ArithmeticDecoder<'a> {
     /// The underlying encoded data.
     data: &'a [u8],
-    /// The C-register (see Table E.1).
+    /// The C-register (see Table C.1).
     c: u32,
-    /// The A-register (see Table E.1).
+    /// The A-register (see Table C.1).
     a: u32,
     /// The pointer to the current byte.
     base_pointer: u32,
@@ -43,15 +37,11 @@ impl<'a> ArithmeticDecoder<'a> {
 
     /// Read the next bit using the given context label.
     #[inline(always)]
-    // Upstream's thin wrapper over decode(). Our call sites use decode()
-    // directly; kept so the file stays identical to upstream and the
-    // next merge is a no-op rather than a conflict.
-    #[allow(dead_code)]
     pub(crate) fn read_bit(&mut self, context: &mut ArithmeticDecoderContext) -> u32 {
         self.decode(context)
     }
 
-    /// The INITDEC procedure from E.3.5.
+    /// The INITDEC procedure from C.3.5.
     ///
     /// We use the version from Annex G in <https://www.itu.int/rec/T-REC-T.88-201808-I>.
     fn initialize(&mut self) {
@@ -63,7 +53,7 @@ impl<'a> ArithmeticDecoder<'a> {
         self.a = 0x8000;
     }
 
-    /// The BYTEIN procedure from E.3.4.
+    /// The BYTEIN procedure from C.3.4.
     ///
     /// We use the version from Annex G from <https://www.itu.int/rec/T-REC-T.88-201808-I>.
     #[inline(always)]
@@ -91,7 +81,7 @@ impl<'a> ArithmeticDecoder<'a> {
         }
     }
 
-    /// The RENORMD procedure from E.3.3.
+    /// The RENORMD procedure from C.3.3.
     #[inline(always)]
     fn renormalize(&mut self) {
         // Original code:
@@ -123,7 +113,7 @@ impl<'a> ArithmeticDecoder<'a> {
         }
     }
 
-    /// The `LPS_EXCHANGE` procedure from E.3.2.
+    /// The `LPS_EXCHANGE` procedure from C.3.2.
     #[inline(always)]
     #[allow(unused, reason = "for reference")]
     fn exchange_lps(&mut self, context: &mut ArithmeticDecoderContext, qe_entry: &QeData) -> u32 {
@@ -163,7 +153,7 @@ impl<'a> ArithmeticDecoder<'a> {
         d
     }
 
-    /// The `MPS_EXCHANGE` procedure from E.3.2.
+    /// The `MPS_EXCHANGE` procedure from C.3.2.
     #[inline(always)]
     #[allow(unused, reason = "for reference")]
     fn exchange_mps(&mut self, context: &mut ArithmeticDecoderContext, qe_entry: &QeData) -> u32 {
@@ -197,7 +187,7 @@ impl<'a> ArithmeticDecoder<'a> {
         d
     }
 
-    /// The DECODE procedure from E.3.2.
+    /// The DECODE procedure from C.3.2.
     ///
     /// We use the version from Annex G from <https://www.itu.int/rec/T-REC-T.88-201808-I>.
     #[inline(always)]

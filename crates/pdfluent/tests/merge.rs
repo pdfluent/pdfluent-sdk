@@ -154,15 +154,23 @@ fn extract_pages_from_open_range() {
 }
 
 #[test]
-fn extract_pages_empty_range_errors() {
+fn extract_pages_out_of_bounds_range_errors() {
     let doc = PdfDocument::open(SAMPLE).expect("open");
-    // 999..1000 is out of bounds for a 1-page doc.
+    // 999..=1000 is out of bounds for a 1-page doc. It was `Error::Internal`
+    // until #453 -- that variant's text asks the reader to file a bug report,
+    // and a range the caller wrote past the end of their own document is not
+    // one. The name said "empty" and the range never was.
     let err = doc.extract_pages(999..=1000).unwrap_err();
+    assert_eq!(err.code(), "E-PAGE-RANGE-INVALID");
     match err {
-        pdfluent::Error::Internal { message, .. } => {
-            assert!(message.contains("out of bounds"));
+        pdfluent::Error::PageRangeInvalid {
+            start,
+            end,
+            page_count,
+        } => {
+            assert_eq!((start, end, page_count), (999, 1000, 1));
         }
-        other => panic!("expected Error::Internal, got {other:?}"),
+        other => panic!("expected Error::PageRangeInvalid, got {other:?}"),
     }
 }
 
@@ -192,17 +200,28 @@ fn rotate_page_out_of_range_errors() {
     let err = doc
         .rotate_page(99, pdfluent::Rotation::Clockwise90)
         .unwrap_err();
+    // Was `Error::Internal` until #414. That variant's text asks the reader
+    // to file a bug report, and a page number the caller chose is not a bug
+    // in this crate -- so this test used to hold the defect in place.
     match err {
-        pdfluent::Error::Internal { message, .. } => {
-            assert!(message.contains("out of range"));
+        pdfluent::Error::PageOutOfRange {
+            requested,
+            page_count,
+        } => {
+            assert_eq!(requested, 99);
+            assert!(page_count < 99);
         }
-        other => panic!("expected Error::Internal, got {other:?}"),
+        other => panic!("expected Error::PageOutOfRange, got {other:?}"),
     }
 
     let err0 = doc
         .rotate_page(0, pdfluent::Rotation::Clockwise90)
         .unwrap_err();
-    assert!(matches!(err0, pdfluent::Error::Internal { .. }));
+    assert!(matches!(err0, pdfluent::Error::PageOutOfRange { .. }));
+    assert!(
+        err0.to_string().contains("numbered from 1"),
+        "page 0 must be told the convention: {err0}"
+    );
 }
 
 #[test]

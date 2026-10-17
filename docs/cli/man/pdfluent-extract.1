@@ -1,0 +1,94 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH PDFLUENT-EXTRACT 1  "pdfluent 1.1.0" PDFluent
+.SH NAME
+pdfluent\-extract \- Extract a document as Markdown, JSON, chunks, or text
+.SH SYNOPSIS
+\fBpdfluent extract\fR [\fB\-\-format\fR] [\fB\-\-json\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-quality\fR] [\fB\-\-model\-dir\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-\-table\-model\-dir\fR] [\fB\-\-pages\fR] [\fB\-\-images\fR] [\fB\-o\fR|\fB\-\-out\fR] [\fB\-\-recursive\fR] [\fB\-\-jobs\fR] [\fB\-\-keep\-going\fR] [\fB\-\-force\fR] [\fB\-\-words\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIINPUTS\fR> 
+.SH DESCRIPTION
+Extract a document as Markdown, JSON, chunks, or text
+.SH OPTIONS
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR [default: md]
+Output format
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+md: Markdown with headings, lists, and tables
+.IP \(bu 2
+json: Block\-model JSON (`to_json` over `extract_blocks`)
+.IP \(bu 2
+chunks: Docling JSON chunks for RAG ingestion
+.IP \(bu 2
+text: Plain text, one form feed per page
+.IP \(bu 2
+words: Every word with its box, one JSON object per line
+.RE
+.TP
+\fB\-\-json\fR
+Machine\-readable JSON envelope on stdout
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Quiet: human mode prints data only (no warnings or progress notes)
+.TP
+\fB\-\-quality\fR \fI<QUALITY>\fR [default: fast]
+Extraction quality. `balanced` needs the `ort\-layout` build and the layout model (`pdfluent models install layout`)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+fast: The shipping engine
+.IP \(bu 2
+balanced: The layout model tier; fails naming the install until it is there
+.IP \(bu 2
+best: Needs unshipped models; errors until they land
+.RE
+.TP
+\fB\-\-model\-dir\fR \fI<MODEL_DIR>\fR
+Where the model tier looks for its weights. Default: the `PDFLUENT_MODEL_DIR` environment variable, else the per\-user model directory. Read only with `\-\-quality balanced`
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose stderr diagnostics (repeat for more)
+.TP
+\fB\-\-table\-model\-dir\fR \fI<TABLE_MODEL_DIR>\fR
+Where the TATR table model lives: `tatr\-v1.1\-all/tatr\-v1.1\-all.onnx` under this directory structures the balanced tier\*(Aqs kept table regions first (track B, P4). Needs the `ort\-tables` build; without it extraction refuses. Unset, `balanced` runs as it always has
+.TP
+\fB\-\-pages\fR \fI<PAGES>\fR
+Pages to extract, e.g. `1\-3,5`. Default: the whole document
+.TP
+\fB\-\-images\fR \fI<IMAGES>\fR
+What the Markdown carries for figures: `none` writes no reference, `embed` inlines each figure\*(Aqs pixels as a base64 data URL, and `dir:<path>` writes one PNG per figure and references it. Unset, references are markers naming the figure. With `dir:`, each input\*(Aqs files land in `<path>/<stem>/`, so batch inputs never share names
+.TP
+\fB\-o\fR, \fB\-\-out\fR \fI<OUT>\fR
+Output file, directory, or `\-`/stdout. Directories are created. Multiple inputs need a directory
+.TP
+\fB\-\-recursive\fR
+Descend into subdirectories (symlinks are never followed)
+.TP
+\fB\-\-jobs\fR \fI<JOBS>\fR [default: 1]
+Parallel inputs when writing files (stdout stays sequential)
+.TP
+\fB\-\-keep\-going\fR
+Keep going after a failed input. Default stops at the first error, keeping earlier outputs and cancelling the rest; with this every input is attempted, later successes are still written, and every error is reported (a re\-run then needs \-\-force for those)
+.TP
+\fB\-\-force\fR
+Overwrite existing output files
+.TP
+\fB\-\-words\fR
+Carry each block\*(Aqs word lines in the JSON output (`\-\-format json`). Without the flag the JSON is exactly what it was: no word lines
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+<\fIINPUTS\fR>
+Input PDFs, globs, directories, or `\-` for stdin (alone)
+.SH VERSION
+v1.1.0

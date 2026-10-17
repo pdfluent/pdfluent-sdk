@@ -445,12 +445,14 @@ pub fn load_sessions(config: &PaddleOcrConfig) -> Result<ModelSessions, ModelErr
 }
 
 fn create_session(model_path: &Path, num_threads: usize) -> Result<Session, ModelError> {
-    let session = Session::builder()
-        .map_err(|e| ModelError::Session(e.to_string()))?
-        .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
-        .map_err(|e| ModelError::Session(e.to_string()))?
-        .with_intra_threads(num_threads)
-        .map_err(|e| ModelError::Session(e.to_string()))?
+    // Through the shared layer, so there is one init path: the same Level3
+    // and intra_threads as before, plus the runtime resolution, version check
+    // and idempotent init. Paddle's own model fetching and directories are
+    // unchanged -- only session construction moved.
+    let config = crate::runtime::RuntimeConfig::new().with_intra_threads(num_threads);
+    let mut builder =
+        crate::runtime::builder(&config).map_err(|e| ModelError::Session(e.to_string()))?;
+    let session = builder
         .commit_from_file(model_path)
         .map_err(|e| ModelError::Session(format!("{}: {e}", model_path.display())))?;
     Ok(session)

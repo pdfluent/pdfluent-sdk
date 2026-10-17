@@ -4,11 +4,15 @@ One `*.cdx.json` per publish-eligible crate. These are the committed reference d
 `scripts/release/sbom-generate.sh --check` compares each fresh generation against. See
 `docs/release/sbom_protocol.md` for the protocol.
 
-**Current state:** 32 baselines, generated 2026-05-28 from `xfa/static-parity-rc1 @ f13696201` post
-the Tier-1 release-hardening merge. Generator: `cargo-cyclonedx 0.5.7` with `--target all` (target-
+**Current state:** 36 baselines, regenerated 2026-10-16 for the 1.1.0 release candidate N2 (on top
+of `2c53596a6`): `pdfluent-lopdf` 0.39.6, `pdf-syntax`/`pdf-interpret` 0.6.0, and the `pdf-ocr` and
+`epub-extract` edges the extraction crates and the CLI gained since 2026-10-02. Generator: `cargo-cyclonedx 0.5.7` with `--target all` (target-
 independent dep set so the baseline is the same on macOS-aarch64 and CI's Linux-x86_64). All
 `bom-ref`/`dependencies` paths are canonicalised to `path://<crate>#<rest>` so the baselines are
-machine-independent and contain zero local filesystem paths.
+machine-independent and contain zero local filesystem paths. `xfa-cli` has no baseline (it is
+`publish = false` now) and neither does the deleted `xfa-license` crate; `pdfluent-cli`,
+`epub-extract`, `pptx-extract`, `xlsx-extract`, `pdf-standard-fonts` and `pdf-substitute-fonts`
+are newly covered.
 
 Refreshing a baseline (e.g. an intentional dependency bump):
 ```bash

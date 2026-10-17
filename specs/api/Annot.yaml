@@ -1,0 +1,561 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for Annot, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: Annot
+rust_path: pdfluent::compat::Annot
+names: {python: Annot, node: Annot, java: Annot, dotnet: Annot}
+members:
+  - name: __bool__
+    kind: operator
+    signature: "()"
+    names: {python: __bool__, node: bool, java: bool, dotnet: Bool}
+    rust: "Annot::to_bool"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-bool]
+  - name: __eq__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __eq__, node: eq, java: eq, dotnet: Eq}
+    rust: "Annot::PartialEq"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-eq]
+  - name: __ge__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ge__, node: ge, java: ge, dotnet: Ge}
+    rust: "Annot::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-ge]
+  - name: __gt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __gt__, node: gt, java: gt, dotnet: Gt}
+    rust: "Annot::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-gt]
+  - name: __init__
+    kind: constructor
+    signature: "(annot)"
+    names: {python: __init__, node: Annot, java: Annot, dotnet: Annot}
+    rust: "Annot::new"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-init]
+  - name: __le__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __le__, node: le, java: le, dotnet: Le}
+    rust: "Annot::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-le]
+  - name: __lt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __lt__, node: lt, java: lt, dotnet: Lt}
+    rust: "Annot::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-lt]
+  - name: __ne__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ne__, node: ne, java: ne, dotnet: Ne}
+    rust: "Annot::PartialEq"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-ne]
+  - name: apn_bbox
+    kind: property
+    signature: "()"
+    names: {python: apn_bbox, node: apnBbox, java: getApnBbox, dotnet: ApnBbox}
+    rust: "Annot::apn_bbox"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-apn-bbox]
+  - name: apn_matrix
+    kind: property
+    signature: "()"
+    names: {python: apn_matrix, node: apnMatrix, java: getApnMatrix, dotnet: ApnMatrix}
+    rust: "Annot::apn_matrix"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-apn-matrix]
+  - name: blendmode
+    kind: property
+    signature: "()"
+    names: {python: blendmode, node: blendmode, java: getBlendmode, dotnet: Blendmode}
+    rust: "Annot::blendmode"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.appearance_state]
+  - name: border
+    kind: property
+    signature: "()"
+    names: {python: border, node: border, java: getBorder, dotnet: Border}
+    rust: "Annot::border"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.border]
+  - name: clean_contents
+    kind: method
+    signature: "(sanitize=1)"
+    names: {python: clean_contents, node: cleanContents, java: cleanContents, dotnet: CleanContents}
+    rust: "Annot::clean_contents"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-clean-contents]
+  - name: colors
+    kind: property
+    signature: "()"
+    names: {python: colors, node: colors, java: getColors, dotnet: Colors}
+    rust: "Annot::colors"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.colors]
+  - name: delete_responses
+    kind: method
+    signature: "()"
+    names: {python: delete_responses, node: deleteResponses, java: deleteResponses, dotnet: DeleteResponses}
+    rust: "Annot::delete_responses"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-delete-responses]
+  - name: file_info
+    kind: property
+    signature: "()"
+    names: {python: file_info, node: fileInfo, java: getFileInfo, dotnet: FileInfo}
+    rust: "Annot::file_info"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.file_roundtrip]
+  - name: flags
+    kind: property
+    signature: "()"
+    names: {python: flags, node: flags, java: getFlags, dotnet: Flags}
+    rust: "Annot::flags"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.flags]
+  - name: get_file
+    kind: method
+    signature: "()"
+    names: {python: get_file, node: getFile, java: getFile, dotnet: GetFile}
+    rust: "Annot::get_file"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-get-file]
+  - name: get_oc
+    kind: method
+    signature: "()"
+    names: {python: get_oc, node: getOc, java: getOc, dotnet: GetOc}
+    rust: "Annot::get_oc"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-get-oc]
+  - name: get_parent
+    kind: method
+    signature: "()"
+    names: {python: get_parent, node: getParent, java: getParent, dotnet: GetParent}
+    rust: "Annot::get_parent"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-get-parent]
+  - name: get_pixmap
+    kind: method
+    signature: "(matrix=None, dpi=None, colorspace=None, alpha=0)"
+    names: {python: get_pixmap, node: getPixmap, java: getPixmap, dotnet: GetPixmap}
+    rust: "Annot::get_pixmap"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.get_pixmap]
+  - name: get_sound
+    kind: method
+    signature: "()"
+    names: {python: get_sound, node: getSound, java: getSound, dotnet: GetSound}
+    rust: "Annot::get_sound"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-get-sound]
+  - name: get_text
+    kind: method
+    signature: "(*args, **kwargs)"
+    names: {python: get_text, node: getText, java: getText, dotnet: GetText}
+    rust: "Annot::get_text"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-get-text]
+  - name: get_textbox
+    kind: method
+    signature: "(*args, **kwargs)"
+    names: {python: get_textbox, node: getTextbox, java: getTextbox, dotnet: GetTextbox}
+    rust: "Annot::get_textbox"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.get_textbox]
+  - name: get_textpage
+    kind: method
+    signature: "(clip=None, flags=0)"
+    names: {python: get_textpage, node: getTextpage, java: getTextpage, dotnet: GetTextpage}
+    rust: "Annot::get_textpage"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.get_textpage]
+  - name: has_popup
+    kind: property
+    signature: "()"
+    names: {python: has_popup, node: hasPopup, java: hasPopup, dotnet: HasPopup}
+    rust: "Annot::has_popup"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.popup]
+  - name: info
+    kind: property
+    signature: "()"
+    names: {python: info, node: info, java: getInfo, dotnet: Info}
+    rust: "Annot::info"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.info]
+  - name: irt_xref
+    kind: property
+    signature: "()"
+    names: {python: irt_xref, node: irtXref, java: getIrtXref, dotnet: IrtXref}
+    rust: "Annot::irt_xref"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.irt]
+  - name: is_open
+    kind: property
+    signature: "()"
+    names: {python: is_open, node: isOpen, java: isOpen, dotnet: IsOpen}
+    rust: "Annot::is_open"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-is-open]
+  - name: language
+    kind: property
+    signature: "()"
+    names: {python: language, node: language, java: getLanguage, dotnet: Language}
+    rust: "Annot::language"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-language]
+  - name: line_ends
+    kind: property
+    signature: "()"
+    names: {python: line_ends, node: lineEnds, java: getLineEnds, dotnet: LineEnds}
+    rust: "Annot::line_ends"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-line-ends]
+  - name: next
+    kind: property
+    signature: "()"
+    names: {python: next, node: next, java: getNext, dotnet: Next}
+    rust: "Annot::next"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-next]
+  - name: opacity
+    kind: property
+    signature: "()"
+    names: {python: opacity, node: opacity, java: getOpacity, dotnet: Opacity}
+    rust: "Annot::opacity"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.opacity]
+  - name: popup_rect
+    kind: property
+    signature: "()"
+    names: {python: popup_rect, node: popupRect, java: getPopupRect, dotnet: PopupRect}
+    rust: "Annot::popup_rect"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-popup-rect]
+  - name: popup_xref
+    kind: property
+    signature: "()"
+    names: {python: popup_xref, node: popupXref, java: getPopupXref, dotnet: PopupXref}
+    rust: "Annot::popup_xref"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-popup-xref]
+  - name: rect
+    kind: property
+    signature: "()"
+    names: {python: rect, node: rect, java: getRect, dotnet: Rect}
+    rust: "Annot::rect"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.rect]
+  - name: rect_delta
+    kind: property
+    signature: "()"
+    names: {python: rect_delta, node: rectDelta, java: getRectDelta, dotnet: RectDelta}
+    rust: "Annot::rect_delta"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-rect-delta]
+  - name: rotation
+    kind: property
+    signature: "()"
+    names: {python: rotation, node: rotation, java: getRotation, dotnet: Rotation}
+    rust: "Annot::rotation"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.rotation]
+  - name: set_apn_bbox
+    kind: method
+    signature: "(bbox)"
+    names: {python: set_apn_bbox, node: setApnBbox, java: setApnBbox, dotnet: SetApnBbox}
+    rust: "Annot::set_apn_bbox"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-apn-bbox]
+  - name: set_apn_matrix
+    kind: method
+    signature: "(matrix)"
+    names: {python: set_apn_matrix, node: setApnMatrix, java: setApnMatrix, dotnet: SetApnMatrix}
+    rust: "Annot::set_apn_matrix"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-apn-matrix]
+  - name: set_blendmode
+    kind: method
+    signature: "(blend_mode)"
+    names: {python: set_blendmode, node: setBlendmode, java: setBlendmode, dotnet: SetBlendmode}
+    rust: "Annot::set_blendmode"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-blendmode]
+  - name: set_border
+    kind: method
+    signature: "(border=None, width=-1, style=None, dashes=None, clouds=-1)"
+    names: {python: set_border, node: setBorder, java: setBorder, dotnet: SetBorder}
+    rust: "Annot::set_border"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-border]
+  - name: set_colors
+    kind: method
+    signature: "(colors=None, stroke=None, fill=None)"
+    names: {python: set_colors, node: setColors, java: setColors, dotnet: SetColors}
+    rust: "Annot::set_colors"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.add_rect_annot.basic]
+  - name: set_flags
+    kind: method
+    signature: "(flags)"
+    names: {python: set_flags, node: setFlags, java: setFlags, dotnet: SetFlags}
+    rust: "Annot::set_flags"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-flags]
+  - name: set_info
+    kind: method
+    signature: "(info=None, content=None, title=None, creationDate=None, modDate=None, subject=None)"
+    names: {python: set_info, node: setInfo, java: setInfo, dotnet: SetInfo}
+    rust: "Annot::set_info"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-info]
+  - name: set_irt_xref
+    kind: method
+    signature: "(xref)"
+    names: {python: set_irt_xref, node: setIrtXref, java: setIrtXref, dotnet: SetIrtXref}
+    rust: "Annot::set_irt_xref"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-irt-xref]
+  - name: set_language
+    kind: method
+    signature: "(language=None)"
+    names: {python: set_language, node: setLanguage, java: setLanguage, dotnet: SetLanguage}
+    rust: "Annot::set_language"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-language]
+  - name: set_line_ends
+    kind: method
+    signature: "(start, end)"
+    names: {python: set_line_ends, node: setLineEnds, java: setLineEnds, dotnet: SetLineEnds}
+    rust: "Annot::set_line_ends"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-line-ends]
+  - name: set_name
+    kind: method
+    signature: "(name)"
+    names: {python: set_name, node: setName, java: setName, dotnet: SetName}
+    rust: "Annot::set_name"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-name]
+  - name: set_oc
+    kind: method
+    signature: "(oc=0)"
+    names: {python: set_oc, node: setOc, java: setOc, dotnet: SetOc}
+    rust: "Annot::set_oc"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-oc]
+  - name: set_opacity
+    kind: method
+    signature: "(opacity)"
+    names: {python: set_opacity, node: setOpacity, java: setOpacity, dotnet: SetOpacity}
+    rust: "Annot::set_opacity"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-opacity]
+  - name: set_open
+    kind: method
+    signature: "(is_open)"
+    names: {python: set_open, node: setOpen, java: setOpen, dotnet: SetOpen}
+    rust: "Annot::set_open"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-open]
+  - name: set_popup
+    kind: method
+    signature: "(rect)"
+    names: {python: set_popup, node: setPopup, java: setPopup, dotnet: SetPopup}
+    rust: "Annot::set_popup"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-popup]
+  - name: set_rect
+    kind: method
+    signature: "(rect)"
+    names: {python: set_rect, node: setRect, java: setRect, dotnet: SetRect}
+    rust: "Annot::set_rect"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-rect]
+  - name: set_rotation
+    kind: method
+    signature: "(rotate=0)"
+    names: {python: set_rotation, node: setRotation, java: setRotation, dotnet: SetRotation}
+    rust: "Annot::set_rotation"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-set-rotation]
+  - name: type
+    kind: property
+    signature: "()"
+    names: {python: type, node: type, java: getType, dotnet: Type}
+    rust: "Annot::annot_type"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot.type]
+  - name: update
+    kind: method
+    signature: "(blend_mode: 'OptStr'=None, opacity: 'OptFloat'=None, fontsize: 'float'=0, fontname: 'OptStr'=None, text_color: 'OptSeq'=None, border_color: 'OptSeq'=None, fill_color: 'OptSeq'=None, cross_out: 'bool'=True, rotate: 'int'=-1)"
+    names: {python: update, node: update, java: update, dotnet: Update}
+    rust: "Annot::update"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.annot.update]
+  - name: update_file
+    kind: method
+    signature: "(buffer_=None, filename=None, ufilename=None, desc=None)"
+    names: {python: update_file, node: updateFile, java: updateFile, dotnet: UpdateFile}
+    rust: "Annot::update_file"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-update-file]
+  - name: update_timing_test
+    kind: method
+    signature: "()"
+    names: {python: update_timing_test, node: updateTimingTest, java: updateTimingTest, dotnet: UpdateTimingTest}
+    rust: "Annot::update_timing_test"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-update-timing-test]
+  - name: vertices
+    kind: property
+    signature: "()"
+    names: {python: vertices, node: vertices, java: getVertices, dotnet: Vertices}
+    rust: "Annot::vertices"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-vertices]
+  - name: xref
+    kind: property
+    signature: "()"
+    names: {python: xref, node: xref, java: getXref, dotnet: Xref}
+    rust: "Annot::xref"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-annot-xref]

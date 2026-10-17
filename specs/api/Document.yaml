@@ -1,0 +1,1447 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for Document, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: Document
+rust_path: pdfluent::compat::Document
+names: {python: Document, node: Document, java: Document, dotnet: Document}
+members:
+  - name: FormFonts
+    kind: property
+    signature: "()"
+    names: {python: FormFonts, node: formFonts, java: getFormFonts, dotnet: FormFonts}
+    rust: "Document::form_fonts"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-document-formfonts]
+  - name: __contains__
+    kind: operator
+    signature: "(loc) -> 'bool'"
+    names: {python: __contains__, node: contains, java: contains, dotnet: Contains}
+    rust: "Document::contains"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-contains]
+  - name: __delitem__
+    kind: operator
+    signature: "(i) -> 'None'"
+    names: {python: __delitem__, node: delitem, java: delitem, dotnet: Delitem}
+    rust: "Document::delete_at"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-delitem]
+  - name: __enter__
+    kind: operator
+    signature: "()"
+    names: {python: __enter__, node: enter, java: enter, dotnet: Enter}
+    rust: "Document::enter"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2.doc.context_manager]
+  - name: __eq__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __eq__, node: eq, java: eq, dotnet: Eq}
+    rust: "Document::PartialEq"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-eq]
+  - name: __exit__
+    kind: operator
+    signature: "(*args)"
+    names: {python: __exit__, node: exit, java: exit, dotnet: Exit}
+    rust: "Document::exit"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-exit]
+  - name: __ge__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ge__, node: ge, java: ge, dotnet: Ge}
+    rust: "Document::compare"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-ge]
+  - name: __getitem__
+    kind: operator
+    signature: "(i=0)"
+    names: {python: __getitem__, node: getitem, java: getitem, dotnet: Getitem}
+    rust: "Document::at"
+    tier: T3
+    lane: L2
+    status: partial
+    tests: [l2.pages.getitem, l2.pages.getitem_oob, l2.pages.getitem_slice]
+  - name: __gt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __gt__, node: gt, java: gt, dotnet: Gt}
+    rust: "Document::compare"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-gt]
+  - name: __init__
+    kind: constructor
+    signature: "(filename=None, stream=None, filetype=None, rect=None, width=0, height=0, fontsize=11, archive=None)"
+    names: {python: __init__, node: Document, java: Document, dotnet: Document}
+    rust: "Document::open_compat"
+    tier: T1
+    lane: L2
+    status: partial
+    tests: [l2.open.document_ctor, l2.open.empty, l2.open.filename, l2.open.garbage_stream, l2.open.missing, l2.open.rect_alone, l2.open.size_alone, l2.open.stream_no_filetype, l2.open.stream_pdf, l2.open.stream_rect_ignored]
+  - name: __le__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __le__, node: le, java: le, dotnet: Le}
+    rust: "Document::compare"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-le]
+  - name: __len__
+    kind: operator
+    signature: "() -> 'int'"
+    names: {python: __len__, node: len, java: len, dotnet: Len}
+    rust: "Document::len"
+    tier: T3
+    lane: L2
+    status: partial
+    tests: [l2.pages.len]
+  - name: __lt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __lt__, node: lt, java: lt, dotnet: Lt}
+    rust: "Document::compare"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-lt]
+  - name: __ne__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ne__, node: ne, java: ne, dotnet: Ne}
+    rust: "Document::PartialEq"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-ne]
+  - name: add_layer
+    kind: method
+    signature: "(name, creator=None, on=None)"
+    names: {python: add_layer, node: addLayer, java: addLayer, dotnet: AddLayer}
+    rust: "Document::add_layer"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-add-layer]
+  - name: add_ocg
+    kind: method
+    signature: "(name, config=-1, on=1, intent=None, usage=None)"
+    names: {python: add_ocg, node: addOcg, java: addOcg, dotnet: AddOcg}
+    rust: "Document::add_ocg"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-add-ocg]
+  - name: apply_css
+    kind: method
+    signature: "(css: 'str', append: 'bool'=True)"
+    names: {python: apply_css, node: applyCss, java: applyCss, dotnet: ApplyCss}
+    rust: "Document::apply_css"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-apply-css]
+  - name: authenticate
+    kind: method
+    signature: "(password)"
+    names: {python: authenticate, node: authenticate, java: authenticate, dotnet: Authenticate}
+    rust: "Document::authenticate"
+    tier: T2
+    lane: L2
+    status: partial
+    tests: [l2.crypto.authenticate]
+  - name: bake
+    kind: method
+    signature: "(*, annots: 'bool'=True, widgets: 'bool'=True) -> 'None'"
+    names: {python: bake, node: bake, java: bake, dotnet: Bake}
+    rust: "Document::bake"
+    tier: T2
+    lane: L4
+    status: done
+    tests: [l4-document-bake]
+  - name: can_save_incrementally
+    kind: method
+    signature: "()"
+    names: {python: can_save_incrementally, node: canSaveIncrementally, java: canSaveIncrementally, dotnet: CanSaveIncrementally}
+    rust: "Document::can_save_incrementally"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2.doc.can_save_incrementally]
+  - name: chapter_count
+    kind: property
+    signature: "()"
+    names: {python: chapter_count, node: chapterCount, java: getChapterCount, dotnet: ChapterCount}
+    rust: "Document::chapter_count"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-chapter-count]
+  - name: chapter_page_count
+    kind: method
+    signature: "(chapter)"
+    names: {python: chapter_page_count, node: chapterPageCount, java: chapterPageCount, dotnet: ChapterPageCount}
+    rust: "Document::chapter_page_count"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-chapter-page-count]
+  - name: close
+    kind: method
+    signature: "()"
+    names: {python: close, node: close, java: close, dotnet: Close}
+    rust: "Document::close"
+    tier: T1
+    lane: L2
+    status: partial
+    tests: [l2.doc.close_twice, l2.doc.close_use_after]
+  - name: convert_to_pdf
+    kind: method
+    signature: "(from_page=0, to_page=-1, rotate=0)"
+    names: {python: convert_to_pdf, node: convertToPdf, java: convertToPdf, dotnet: ConvertToPdf}
+    rust: "Document::convert_to_pdf"
+    tier: T2
+    lane: L2
+    status: differs
+    tests: [l2-document-convert-to-pdf]
+    contract: "valid PDF with the same pages and content; bytes differ"
+  - name: copy_page
+    kind: method
+    signature: "(pno: 'int', to: 'int'=-1)"
+    names: {python: copy_page, node: copyPage, java: copyPage, dotnet: CopyPage}
+    rust: "Document::copy_page"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.edit.copy_page]
+  - name: del_toc_item
+    kind: method
+    signature: "(idx: 'int') -> 'None'"
+    names: {python: del_toc_item, node: delTocItem, java: delTocItem, dotnet: DelTocItem}
+    rust: "Document::del_toc_item"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.toc.del_item, l2.toc.del_item_oob]
+  - name: del_xml_metadata
+    kind: method
+    signature: "()"
+    names: {python: del_xml_metadata, node: delXmlMetadata, java: delXmlMetadata, dotnet: DelXmlMetadata}
+    rust: "Document::del_xml_metadata"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-del-xml-metadata]
+  - name: delete_page
+    kind: method
+    signature: "(pno: 'int'=-1)"
+    names: {python: delete_page, node: deletePage, java: deletePage, dotnet: DeletePage}
+    rust: "Document::delete_page"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.edit.delete_page_default, l2.edit.delete_page_first, l2.edit.delete_page_oob]
+  - name: delete_pages
+    kind: method
+    signature: "(*args, **kw)"
+    names: {python: delete_pages, node: deletePages, java: deletePages, dotnet: DeletePages}
+    rust: "Document::delete_pages"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.edit.delete_pages_bad, l2.edit.delete_pages_list, l2.edit.delete_pages_range]
+  - name: embfile_add
+    kind: method
+    signature: "(name: 'str', buffer_: 'ByteString', filename: 'OptStr'=None, ufilename: 'OptStr'=None, desc: 'OptStr'=None) -> 'None'"
+    names: {python: embfile_add, node: embfileAdd, java: embfileAdd, dotnet: EmbfileAdd}
+    rust: "Document::embfile_add"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-embfile-add]
+  - name: embfile_count
+    kind: method
+    signature: "() -> 'int'"
+    names: {python: embfile_count, node: embfileCount, java: embfileCount, dotnet: EmbfileCount}
+    rust: "Document::embfile_count"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-embfile-count]
+  - name: embfile_del
+    kind: method
+    signature: "(item: 'typing.Union[int, str]')"
+    names: {python: embfile_del, node: embfileDel, java: embfileDel, dotnet: EmbfileDel}
+    rust: "Document::embfile_del"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-embfile-del]
+  - name: embfile_get
+    kind: method
+    signature: "(item: 'typing.Union[int, str]') -> 'bytes'"
+    names: {python: embfile_get, node: embfileGet, java: embfileGet, dotnet: EmbfileGet}
+    rust: "Document::embfile_get"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-embfile-get]
+  - name: embfile_info
+    kind: method
+    signature: "(item: 'typing.Union[int, str]') -> 'dict'"
+    names: {python: embfile_info, node: embfileInfo, java: embfileInfo, dotnet: EmbfileInfo}
+    rust: "Document::embfile_info"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-embfile-info]
+  - name: embfile_names
+    kind: method
+    signature: "() -> 'list'"
+    names: {python: embfile_names, node: embfileNames, java: embfileNames, dotnet: EmbfileNames}
+    rust: "Document::embfile_names"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-embfile-names]
+  - name: embfile_upd
+    kind: method
+    signature: "(item: 'typing.Union[int, str]', buffer_: 'OptBytes'=None, filename: 'OptStr'=None, ufilename: 'OptStr'=None, desc: 'OptStr'=None) -> 'None'"
+    names: {python: embfile_upd, node: embfileUpd, java: embfileUpd, dotnet: EmbfileUpd}
+    rust: "Document::embfile_upd"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-embfile-upd]
+  - name: extract_font
+    kind: method
+    signature: "(xref=0, info_only=0, named=None)"
+    names: {python: extract_font, node: extractFont, java: extractFont, dotnet: ExtractFont}
+    rust: "Document::extract_font"
+    tier: T2
+    lane: L1
+    status: missing
+    tests: [l1-document-extract-font]
+  - name: extract_image
+    kind: method
+    signature: "(xref)"
+    names: {python: extract_image, node: extractImage, java: extractImage, dotnet: ExtractImage}
+    rust: "Document::extract_image"
+    tier: T1
+    lane: L3
+    status: missing
+    tests: [l3-doc-extract-image, l3-doc-extract-image-bad]
+  - name: ez_save
+    kind: method
+    signature: "(filename, garbage=3, clean=False, deflate=True, deflate_images=True, deflate_fonts=True, incremental=False, ascii=False, expand=False, linear=False, pretty=False, encryption=1, permissions=4095, owner_pw=None, user_pw=None, no_new_id=True, preserve_metadata=1, use_objstms=1, compression_effort=0, raise_on_repair=False, reproducible=False)"
+    names: {python: ez_save, node: ezSave, java: ezSave, dotnet: EzSave}
+    rust: "Document::ez_save"
+    tier: T3
+    lane: L2
+    status: differs
+    tests: [l2-document-ez-save]
+    contract: "valid PDF with the same content; bytes differ"
+  - name: find_bookmark
+    kind: method
+    signature: "(bm)"
+    names: {python: find_bookmark, node: findBookmark, java: findBookmark, dotnet: FindBookmark}
+    rust: "Document::find_bookmark"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-find-bookmark]
+  - name: fullcopy_page
+    kind: method
+    signature: "(pno, to=-1)"
+    names: {python: fullcopy_page, node: fullcopyPage, java: fullcopyPage, dotnet: FullcopyPage}
+    rust: "Document::fullcopy_page"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.edit.fullcopy_page]
+  - name: get_char_widths
+    kind: method
+    signature: "(xref: 'int', limit: 'int'=256, idx: 'int'=0, fontdict: 'OptDict'=None) -> 'list'"
+    names: {python: get_char_widths, node: getCharWidths, java: getCharWidths, dotnet: GetCharWidths}
+    rust: "Document::get_char_widths"
+    tier: T3
+    lane: L1
+    status: differs
+    tests: [l1-document-get-char-widths]
+    contract: "glyph ids for non-embedded standard fonts"
+  - name: get_layer
+    kind: method
+    signature: "(config=-1)"
+    names: {python: get_layer, node: getLayer, java: getLayer, dotnet: GetLayer}
+    rust: "Document::get_layer"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-get-layer]
+  - name: get_layers
+    kind: method
+    signature: "()"
+    names: {python: get_layers, node: getLayers, java: getLayers, dotnet: GetLayers}
+    rust: "Document::get_layers"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-get-layers]
+  - name: get_new_xref
+    kind: method
+    signature: "()"
+    names: {python: get_new_xref, node: getNewXref, java: getNewXref, dotnet: GetNewXref}
+    rust: "Document::get_new_xref"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-document-get-new-xref]
+  - name: get_oc
+    kind: method
+    signature: "(xref: 'int') -> 'int'"
+    names: {python: get_oc, node: getOc, java: getOc, dotnet: GetOc}
+    rust: "Document::get_oc"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-get-oc]
+  - name: get_ocgs
+    kind: method
+    signature: "()"
+    names: {python: get_ocgs, node: getOcgs, java: getOcgs, dotnet: GetOcgs}
+    rust: "Document::get_ocgs"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-get-ocgs]
+  - name: get_ocmd
+    kind: method
+    signature: "(xref: 'int') -> 'dict'"
+    names: {python: get_ocmd, node: getOcmd, java: getOcmd, dotnet: GetOcmd}
+    rust: "Document::get_ocmd"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-get-ocmd]
+  - name: get_outline_xrefs
+    kind: method
+    signature: "()"
+    names: {python: get_outline_xrefs, node: getOutlineXrefs, java: getOutlineXrefs, dotnet: GetOutlineXrefs}
+    rust: "Document::get_outline_xrefs"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-get-outline-xrefs]
+  - name: get_page_fonts
+    kind: method
+    signature: "(pno: 'int', full: 'bool'=False) -> 'list'"
+    names: {python: get_page_fonts, node: getPageFonts, java: getPageFonts, dotnet: GetPageFonts}
+    rust: "Document::get_page_fonts"
+    tier: T2
+    lane: L1
+    status: missing
+    tests: [l1-document-get-page-fonts]
+  - name: get_page_images
+    kind: method
+    signature: "(pno: 'int', full: 'bool'=False) -> 'list'"
+    names: {python: get_page_images, node: getPageImages, java: getPageImages, dotnet: GetPageImages}
+    rust: "Document::get_page_images"
+    tier: T2
+    lane: L3
+    status: missing
+    tests: [l3-doc-get-page-images]
+  - name: get_page_labels
+    kind: method
+    signature: "()"
+    names: {python: get_page_labels, node: getPageLabels, java: getPageLabels, dotnet: GetPageLabels}
+    rust: "Document::get_page_labels"
+    tier: T3
+    lane: L2
+    status: partial
+    tests: [l2-document-get-page-labels]
+  - name: get_page_numbers
+    kind: method
+    signature: "(label, only_one=False)"
+    names: {python: get_page_numbers, node: getPageNumbers, java: getPageNumbers, dotnet: GetPageNumbers}
+    rust: "Document::get_page_numbers"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-get-page-numbers]
+  - name: get_page_pixmap
+    kind: method
+    signature: "(pno: 'int', *, matrix: 'matrix_like'=None, dpi=None, colorspace: 'Colorspace'=None, clip: 'rect_like'=None, alpha: 'bool'=False, annots: 'bool'=True) -> \"'Pixmap'\""
+    names: {python: get_page_pixmap, node: getPagePixmap, java: getPagePixmap, dotnet: GetPagePixmap}
+    rust: "Document::get_page_pixmap"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-doc-get-page-pixmap]
+  - name: get_page_text
+    kind: method
+    signature: "(pno: 'int', option: 'str'='text', clip: 'rect_like'=None, flags: 'OptInt'=None, textpage: \"'TextPage'\"=None, sort: 'bool'=False) -> 'typing.Any'"
+    names: {python: get_page_text, node: getPageText, java: getPageText, dotnet: GetPageText}
+    rust: "Document::get_page_text"
+    tier: T3
+    lane: L1
+    status: partial
+    tests: [L1.get_page_text.default, L1.get_text.concat_pages, L1.get_text.last_page]
+  - name: get_page_xobjects
+    kind: method
+    signature: "(pno: 'int') -> 'list'"
+    names: {python: get_page_xobjects, node: getPageXobjects, java: getPageXobjects, dotnet: GetPageXobjects}
+    rust: "Document::get_page_xobjects"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l3-page-get-xobjects]
+  - name: get_sigflags
+    kind: method
+    signature: "()"
+    names: {python: get_sigflags, node: getSigflags, java: getSigflags, dotnet: GetSigflags}
+    rust: "Document::get_sigflags"
+    tier: T3
+    lane: L2
+    status: partial
+    tests: [l2-document-get-sigflags]
+  - name: get_toc
+    kind: method
+    signature: "(simple: 'bool'=True) -> 'list'"
+    names: {python: get_toc, node: getToc, java: getToc, dotnet: GetToc}
+    rust: "Document::get_toc"
+    tier: T1
+    lane: L2
+    status: partial
+    tests: [l2-toc, l2.toc.get_empty, l2.toc.get_full, l2.toc.get_simple]
+  - name: get_xml_metadata
+    kind: method
+    signature: "()"
+    names: {python: get_xml_metadata, node: getXmlMetadata, java: getXmlMetadata, dotnet: GetXmlMetadata}
+    rust: "Document::get_xml_metadata"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-get-xml-metadata]
+  - name: has_annots
+    kind: method
+    signature: "() -> 'bool'"
+    names: {python: has_annots, node: hasAnnots, java: hasAnnots, dotnet: HasAnnots}
+    rust: "Document::has_annots"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-has-annots]
+  - name: has_links
+    kind: method
+    signature: "() -> 'bool'"
+    names: {python: has_links, node: hasLinks, java: hasLinks, dotnet: HasLinks}
+    rust: "Document::has_links"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.doc.has_links]
+  - name: init_doc
+    kind: method
+    signature: "()"
+    names: {python: init_doc, node: initDoc, java: initDoc, dotnet: InitDoc}
+    rust: "Document::init_doc"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-init-doc]
+  - name: insert_file
+    kind: method
+    signature: "(infile, from_page=-1, to_page=-1, start_at=-1, rotate=-1, links=True, annots=True, show_progress=0, final=1)"
+    names: {python: insert_file, node: insertFile, java: insertFile, dotnet: InsertFile}
+    rust: "Document::insert_file"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-insert-file]
+  - name: insert_page
+    kind: method
+    signature: "(pno: 'int', text: 'typing.Union[str, list, None]'=None, fontsize: 'float'=11, width: 'float'=595, height: 'float'=842, fontname: 'str'='helv', fontfile: 'OptStr'=None, color: 'OptSeq'=(0,)) -> 'int'"
+    names: {python: insert_page, node: insertPage, java: insertPage, dotnet: InsertPage}
+    rust: "Document::insert_page"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-insert-page]
+  - name: insert_pdf
+    kind: method
+    signature: "(docsrc, *, from_page=-1, to_page=-1, start_at=-1, rotate=-1, links=1, annots=1, widgets=1, join_duplicates=0, show_progress=0, final=1, _gmap=None)"
+    names: {python: insert_pdf, node: insertPdf, java: insertPdf, dotnet: InsertPdf}
+    rust: "Document::insert_pdf"
+    tier: T1
+    lane: L4
+    status: missing
+    tests: [l2.edit.insert_pdf_all, l2.edit.insert_pdf_range, l2.edit.insert_pdf_rotate]
+  - name: is_dirty
+    kind: property
+    signature: "()"
+    names: {python: is_dirty, node: isDirty, java: isDirty, dotnet: IsDirty}
+    rust: "Document::is_dirty"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2.doc.is_dirty]
+  - name: is_fast_webaccess
+    kind: property
+    signature: "()"
+    names: {python: is_fast_webaccess, node: isFastWebaccess, java: isFastWebaccess, dotnet: IsFastWebaccess}
+    rust: "Document::is_fast_webaccess"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-is-fast-webaccess]
+  - name: is_form_pdf
+    kind: property
+    signature: "()"
+    names: {python: is_form_pdf, node: isFormPdf, java: isFormPdf, dotnet: IsFormPdf}
+    rust: "Document::is_form_pdf"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-document-is-form-pdf]
+  - name: is_pdf
+    kind: property
+    signature: "()"
+    names: {python: is_pdf, node: isPdf, java: isPdf, dotnet: IsPdf}
+    rust: "Document::is_pdf"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2.doc.is_pdf]
+  - name: is_reflowable
+    kind: property
+    signature: "()"
+    names: {python: is_reflowable, node: isReflowable, java: isReflowable, dotnet: IsReflowable}
+    rust: "Document::is_reflowable"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-is-reflowable]
+  - name: is_repaired
+    kind: property
+    signature: "()"
+    names: {python: is_repaired, node: isRepaired, java: isRepaired, dotnet: IsRepaired}
+    rust: "Document::is_repaired"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-is-repaired]
+  - name: is_stream
+    kind: method
+    signature: "(xref=0)"
+    names: {python: is_stream, node: isStream, java: isStream, dotnet: IsStream}
+    rust: "Document::is_stream"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-is-stream]
+  - name: journal_can_do
+    kind: method
+    signature: "()"
+    names: {python: journal_can_do, node: journalCanDo, java: journalCanDo, dotnet: JournalCanDo}
+    rust: "Document::journal_can_do"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-journal-can-do]
+  - name: journal_enable
+    kind: method
+    signature: "()"
+    names: {python: journal_enable, node: journalEnable, java: journalEnable, dotnet: JournalEnable}
+    rust: "Document::journal_enable"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-journal-enable]
+  - name: journal_is_enabled
+    kind: method
+    signature: "()"
+    names: {python: journal_is_enabled, node: journalIsEnabled, java: journalIsEnabled, dotnet: JournalIsEnabled}
+    rust: "Document::journal_is_enabled"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-journal-is-enabled]
+  - name: journal_load
+    kind: method
+    signature: "(filename)"
+    names: {python: journal_load, node: journalLoad, java: journalLoad, dotnet: JournalLoad}
+    rust: "Document::journal_load"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-journal-load]
+  - name: journal_op_name
+    kind: method
+    signature: "(step)"
+    names: {python: journal_op_name, node: journalOpName, java: journalOpName, dotnet: JournalOpName}
+    rust: "Document::journal_op_name"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-journal-op-name]
+  - name: journal_position
+    kind: method
+    signature: "()"
+    names: {python: journal_position, node: journalPosition, java: journalPosition, dotnet: JournalPosition}
+    rust: "Document::journal_position"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-journal-position]
+  - name: journal_redo
+    kind: method
+    signature: "()"
+    names: {python: journal_redo, node: journalRedo, java: journalRedo, dotnet: JournalRedo}
+    rust: "Document::journal_redo"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-journal-redo]
+  - name: journal_save
+    kind: method
+    signature: "(filename)"
+    names: {python: journal_save, node: journalSave, java: journalSave, dotnet: JournalSave}
+    rust: "Document::journal_save"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-journal-save]
+  - name: journal_start_op
+    kind: method
+    signature: "(name=None)"
+    names: {python: journal_start_op, node: journalStartOp, java: journalStartOp, dotnet: JournalStartOp}
+    rust: "Document::journal_start_op"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-journal-start-op]
+  - name: journal_stop_op
+    kind: method
+    signature: "()"
+    names: {python: journal_stop_op, node: journalStopOp, java: journalStopOp, dotnet: JournalStopOp}
+    rust: "Document::journal_stop_op"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-journal-stop-op]
+  - name: journal_undo
+    kind: method
+    signature: "()"
+    names: {python: journal_undo, node: journalUndo, java: journalUndo, dotnet: JournalUndo}
+    rust: "Document::journal_undo"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-journal-undo]
+  - name: language
+    kind: property
+    signature: "()"
+    names: {python: language, node: language, java: getLanguage, dotnet: Language}
+    rust: "Document::language"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-language]
+  - name: last_location
+    kind: property
+    signature: "()"
+    names: {python: last_location, node: lastLocation, java: getLastLocation, dotnet: LastLocation}
+    rust: "Document::last_location"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-last-location]
+  - name: layer_ui_configs
+    kind: method
+    signature: "()"
+    names: {python: layer_ui_configs, node: layerUiConfigs, java: layerUiConfigs, dotnet: LayerUiConfigs}
+    rust: "Document::layer_ui_configs"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-layer-ui-configs]
+  - name: layout
+    kind: method
+    signature: "(rect=None, width=0, height=0, fontsize=11)"
+    names: {python: layout, node: layout, java: layout, dotnet: Layout}
+    rust: "Document::layout"
+    tier: T3
+    lane: L2
+    status: differs
+    tests: [l2-document-layout]
+  - name: load_page
+    kind: method
+    signature: "(page_id)"
+    names: {python: load_page, node: loadPage, java: loadPage, dotnet: LoadPage}
+    rust: "Document::load_page"
+    tier: T1
+    lane: L2
+    status: partial
+    tests: [l2.pages.load_page, l2.pages.load_page_oob]
+  - name: location_from_page_number
+    kind: method
+    signature: "(pno)"
+    names: {python: location_from_page_number, node: locationFromPageNumber, java: locationFromPageNumber, dotnet: LocationFromPageNumber}
+    rust: "Document::location_from_page_number"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-location-from-page-number]
+  - name: make_bookmark
+    kind: method
+    signature: "(loc)"
+    names: {python: make_bookmark, node: makeBookmark, java: makeBookmark, dotnet: MakeBookmark}
+    rust: "Document::make_bookmark"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-make-bookmark]
+  - name: markinfo
+    kind: property
+    signature: "()"
+    names: {python: markinfo, node: markinfo, java: getMarkinfo, dotnet: Markinfo}
+    rust: "Document::markinfo"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-markinfo]
+  - name: move_page
+    kind: method
+    signature: "(pno: 'int', to: 'int'=-1)"
+    names: {python: move_page, node: movePage, java: movePage, dotnet: MovePage}
+    rust: "Document::move_page"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.edit.move_page, l2.edit.move_page_oob]
+  - name: name
+    kind: property
+    signature: "()"
+    names: {python: name, node: name, java: getName, dotnet: Name}
+    rust: "Document::name"
+    tier: T3
+    lane: L2
+    status: partial
+    tests: [l2.doc.name]
+  - name: need_appearances
+    kind: method
+    signature: "(value=None)"
+    names: {python: need_appearances, node: needAppearances, java: needAppearances, dotnet: NeedAppearances}
+    rust: "Document::need_appearances"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-need-appearances]
+  - name: needs_pass
+    kind: property
+    signature: "()"
+    names: {python: needs_pass, node: needsPass, java: needsPass, dotnet: NeedsPass}
+    rust: "Document::needs_pass"
+    tier: T1
+    lane: L2
+    status: partial
+    tests: [l2.crypto.needs_pass]
+  - name: new_page
+    kind: method
+    signature: "(pno: 'int'=-1, width: 'float'=595, height: 'float'=842) -> 'Page'"
+    names: {python: new_page, node: newPage, java: newPage, dotnet: NewPage}
+    rust: "Document::new_page"
+    tier: T1
+    lane: L4
+    status: missing
+    tests: [l2.edit.new_page_default, l2.edit.new_page_front_sized]
+  - name: next_location
+    kind: method
+    signature: "(page_id)"
+    names: {python: next_location, node: nextLocation, java: nextLocation, dotnet: NextLocation}
+    rust: "Document::next_location"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-next-location]
+  - name: outline
+    kind: property
+    signature: "()"
+    names: {python: outline, node: outline, java: getOutline, dotnet: Outline}
+    rust: "Document::outline"
+    tier: T3
+    lane: L2
+    status: partial
+    tests: [l2-document-outline]
+  - name: page_annot_xrefs
+    kind: method
+    signature: "(n)"
+    names: {python: page_annot_xrefs, node: pageAnnotXrefs, java: pageAnnotXrefs, dotnet: PageAnnotXrefs}
+    rust: "Document::page_annot_xrefs"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-page-annot-xrefs]
+  - name: page_count
+    kind: property
+    signature: "()"
+    names: {python: page_count, node: pageCount, java: getPageCount, dotnet: PageCount}
+    rust: "Document::page_count"
+    tier: T1
+    lane: L2
+    status: partial
+    tests: [l2-page-count, l2.pages.page_count]
+  - name: page_count2
+    kind: property
+    signature: "()"
+    names: {python: page_count2, node: pageCount2, java: getPageCount2, dotnet: PageCount2}
+    rust: "Document::page_count2"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-page-count2]
+  - name: page_cropbox
+    kind: method
+    signature: "(pno)"
+    names: {python: page_cropbox, node: pageCropbox, java: pageCropbox, dotnet: PageCropbox}
+    rust: "Document::page_cropbox"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2.page.cropbox, l2.page.set_cropbox]
+  - name: page_number_from_location
+    kind: method
+    signature: "(page_id)"
+    names: {python: page_number_from_location, node: pageNumberFromLocation, java: pageNumberFromLocation, dotnet: PageNumberFromLocation}
+    rust: "Document::page_number_from_location"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-page-number-from-location]
+  - name: page_xref
+    kind: method
+    signature: "(pno)"
+    names: {python: page_xref, node: pageXref, java: pageXref, dotnet: PageXref}
+    rust: "Document::page_xref"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-page-xref]
+  - name: pagelayout
+    kind: property
+    signature: "()"
+    names: {python: pagelayout, node: pagelayout, java: getPagelayout, dotnet: Pagelayout}
+    rust: "Document::pagelayout"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-pagelayout]
+  - name: pagemode
+    kind: property
+    signature: "()"
+    names: {python: pagemode, node: pagemode, java: getPagemode, dotnet: Pagemode}
+    rust: "Document::pagemode"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-pagemode]
+  - name: pages
+    kind: method
+    signature: "(start: 'OptInt'=None, stop: 'OptInt'=None, step: 'OptInt'=None) -> 'collections.abc.Iterable[Page]'"
+    names: {python: pages, node: pages, java: pages, dotnet: Pages}
+    rust: "Document::pages"
+    tier: T2
+    lane: L2
+    status: partial
+    tests: [l2.pages.iter, l2.pages.pages_span]
+  - name: pdf_catalog
+    kind: method
+    signature: "()"
+    names: {python: pdf_catalog, node: pdfCatalog, java: pdfCatalog, dotnet: PdfCatalog}
+    rust: "Document::pdf_catalog"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-document-pdf-catalog]
+  - name: pdf_trailer
+    kind: method
+    signature: "(compressed=0, ascii=0)"
+    names: {python: pdf_trailer, node: pdfTrailer, java: pdfTrailer, dotnet: PdfTrailer}
+    rust: "Document::pdf_trailer"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-pdf-trailer]
+  - name: permissions
+    kind: property
+    signature: "()"
+    names: {python: permissions, node: permissions, java: getPermissions, dotnet: Permissions}
+    rust: "Document::permissions"
+    tier: T3
+    lane: L2
+    status: partial
+    tests: [l2.doc.permissions]
+  - name: prev_location
+    kind: method
+    signature: "(page_id)"
+    names: {python: prev_location, node: prevLocation, java: prevLocation, dotnet: PrevLocation}
+    rust: "Document::prev_location"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-prev-location]
+  - name: recolor
+    kind: method
+    signature: "(components=1)"
+    names: {python: recolor, node: recolor, java: recolor, dotnet: Recolor}
+    rust: "Document::recolor"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-recolor]
+  - name: reload_page
+    kind: method
+    signature: "(page: 'Page') -> 'Page'"
+    names: {python: reload_page, node: reloadPage, java: reloadPage, dotnet: ReloadPage}
+    rust: "Document::reload_page"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-reload-page]
+  - name: repair
+    kind: method
+    signature: "()"
+    names: {python: repair, node: repair, java: repair, dotnet: Repair}
+    rust: "Document::repair"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-repair]
+  - name: resolve_link
+    kind: method
+    signature: "(uri=None, chapters=0)"
+    names: {python: resolve_link, node: resolveLink, java: resolveLink, dotnet: ResolveLink}
+    rust: "Document::resolve_link"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-resolve-link]
+  - name: resolve_names
+    kind: method
+    signature: "()"
+    names: {python: resolve_names, node: resolveNames, java: resolveNames, dotnet: ResolveNames}
+    rust: "Document::resolve_names"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-resolve-names]
+  - name: rewrite_images
+    kind: method
+    signature: "(dpi_threshold=None, dpi_target=0, quality=0, lossy=True, lossless=True, bitonal=True, color=True, gray=True, set_to_gray=False, options=None)"
+    names: {python: rewrite_images, node: rewriteImages, java: rewriteImages, dotnet: RewriteImages}
+    rust: "Document::rewrite_images"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-doc-rewrite-images]
+  - name: save
+    kind: method
+    signature: "(filename, garbage=0, clean=0, deflate=0, deflate_images=0, deflate_fonts=0, incremental=0, ascii=0, expand=0, linear=0, no_new_id=0, appearance=0, pretty=0, encryption=1, permissions=4095, owner_pw=None, user_pw=None, preserve_metadata=1, use_objstms=0, compression_effort=0, raise_on_repair=False, reproducible=False)"
+    names: {python: save, node: save, java: save, dotnet: Save}
+    rust: "Document::save_full"
+    tier: T1
+    lane: L2
+    status: partial
+    tests: [l2.crypto.save_aes256_roundtrip, l2.crypto.save_rc4_roundtrip, l2.save.default, l2.save.garbage_deflate, l2.save.incremental_otherpath, l2.save.incremental_samepath, l2.save.tobytes]
+  - name: saveIncr
+    kind: method
+    signature: "()"
+    names: {python: saveIncr, node: saveIncr, java: saveIncr, dotnet: SaveIncr}
+    rust: "Document::save_incr"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2.save.saveIncr]
+  - name: save_snapshot
+    kind: method
+    signature: "(filename)"
+    names: {python: save_snapshot, node: saveSnapshot, java: saveSnapshot, dotnet: SaveSnapshot}
+    rust: "Document::save_snapshot"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-save-snapshot]
+  - name: scrub
+    kind: method
+    signature: "(attached_files: 'bool'=True, clean_pages: 'bool'=True, embedded_files: 'bool'=True, hidden_text: 'bool'=True, javascript: 'bool'=True, metadata: 'bool'=True, redactions: 'bool'=True, redact_images: 'int'=0, remove_links: 'bool'=True, reset_fields: 'bool'=True, reset_responses: 'bool'=True, thumbnails: 'bool'=True, xml_metadata: 'bool'=True) -> 'None'"
+    names: {python: scrub, node: scrub, java: scrub, dotnet: Scrub}
+    rust: "Document::scrub"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-scrub]
+  - name: search_page_for
+    kind: method
+    signature: "(pno: 'int', text: 'str', quads: 'bool'=False, clip: 'rect_like'=None, flags: 'int'=None, textpage: \"'TextPage'\"=None) -> 'list'"
+    names: {python: search_page_for, node: searchPageFor, java: searchPageFor, dotnet: SearchPageFor}
+    rust: "Document::search_page_for"
+    tier: T3
+    lane: L1
+    status: partial
+    tests: [L1.search_for.empty_page, L1.search_for.last_page, L1.search_page_for.quads, L1.search_page_for.rect]
+  - name: select
+    kind: method
+    signature: "(pyliste)"
+    names: {python: select, node: select, java: select, dotnet: Select}
+    rust: "Document::select"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.edit.select, l2.edit.select_bad, l2.edit.select_empty]
+  - name: set_language
+    kind: method
+    signature: "(language=None)"
+    names: {python: set_language, node: setLanguage, java: setLanguage, dotnet: SetLanguage}
+    rust: "Document::set_language"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-set-language]
+  - name: set_layer
+    kind: method
+    signature: "(config, basestate=None, on=None, off=None, rbgroups=None, locked=None)"
+    names: {python: set_layer, node: setLayer, java: setLayer, dotnet: SetLayer}
+    rust: "Document::set_layer"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-set-layer]
+  - name: set_layer_ui_config
+    kind: method
+    signature: "(number, action=0)"
+    names: {python: set_layer_ui_config, node: setLayerUiConfig, java: setLayerUiConfig, dotnet: SetLayerUiConfig}
+    rust: "Document::set_layer_ui_config"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-document-set-layer-ui-config]
+  - name: set_markinfo
+    kind: method
+    signature: "(markinfo: 'dict') -> 'bool'"
+    names: {python: set_markinfo, node: setMarkinfo, java: setMarkinfo, dotnet: SetMarkinfo}
+    rust: "Document::set_markinfo"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-set-markinfo]
+  - name: set_metadata
+    kind: method
+    signature: "(m: 'dict'=None) -> 'None'"
+    names: {python: set_metadata, node: setMetadata, java: setMetadata, dotnet: SetMetadata}
+    rust: "Document::set_metadata"
+    tier: T1
+    lane: L4
+    status: partial
+    tests: [l2.metadata.set_badkey, l2.metadata.set_empty, l2.metadata.set_full, l2.metadata.set_none]
+  - name: set_oc
+    kind: method
+    signature: "(xref: 'int', oc: 'int') -> 'None'"
+    names: {python: set_oc, node: setOc, java: setOc, dotnet: SetOc}
+    rust: "Document::set_oc"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-set-oc]
+  - name: set_ocmd
+    kind: method
+    signature: "(xref: 'int'=0, ocgs: 'typing.Union[list, None]'=None, policy: 'OptStr'=None, ve: 'typing.Union[list, None]'=None) -> 'int'"
+    names: {python: set_ocmd, node: setOcmd, java: setOcmd, dotnet: SetOcmd}
+    rust: "Document::set_ocmd"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-set-ocmd]
+  - name: set_page_labels
+    kind: method
+    signature: "(labels)"
+    names: {python: set_page_labels, node: setPageLabels, java: setPageLabels, dotnet: SetPageLabels}
+    rust: "Document::set_page_labels"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.pages.labels_roundtrip]
+  - name: set_pagelayout
+    kind: method
+    signature: "(pagelayout: 'str')"
+    names: {python: set_pagelayout, node: setPagelayout, java: setPagelayout, dotnet: SetPagelayout}
+    rust: "Document::set_pagelayout"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-set-pagelayout]
+  - name: set_pagemode
+    kind: method
+    signature: "(pagemode: 'str')"
+    names: {python: set_pagemode, node: setPagemode, java: setPagemode, dotnet: SetPagemode}
+    rust: "Document::set_pagemode"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-set-pagemode]
+  - name: set_toc
+    kind: method
+    signature: "(toc: 'list', collapse: 'int'=1) -> 'int'"
+    names: {python: set_toc, node: setToc, java: setToc, dotnet: SetToc}
+    rust: "Document::set_toc"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l2.toc.set_bad, l2.toc.set_empty, l2.toc.set_new, l2.toc.set_roundtrip]
+  - name: set_toc_item
+    kind: method
+    signature: "(idx: 'int', dest_dict: 'OptDict'=None, kind: 'OptInt'=None, pno: 'OptInt'=None, uri: 'OptStr'=None, title: 'OptStr'=None, to: 'point_like'=None, filename: 'OptStr'=None, zoom: 'float'=0) -> 'None'"
+    names: {python: set_toc_item, node: setTocItem, java: setTocItem, dotnet: SetTocItem}
+    rust: "Document::set_toc_item"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.toc.set_item_title]
+  - name: set_xml_metadata
+    kind: method
+    signature: "(metadata)"
+    names: {python: set_xml_metadata, node: setXmlMetadata, java: setXmlMetadata, dotnet: SetXmlMetadata}
+    rust: "Document::set_xml_metadata"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-set-xml-metadata]
+  - name: subset_fonts
+    kind: method
+    signature: "(verbose: 'bool'=False, fallback: 'bool'=False) -> 'OptInt'"
+    names: {python: subset_fonts, node: subsetFonts, java: subsetFonts, dotnet: SubsetFonts}
+    rust: "Document::subset_fonts"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-subset-fonts]
+  - name: switch_layer
+    kind: method
+    signature: "(config, as_default=0)"
+    names: {python: switch_layer, node: switchLayer, java: switchLayer, dotnet: SwitchLayer}
+    rust: "Document::switch_layer"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-switch-layer]
+  - name: this
+    kind: property
+    signature: "()"
+    names: {python: this, node: this, java: getThis, dotnet: This}
+    rust: "Document::this"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-this]
+  - name: this_is_pdf
+    kind: property
+    signature: "()"
+    names: {python: this_is_pdf, node: thisIsPdf, java: getThisIsPdf, dotnet: ThisIsPdf}
+    rust: "Document::this_is_pdf"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-this-is-pdf]
+  - name: tobytes
+    kind: method
+    signature: "(*args, **kwargs)"
+    names: {python: tobytes, node: tobytes, java: tobytes, dotnet: Tobytes}
+    rust: "Document::tobytes"
+    tier: T1
+    lane: L2
+    status: partial
+    tests: [l2.crypto.tobytes_encrypted]
+  - name: update_object
+    kind: method
+    signature: "(xref, text, page=None)"
+    names: {python: update_object, node: updateObject, java: updateObject, dotnet: UpdateObject}
+    rust: "Document::update_object"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l4-document-update-object]
+  - name: update_stream
+    kind: method
+    signature: "(xref=0, stream=None, new=1, compress=1)"
+    names: {python: update_stream, node: updateStream, java: updateStream, dotnet: UpdateStream}
+    rust: "Document::update_stream"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l4-document-update-stream]
+  - name: version_count
+    kind: property
+    signature: "()"
+    names: {python: version_count, node: versionCount, java: getVersionCount, dotnet: VersionCount}
+    rust: "Document::version_count"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-version-count]
+  - name: write
+    kind: method
+    signature: "(garbage=False, clean=False, deflate=False, deflate_images=False, deflate_fonts=False, incremental=False, ascii=False, expand=False, linear=False, no_new_id=False, appearance=False, pretty=False, encryption=1, permissions=4095, owner_pw=None, user_pw=None, preserve_metadata=1, use_objstms=0, compression_effort=0, raise_on_repair=False, reproducible=False)"
+    names: {python: write, node: write, java: write, dotnet: Write}
+    rust: "Document::write"
+    tier: T2
+    lane: L2
+    status: differs
+    tests: [l2-document-write]
+    contract: "valid PDF with the same content; bytes differ"
+  - name: xref
+    kind: property
+    signature: "()"
+    names: {python: xref, node: xref, java: getXref, dotnet: Xref}
+    rust: "Document::xref"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-xref]
+  - name: xref_copy
+    kind: method
+    signature: "(source: 'int', target: 'int', *, keep: 'list'=None) -> 'None'"
+    names: {python: xref_copy, node: xrefCopy, java: xrefCopy, dotnet: XrefCopy}
+    rust: "Document::xref_copy"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-document-xref-copy]
+  - name: xref_get_key
+    kind: method
+    signature: "(xref, key)"
+    names: {python: xref_get_key, node: xrefGetKey, java: xrefGetKey, dotnet: XrefGetKey}
+    rust: "Document::xref_get_key"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-document-xref-get-key]
+  - name: xref_get_keys
+    kind: method
+    signature: "(xref)"
+    names: {python: xref_get_keys, node: xrefGetKeys, java: xrefGetKeys, dotnet: XrefGetKeys}
+    rust: "Document::xref_get_keys"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-xref-get-keys]
+  - name: xref_is_font
+    kind: method
+    signature: "(xref)"
+    names: {python: xref_is_font, node: xrefIsFont, java: xrefIsFont, dotnet: XrefIsFont}
+    rust: "Document::xref_is_font"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-document-xref-is-font]
+  - name: xref_is_image
+    kind: method
+    signature: "(xref)"
+    names: {python: xref_is_image, node: xrefIsImage, java: xrefIsImage, dotnet: XrefIsImage}
+    rust: "Document::xref_is_image"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-doc-xref-is-image]
+  - name: xref_is_stream
+    kind: method
+    signature: "(xref=0)"
+    names: {python: xref_is_stream, node: xrefIsStream, java: xrefIsStream, dotnet: XrefIsStream}
+    rust: "Document::xref_is_stream"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-xref-is-stream]
+  - name: xref_is_xobject
+    kind: method
+    signature: "(xref)"
+    names: {python: xref_is_xobject, node: xrefIsXobject, java: xrefIsXobject, dotnet: XrefIsXobject}
+    rust: "Document::xref_is_xobject"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-xref-is-xobject]
+  - name: xref_length
+    kind: method
+    signature: "()"
+    names: {python: xref_length, node: xrefLength, java: xrefLength, dotnet: XrefLength}
+    rust: "Document::xref_length"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-document-xref-length]
+  - name: xref_object
+    kind: method
+    signature: "(xref, compressed=0, ascii=0)"
+    names: {python: xref_object, node: xrefObject, java: xrefObject, dotnet: XrefObject}
+    rust: "Document::xref_object"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-document-xref-object]
+  - name: xref_set_key
+    kind: method
+    signature: "(xref, key, value)"
+    names: {python: xref_set_key, node: xrefSetKey, java: xrefSetKey, dotnet: XrefSetKey}
+    rust: "Document::xref_set_key"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l4-document-xref-set-key]
+  - name: xref_stream
+    kind: method
+    signature: "(xref)"
+    names: {python: xref_stream, node: xrefStream, java: xrefStream, dotnet: XrefStream}
+    rust: "Document::xref_stream"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-document-xref-stream]
+  - name: xref_stream_raw
+    kind: method
+    signature: "(xref)"
+    names: {python: xref_stream_raw, node: xrefStreamRaw, java: xrefStreamRaw, dotnet: XrefStreamRaw}
+    rust: "Document::xref_stream_raw"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-xref-stream-raw]
+  - name: xref_xml_metadata
+    kind: method
+    signature: "()"
+    names: {python: xref_xml_metadata, node: xrefXmlMetadata, java: xrefXmlMetadata, dotnet: XrefXmlMetadata}
+    rust: "Document::xref_xml_metadata"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-document-xref-xml-metadata]

@@ -1,0 +1,37 @@
+# Liberation 2.1.5, taken from the upstream release tarball and not repacked.
+#
+#   https://github.com/liberationfonts/liberation-fonts
+#   liberation-fonts-ttf-2.1.5.tar.gz
+#   7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0
+#
+# Every face below is byte-identical to the file of that name in that tarball,
+# verified on 08-09-2026. Checked with `sha256sum -c` from assets/; the comment
+# lines are ignored, so this file is both the record and the check.
+bd62a0672d0b9b6710b01df434c80ad54fa5f0835207eb7b17b7a761463067bb  LiberationMono-Bold.ttf
+79451f3c09fe25116098853b7a2ca6e2436220ccc11af022979adbcf195be130  LiberationMono-BoldItalic.ttf
+605c01c711b44480a7508d349dfbf3264e81fa43d69e61cfa7d10b86e764c4d1  LiberationMono-Italic.ttf
+f2b83c763e8afd21709333370bed4774337fae82267937e2b5aea7e2fbd922c1  LiberationMono-Regular.ttf
+788abee4c806d660e8aee46689dd8540cd4bb98da03dcc9d171ce3efd99a9173  LiberationSans-Bold.ttf
+698da70fc191cc5f33ad4d6d3fe830fe4624b898ea2e3169955928b7c491f1ee  LiberationSans-BoldItalic.ttf
+e5bae5c4cde31f22142753855f4f8fb86da6ff39955ed3c0a11248b0d16948b0  LiberationSans-Italic.ttf
+76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8  LiberationSans-Regular.ttf
+d754ba427cfe0bca54ae052384baa8f842da5bd6550ad4da024ac441e7a7d5ce  LiberationSerif-Bold.ttf
+f17db8af71e24d2066b587546021d4f0b296be389512b658dec3c09affeb11a7  LiberationSerif-BoldItalic.ttf
+0e3dea9f8d613e006ccfa62201f33e265d19167bd0907725c3e145368b04fc2e  LiberationSerif-Italic.ttf
+058ea80864aef09a23f45cbec2bb5400bc3dfbdea01c3f10538a21fcb497fb74  LiberationSerif-Regular.ttf
+# Noto Naskh Arabic v2.021, taken from the upstream release archive and not
+# repacked. Liberation carries no Arabic; this is the face that does (#502).
+#
+#   https://github.com/notofonts/arabic/releases/tag/NotoNaskhArabic-v2.021
+#   NotoNaskhArabic-v2.021.zip
+#   6c050ab9bd087d69b733c505a7576e60c528c2f33cd7b91005a5bd7da4514032
+#
+# The two static hinted TTFs from that archive, byte-identical, verified on
+# 09-09-2026. The variable NotoNaskhArabic[wght].ttf that google/fonts
+# publishes is deliberately NOT used: pdfa_subset::retain_glyphs refuses a font
+# carrying fvar/gvar, and an uninstanced variable font has no business in an
+# archival PDF. The licence text below travels with the bytes as
+# LICENSE-NotoNaskhArabic.txt (the archive's own OFL.txt, sha256
+# a7a5a25eb188bf1cd96982030d53e23c33485c69b1044a562254226857ee13af).
+6f0a92031367b2f5a2078fe9d24f3433122b61a0bad57c423aad8f3c39aa2e6e  NotoNaskhArabic-Regular.ttf
+04017b0ccdd1156dcde3bc386734c1b03165261762f16a025c8afc9088ae76e9  NotoNaskhArabic-Bold.ttf

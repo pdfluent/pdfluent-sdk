@@ -1,0 +1,45 @@
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-PDFluent-Commercial
+
+PDFluent is available under two licences, at your option
+=======================================================
+
+    1. The GNU Affero General Public License, version 3.
+
+           LICENSE                      the FSF text, verbatim
+
+    2. The PDFluent Commercial Licence.
+
+           LICENSE-COMMERCIAL
+
+Choose either. You do not need permission to choose the first.
+
+The AGPL is the default. No key is required to receive it, nothing expires, and
+the rights it grants are not conditional on anything we do. It asks something in
+return: if you convey the software, or let users interact with a modified
+version over a network, you must offer those users the corresponding source
+under the same licence.
+
+If that is impossible for you -- a closed surrounding product, a customer
+contract, a legal department that will not accept copyleft in a shipped
+binary -- the commercial licence is the alternative. Under it you are not buying
+features. You are buying the right not to publish your own source. It is sold at
+https://pdfluent.com/sdk/pricing; enquiries go to sales@pdfluent.com.
+
+
+Why this file exists, and what it is not
+----------------------------------------
+
+It is not a licence and it grants nothing. It is the statement of the offer, for
+the two channels that cannot spell the offer in their own metadata.
+
+npm rejects a LicenseRef expression outright -- measured with
+validate-npm-package-license 3.0.4, the library npm itself uses -- and
+nuget.org refuses one with NU5124. Both offer the same way out: point at a file.
+Until 07-09-2026 that pointer resolved to LICENSE, because LICENSE then opened
+with this same statement. Since then LICENSE holds the AGPL text and nothing
+else, so that a licence scanner reading it sees the AGPL rather than prose it
+cannot classify -- which is the whole point of that change, and it is why the
+pointer needs a file of its own rather than a sentence bolted onto the licence.
+
+The full explanation, with the history and what the build currently does, is the
+Licence section of README.md.

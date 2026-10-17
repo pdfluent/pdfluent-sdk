@@ -1,0 +1,174 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for Link, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: Link
+rust_path: pdfluent::compat::Link
+names: {python: Link, node: Link, java: Link, dotnet: Link}
+members:
+  - name: __eq__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __eq__, node: eq, java: eq, dotnet: Eq}
+    rust: "Link::PartialEq"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-eq]
+  - name: __ge__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ge__, node: ge, java: ge, dotnet: Ge}
+    rust: "Link::compare"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-ge]
+  - name: __gt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __gt__, node: gt, java: gt, dotnet: Gt}
+    rust: "Link::compare"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-gt]
+  - name: __init__
+    kind: constructor
+    signature: "(this)"
+    names: {python: __init__, node: Link, java: Link, dotnet: Link}
+    rust: "Link::new"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-init]
+  - name: __le__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __le__, node: le, java: le, dotnet: Le}
+    rust: "Link::compare"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-le]
+  - name: __lt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __lt__, node: lt, java: lt, dotnet: Lt}
+    rust: "Link::compare"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-lt]
+  - name: __ne__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ne__, node: ne, java: ne, dotnet: Ne}
+    rust: "Link::PartialEq"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-ne]
+  - name: border
+    kind: property
+    signature: "()"
+    names: {python: border, node: border, java: getBorder, dotnet: Border}
+    rust: "Link::border"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-border]
+  - name: colors
+    kind: property
+    signature: "()"
+    names: {python: colors, node: colors, java: getColors, dotnet: Colors}
+    rust: "Link::colors"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-colors]
+  - name: dest
+    kind: property
+    signature: "()"
+    names: {python: dest, node: dest, java: getDest, dotnet: Dest}
+    rust: "Link::dest"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-dest]
+  - name: flags
+    kind: property
+    signature: "()"
+    names: {python: flags, node: flags, java: getFlags, dotnet: Flags}
+    rust: "Link::flags"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-flags]
+  - name: is_external
+    kind: property
+    signature: "()"
+    names: {python: is_external, node: isExternal, java: isExternal, dotnet: IsExternal}
+    rust: "Link::is_external"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-is-external]
+  - name: next
+    kind: property
+    signature: "()"
+    names: {python: next, node: next, java: getNext, dotnet: Next}
+    rust: "Link::next"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-next]
+  - name: rect
+    kind: property
+    signature: "()"
+    names: {python: rect, node: rect, java: getRect, dotnet: Rect}
+    rust: "Link::rect"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-rect]
+  - name: set_border
+    kind: method
+    signature: "(border=None, width=0, dashes=None, style=None)"
+    names: {python: set_border, node: setBorder, java: setBorder, dotnet: SetBorder}
+    rust: "Link::set_border"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-set-border]
+  - name: set_colors
+    kind: method
+    signature: "(colors=None, stroke=None, fill=None)"
+    names: {python: set_colors, node: setColors, java: setColors, dotnet: SetColors}
+    rust: "Link::set_colors"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-set-colors]
+  - name: set_flags
+    kind: method
+    signature: "(flags)"
+    names: {python: set_flags, node: setFlags, java: setFlags, dotnet: SetFlags}
+    rust: "Link::set_flags"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-set-flags]
+  - name: uri
+    kind: property
+    signature: "()"
+    names: {python: uri, node: uri, java: getUri, dotnet: Uri}
+    rust: "Link::uri"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-link-uri]

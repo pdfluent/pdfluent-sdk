@@ -226,5 +226,10 @@ static WIN_ANSI: phf::Map<u8, &'static str> = phf_map! {
     158_u8 => "zcaron",
     48_u8 => "zero",
     160_u8 => "nbspace",
-    173_u8 => "sfthyphen",
+    // PDF 32000-1 Annex D, Table D.1: the hyphen is also encoded at 255 (octal)
+    // = 0xAD in WinAnsiEncoding. Latin-1 calls that position `sfthyphen`, which
+    // maps to U+00AD — a character readers hide and searches do not match — so a
+    // document using the second hyphen code reads as if the hyphens were gone.
+    // pdf.js puts `hyphen` in the same slot.
+    173_u8 => "hyphen",
 };

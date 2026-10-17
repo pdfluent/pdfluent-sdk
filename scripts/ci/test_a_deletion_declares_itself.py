@@ -11,7 +11,7 @@ import os, subprocess, sys, tempfile
 from pathlib import Path
 
 GUARD = Path(__file__).with_name("a_deletion_declares_itself.py")
-MINIMUM_CASES = 35  # FLOOR
+MINIMUM_CASES = 42  # FLOOR
 
 
 import sys as _sys, pathlib as _pathlib
@@ -375,6 +375,92 @@ def main() -> int:
         r = guard(wd, "--base", "no-such-branch")
         expect("an unreachable base is fatal, not a pass", r.returncode == 2,
                f"exit {r.returncode}")
+
+    # DECLARED LATE (#592): the register names the deleting commit, and only
+    # that commit's deletion of that path is excused -- and only a commit from
+    # before the register's cutoff, so the fixtures date theirs in the past.
+    def old_commit(wd: Path, message: str) -> None:
+        env = dict(clean_env(cwd=wd), GIT_COMMITTER_DATE="2026-09-07T12:00:00Z",
+                   GIT_AUTHOR_DATE="2026-09-07T12:00:00Z")
+        subprocess.run(["git", "commit", "-qm", message], cwd=str(wd),
+                       capture_output=True, text=True, env=env)
+    def late(wd: Path, commit: str, paths: list[str], why: str = "it went on purpose") -> None:
+        (wd / "docs").mkdir(exist_ok=True)
+        body = "".join(f'  "{p}",\n' for p in paths)
+        (wd / "docs" / "DELETIONS_DECLARED_LATE.toml").write_text(
+            f'[[late]]\ncommit = "{commit}"\nwhy = "{why}"\npaths = [\n{body}]\n')
+
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        run(wd, "rm", "-q", "doomed.txt")
+        old_commit(wd, "remove it, no trailer")
+        deleter = run(wd, "rev-parse", "HEAD").stdout.strip()
+        late(wd, deleter, ["doomed.txt"])
+        r = guard(wd, "--base", "master")
+        expect("an undeclared deletion named in the late register passes",
+               r.returncode == 0 and "declared late" in r.stdout,
+               f"exit {r.returncode} {r.stdout[-160:]} {r.stderr[:160]}")
+
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        (wd / "other.txt").write_text("other\n")
+        run(wd, "add", "-A")
+        old_commit(wd, "add, delete nothing")
+        innocent = run(wd, "rev-parse", "HEAD").stdout.strip()
+        run(wd, "rm", "-q", "doomed.txt")
+        run(wd, "commit", "-qm", "remove it, no trailer")
+        late(wd, innocent, ["doomed.txt"])
+        r = guard(wd, "--base", "master")
+        expect("a late entry naming a commit that does not delete the path fails",
+               r.returncode == 1 and "does not delete it" in r.stderr,
+               f"exit {r.returncode} {r.stderr[:200]}")
+
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        run(wd, "rm", "-q", "doomed.txt")
+        run(wd, "commit", "-qm", "remove it, no trailer")
+        late(wd, "0" * 40, ["doomed.txt"])
+        r = guard(wd, "--base", "master")
+        expect("a late entry naming a commit outside the history fails",
+               r.returncode == 1 and "not in the history" in r.stderr,
+               f"exit {r.returncode} {r.stderr[:200]}")
+
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        run(wd, "rm", "-q", "doomed.txt")
+        old_commit(wd, "remove it, no trailer")
+        deleter = run(wd, "rev-parse", "HEAD").stdout.strip()
+        late(wd, deleter, ["doomed.txt"], why=" ")
+        r = guard(wd, "--base", "master")
+        expect("a late entry without a reason fails", r.returncode == 1,
+               f"exit {r.returncode} {r.stderr[:200]}")
+
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        run(wd, "rm", "-q", "doomed.txt")
+        old_commit(wd, "remove it, no trailer")
+        deleter = run(wd, "rev-parse", "HEAD").stdout.strip()
+        (wd / "doomed.txt").write_text("back\n")
+        run(wd, "add", "-A")
+        run(wd, "commit", "-qm", "restore it")
+        run(wd, "rm", "-q", "doomed.txt")
+        run(wd, "commit", "-qm", "remove it again, no trailer")
+        late(wd, deleter, ["doomed.txt"])
+        r = guard(wd, "--base", "master")
+        expect("a late entry does not excuse a later deletion of a restored path",
+               r.returncode == 1 and "doomed.txt" in r.stderr,
+               f"exit {r.returncode} {r.stderr[:200]}")
+
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        run(wd, "rm", "-q", "doomed.txt")
+        run(wd, "commit", "-qm", "remove it today, no trailer")
+        deleter = run(wd, "rev-parse", "HEAD").stdout.strip()
+        late(wd, deleter, ["doomed.txt"])
+        r = guard(wd, "--base", "master")
+        expect("a late entry for a deletion after the cutoff is refused",
+               r.returncode == 1 and "after" in r.stderr and "doomed.txt" in r.stderr,
+               f"exit {r.returncode} {r.stderr[:200]}")
 
     if cases < MINIMUM_CASES:  # FLOOR
         print(f"[test-deletions] FATAL: {cases} cases, floor is {MINIMUM_CASES}. "

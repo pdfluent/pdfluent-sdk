@@ -77,6 +77,8 @@
  * | `E-WASM-SAVE-FAILED` | Internal save / serialize |
  * | `E-WASM-INVALID-JSON` | `fromFields`, `fromJson`, `importJson`, schema export |
  * | `E-WASM-FORMCALC-FAILED` | `runCalculations` |
+ * | `E-SECURITY-DECRYPTION-FAILED` | `decryptPdf`, `signPdf`: wrong password, or one that does not entitle the call |
+ * | `E-WASM-SIGN-FAILED` | `signPdf` |
  *
  * ## Backward compatibility
  *

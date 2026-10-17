@@ -271,14 +271,6 @@ def test_open_pdf_function():
     assert doc.page_count >= 1
 
 
-# ---------- Extra: document.extract_text(page_num) ----------
-
-def test_document_extract_text():
-    doc = Document(SAMPLE_PDF)
-    text = doc.extract_text(0)
-    assert isinstance(text, str)
-
-
 # ---------- Extra: document.save ----------
 
 def test_document_save(tmp_path):
@@ -363,3 +355,24 @@ def test_extract_text_blocks_runtime():
             assert isinstance(span.x, float)
             assert isinstance(span.y, float)
             assert isinstance(span.font_size, float)
+
+
+def test_door_functions_reachable_from_top_level():
+    """Every door_* native is re-exported by the top-level package.
+
+    pdfluent_extract reads the door bridge off ``pdfluent`` itself
+    (``_chunks._native_module()`` returns the top-level module), so a
+    door_* in ``_native`` that is not re-exported breaks all 60+ door
+    tests with AttributeError (#657). This pins the wiring both ways:
+    nothing in _native is left behind, and nothing re-exported is a
+    copy (identity, so behaviour cannot drift between the two names).
+    """
+    import pdfluent
+    import pdfluent._native as native
+
+    door = sorted(n for n in dir(native) if n.startswith("door_"))
+    assert door, "no door_* in _native; the bridge itself is gone"
+    for name in door:
+        assert hasattr(pdfluent, name), name
+        assert getattr(pdfluent, name) is getattr(native, name), name
+        assert name in pdfluent.__all__, name

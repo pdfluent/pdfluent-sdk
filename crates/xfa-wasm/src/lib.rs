@@ -41,12 +41,14 @@ pub mod canvas2d_device;
 pub mod edits;
 pub mod pdfluent_error;
 pub mod text_edit;
+pub mod tools;
 
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use crate::canvas2d_device::Canvas2DDevice;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use kurbo::{Affine, Rect, Shape};
 use pdf_engine::api_error::PdfError;
+use pdf_engine::ExtractOptions;
 use pdf_engine::PdfDocument;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use pdf_render::pdf_interpret::util::PageExt;
@@ -684,6 +686,93 @@ impl PdfDoc {
                 .unwrap_or_default();
         }
         self.engine.extract_text(page_index).unwrap_or_default()
+    }
+
+    /// The document as markdown, in reading order (#573).
+    ///
+    /// Preview: output quality is still improving and the API may change in a minor release.
+    ///
+    /// Headings become `#` to `###`, list items `-` and `1.`, a table a pipe
+    /// table or an HTML one where markdown cannot hold its shape, and a change
+    /// of page an HTML comment. The running heads a document repeats are not in
+    /// it; they are in `extractBlocks`.
+    ///
+    /// `firstPage` and `pageCount` choose a window of pages; leave both out for
+    /// the whole document. The document is read whole whatever the window is,
+    /// because what a block IS is decided against the rest of the document.
+    ///
+    /// AN XFA FORM IS READ FROM ITS FLATTENED FORM, the way `text` and
+    /// `getTextPositions` read one: a dynamic XFA document draws its fields
+    /// from a template rather than from page content, so the blocks of the
+    /// unflattened file are the blocks of an empty page.
+    #[wasm_bindgen(js_name = "extractMarkdown")]
+    pub fn extract_markdown(
+        &self,
+        first_page: Option<usize>,
+        page_count: Option<usize>,
+    ) -> Result<String, JsValue> {
+        let flattened = self.open_flattened_xfa_engine();
+        let engine = flattened.as_ref().unwrap_or(&self.engine);
+        engine
+            .extract_markdown(&extract_options(first_page, page_count))
+            .map_err(|e| pdfluent_error::pdf_engine_error("PdfDoc.extractMarkdown", e))
+    }
+
+    /// The document's blocks as JSON, in reading order (#573).
+    ///
+    /// Preview: output quality is still improving and the API may change in a minor release.
+    ///
+    /// `{"blocks": [...]}`, one entry per paragraph, heading, list item, table
+    /// cell and running head, each with its kind, page, box, text, spans and
+    /// place in the reading order. `docs/STRUCTURED_EXTRACTION.md` is the key
+    /// to every field.
+    ///
+    /// A JSON string and not a structured value, which is what every other
+    /// structured reader in this binding hands back: one shape crosses the
+    /// boundary, `JSON.parse` is what the caller already does for
+    /// `getTextPositions` and the annotations, and a `serde` mirror of the
+    /// block model would be a second definition of it to keep in step.
+    ///
+    /// An XFA form is read from its flattened form, for the reason
+    /// `extractMarkdown` above gives.
+    #[wasm_bindgen(js_name = "extractBlocks")]
+    pub fn extract_blocks(
+        &self,
+        first_page: Option<usize>,
+        page_count: Option<usize>,
+    ) -> Result<String, JsValue> {
+        let flattened = self.open_flattened_xfa_engine();
+        let engine = flattened.as_ref().unwrap_or(&self.engine);
+        let blocks = engine
+            .extract_blocks(&extract_options(first_page, page_count))
+            .map_err(|e| pdfluent_error::pdf_engine_error("PdfDoc.extractBlocks", e))?;
+        Ok(pdf_engine::to_json(&blocks))
+    }
+
+    /// The document as a Docling `DoclingDocument`, as JSON (#629).
+    ///
+    /// Preview: output quality is still improving and the API may change in a minor release.
+    ///
+    /// The schema version the engine pins, which docling-core's
+    /// `DoclingDocument.model_validate_json` loads as it is. `name` is
+    /// `DoclingDocument.name`, which Docling fills with the file's stem;
+    /// absent means `"document"`. An XFA form is read from its flattened form,
+    /// for the reason `extractMarkdown` above gives.
+    #[wasm_bindgen(js_name = "extractDocling")]
+    pub fn extract_docling(
+        &self,
+        first_page: Option<usize>,
+        page_count: Option<usize>,
+        name: Option<String>,
+    ) -> Result<String, JsValue> {
+        let flattened = self.open_flattened_xfa_engine();
+        let engine = flattened.as_ref().unwrap_or(&self.engine);
+        engine
+            .extract_docling(
+                name.as_deref().unwrap_or("document"),
+                &extract_options(first_page, page_count),
+            )
+            .map_err(|e| pdfluent_error::pdf_engine_error("PdfDoc.extractDocling", e))
     }
 
     /// Document metadata as JSON.
@@ -1334,6 +1423,25 @@ impl PdfDoc {
 }
 
 /// Convert PDF string bytes to a Rust String (UTF-8/UTF-16/Latin-1).
+/// The window `extractMarkdown` and `extractBlocks` were asked for (#573).
+///
+/// One place, so the two cannot drift apart about what a missing argument
+/// means: it means the whole document, the same as `ExtractOptions::default()`
+/// does in Rust.
+fn extract_options(first_page: Option<usize>, page_count: Option<usize>) -> ExtractOptions {
+    // No struct literal: `ExtractOptions` is `#[non_exhaustive]`, so the
+    // asked-for fields are assigned onto the default.
+    let mut options = ExtractOptions::default();
+    options.first_page = first_page.unwrap_or(0);
+    options.page_count = page_count;
+    // AND WHATEVER THE ENGINE ADDS NEXT stays at its default rather than
+    // left out: this is a binding, and a field it forgets is a feature this
+    // language silently does not get. `learned` arrived that way (#599) and
+    // broke the build here rather than in a test, which is the lucky version
+    // of the same mistake.
+    options
+}
+
 fn bytes_to_pdf_string(bytes: &[u8]) -> String {
     // UTF-16 BOM
     if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {

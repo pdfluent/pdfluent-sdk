@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llama-index-readers-pdfluent"
+version = "0.1.0"
+description = "LlamaIndex reader for PDFluent: PDF blocks and tables with page, box, kind and confidence per document."
+readme = "README.md"
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+license-files = ["LICENSE", "LICENSE-COMMERCIAL"]
+authors = [{ name = "Innovation Trigger B.V.", email = "team@pdfluent.com" }]
+requires-python = ">=3.9"
+# llama-index-core is MIT. pdfluent 1.1.0 is the first release with
+# `pdfluent.chunks`, which this reader is a thin wrapper around.
+dependencies = ["pdfluent>=1.1.0", "llama-index-core>=0.12"]
+keywords = ["llama-index", "reader", "pdf", "rag", "pdfluent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing",
+]
+
+[project.urls]
+Homepage = "https://pdfluent.com"
+Documentation = "https://pdfluent.com/docs"
+Pricing = "https://pdfluent.com/sdk/pricing"
+Repository = "https://github.com/pdfluent/pdfluent-sdk"
+"Bug Tracker" = "https://github.com/pdfluent/pdfluent-sdk/issues"
+
+# The llama_index.readers namespace, as every LlamaIndex reader package ships
+# it: no __init__.py above `pdfluent`.
+[tool.hatch.build.targets.wheel]
+packages = ["llama_index"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

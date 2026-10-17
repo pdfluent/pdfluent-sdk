@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pdfluent-extract"
+version = "0.1.0"
+description = "PDF to Markdown, JSON and RAG chunks — fast, local, no system dependencies"
+readme = "README.md"
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+license-files = ["LICENSE", "LICENSE-COMMERCIAL"]
+authors = [{ name = "Innovation Trigger B.V.", email = "team@pdfluent.com" }]
+requires-python = ">=3.8"
+dependencies = ["pdfluent>=1.1.0,<2"]
+keywords = ["pdf", "markdown", "rag", "llm", "chunking", "langchain", "llamaindex", "docling", "table-extraction", "pdf-to-text"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing",
+]
+
+[project.scripts]
+pdfluent-extract = "pdfluent_extract.cli:main"
+
+[project.optional-dependencies]
+langchain = ["langchain-pdfluent>=0.1"]
+llamaindex = ["llama-index-readers-pdfluent>=0.1"]
+
+[project.urls]
+Homepage = "https://pdfluent.com"
+Documentation = "https://pdfluent.com/docs"
+Pricing = "https://pdfluent.com/sdk/pricing/"
+Source = "https://github.com/pdfluent/pdfluent-sdk"
+Changelog = "https://github.com/pdfluent/pdfluent-sdk/blob/main/CHANGELOG.md"
+Issues = "https://github.com/pdfluent/pdfluent-sdk/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pdfluent_extract"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

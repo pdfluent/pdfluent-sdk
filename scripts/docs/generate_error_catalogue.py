@@ -1,17 +1,31 @@
 #!/usr/bin/env python3
-"""Generate docs/error_catalogue.md from crates/pdfluent/src/error.rs.
+"""Generate the error catalogue from crates/pdfluent/src/error.rs.
 
 Parses the Rust source to extract all Error variants, their stable codes,
-and doc comments. Outputs a Markdown table with: code, variant, meaning,
-how-to-fix, and per-binding mapping column headers.
+and doc comments. Writes two files, both generated, neither hand-edited:
+
+  docs/error_catalogue.md    -- the internal table, with per-binding columns.
+  docs/sdk-error-codes.json  -- exactly the file pdfluent.com renders as the
+                                anchor list on /errors. The website repository
+                                carries a copy at src/data/sdk-error-codes.json
+                                and its own test refuses a copy that is not
+                                byte-identical to this one.
+
+The JSON exists because the same drift happened three times (#320, #347,
+#426): a code was added to error.rs and the published page never grew a
+section for it, so the one link handed to a user at the moment something broke
+led nowhere. Generating the page's input from error.rs makes that impossible
+to do by accident; `scripts/ci/error_catalogue_is_generated.py` makes it
+impossible to do on purpose without noticing.
 
 Exit codes:
-  0 -- catalogue written successfully
+  0 -- files written successfully
   1 -- parse error or missing code
 """
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -19,6 +33,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 ERROR_RS = REPO_ROOT / "crates" / "pdfluent" / "src" / "error.rs"
 OUT_FILE = REPO_ROOT / "docs" / "error_catalogue.md"
+JSON_OUT_FILE = REPO_ROOT / "docs" / "sdk-error-codes.json"
 
 # ---------------------------------------------------------------------------
 # Parsing helpers
@@ -27,9 +42,9 @@ OUT_FILE = REPO_ROOT / "docs" / "error_catalogue.md"
 # Matches a code() arm such as:
 #   Error::Foo { .. } => "E-CATEGORY-SPECIFIC",
 CODE_ARM_RE = re.compile(
-    # Match both struct-style variants `Error::Foo { .. } => "E-..."` AND
-    # unit variants `Error::Foo => "E-..."`.
-    r'Error::(\w+)(?:\s*\{[^}]*\})?\s*=>\s*"(E-[A-Z0-9\-]+)"'
+    # Struct variants `Error::Foo { .. } => "E-..."`, tuple variants
+    # `Error::Foo(_) => "E-..."`, and unit variants `Error::Foo => "E-..."`.
+    r'Error::(\w+)(?:\s*\{[^}]*\}|\s*\([^)]*\))?\s*=>\s*"(E-[A-Z0-9\-]+)"'
 )
 
 # Matches variant doc comments (/// lines) immediately preceding a variant.
@@ -69,11 +84,17 @@ def parse_error_rs(path: Path) -> list[dict]:
         sys.exit(1)
     enum_body = m.group(1)
 
-    # Variant declaration: starts with an identifier followed by `{`
-    # (struct variant) OR `,` / `\s*$` (unit variant), preceded by
+    # Variant declaration: an identifier followed by `{` (struct variant),
+    # `(` (tuple variant), or `,` / end of line (unit variant), preceded by
     # optional doc comments.
+    #
+    # The `(` arm is not decoration: without it `Unsupported(String)` was
+    # skipped, so `E-UNSUPPORTED` never reached the catalogue or the published
+    # page. It is the same drift as #320/#347/#426, one layer earlier -- and
+    # the sync gate did not catch it because it grepped for the bare code and
+    # `E-PARSE-UNSUPPORTED-VERSION` contains `E-UNSUPPORTED` as a substring.
     variant_re = re.compile(
-        r"((?:^\s*///[^\n]*\n)+)?\s*^\s*([A-Z][\w]*)\s*(?:\{|,|$)",
+        r"((?:^\s*///[^\n]*\n)+)?\s*^\s*([A-Z][\w]*)\s*(?:\{|\(|,|$)",
         re.MULTILINE,
     )
 
@@ -168,9 +189,63 @@ HOW_TO_FIX: dict[str, str] = {
         "`ProcessingLimits` field. For untrusted input, keep limits tight and "
         "reject oversized files at the ingestion layer."
     ),
+    "E-EDIT-TEXT-FAILED": (
+        "The message carries the typed reason from the edit session. A stale "
+        "or invalid match id means the document changed after the search: "
+        "search again and stage against the new matches. `unsupported "
+        "container` and `match spans multiple styles` mean the text cannot be "
+        "edited in place -- redact and re-draw it instead. Overlapping or "
+        "duplicated stages are a mistake in the caller's own batch."
+    ),
+    "E-PAGE-OUT-OF-RANGE": (
+        "Pass a page number between 1 and `page_count()` inclusive. If you are "
+        "porting from a 0-based API, add 1."
+    ),
+    "E-PAGE-RANGE-INVALID": (
+        "Pass a range that lies inside 1..=`page_count()` and does not end "
+        "before it starts. If you are porting from a 0-based API, add 1 to "
+        "both ends; `0..n` becomes `1..=n`."
+    ),
+    "E-UNSUPPORTED": (
+        "Read the message: it names what was asked for. Either the document "
+        "lacks the structure the operation needs, or the capability is not "
+        "part of this build."
+    ),
     "E-INTERNAL": (
         "This should never occur under normal operation. File a bug report at "
         "https://pdfluent.com/support including `message` and `crate_version`."
+    ),
+}
+
+# ---------------------------------------------------------------------------
+# Public wording (what pdfluent.com shows), where it differs from the rustdoc
+# ---------------------------------------------------------------------------
+#
+# The internal table quotes the doc comment verbatim, because that is what a
+# maintainer reading the catalogue wants. The published page has a different
+# reader: someone whose call just failed. A doc comment written for the first
+# reader is often wrong for the second -- it carries rustdoc link syntax,
+# issue numbers, and paragraphs of rationale.
+#
+# Only the codes listed here diverge; everything else uses the doc comment, so
+# the default stays "one source, no editing".
+PUBLIC_WHAT: dict[str, str] = {
+    "E-BUDGET-RESOURCE-LIMIT": (
+        "A processing limit you configured was exceeded while loading or "
+        "working on the document. The `kind` field says which one."
+    ),
+    "E-PAGE-OUT-OF-RANGE": (
+        "A page number outside the document was asked for. Pages are numbered "
+        "from 1, so 0 is never valid -- it is the number a caller arriving "
+        "from a 0-based API reaches for first."
+    ),
+    "E-PAGE-RANGE-INVALID": (
+        "A page range the document cannot satisfy was asked for: it runs past "
+        "the last page, starts at 0, or ends before it starts."
+    ),
+    "E-UNSUPPORTED": (
+        "The requested operation is not supported for this document or in "
+        "this build."
     ),
 }
 
@@ -183,7 +258,7 @@ BINDING_STATUS: dict[str, dict[str, str]] = {
     "E-IO-GENERIC": {
         "python":  "PdfluentIoError",
         "wasm_ts": "OPERATION_FAILED (no dedicated code — gap)",
-        "node":    "PdfluentIoError",
+        "node":    "PdfluentError",
         "dotnet":  "PdfluentIoException",
         "java":    "PdfluentIoException",
         "c_abi":   "PDF_STATUS_ERROR_FILE_NOT_FOUND (partial — gap: generic I/O has no own code)",
@@ -191,7 +266,7 @@ BINDING_STATUS: dict[str, dict[str, str]] = {
     "E-IO-FILE-NOT-FOUND": {
         "python":  "PdfluentIoError",
         "wasm_ts": "OPERATION_FAILED (no dedicated code — gap)",
-        "node":    "PdfluentIoError",
+        "node":    "PdfluentError",
         "dotnet":  "PdfluentIoException (via PDF_STATUS_ERROR_FILE_NOT_FOUND)",
         "java":    "PdfluentIoException",
         "c_abi":   "PDF_STATUS_ERROR_FILE_NOT_FOUND",
@@ -199,7 +274,7 @@ BINDING_STATUS: dict[str, dict[str, str]] = {
     "E-PARSE-INVALID-PDF": {
         "python":  "PdfluentParseError",
         "wasm_ts": "INVALID_PDF",
-        "node":    "PdfluentParseError",
+        "node":    "PdfluentError",
         "dotnet":  "PdfluentParseException (via PDF_STATUS_ERROR_CORRUPT_PDF)",
         "java":    "PdfluentParseException",
         "c_abi":   "PDF_STATUS_ERROR_CORRUPT_PDF",
@@ -207,7 +282,7 @@ BINDING_STATUS: dict[str, dict[str, str]] = {
     "E-PARSE-UNSUPPORTED-VERSION": {
         "python":  "PdfluentParseError (no dedicated subtype — gap)",
         "wasm_ts": "INVALID_PDF (no dedicated code — gap)",
-        "node":    "PdfluentParseError (no dedicated subtype — gap)",
+        "node":    "PdfluentError (not raised by any Node operation)",
         "dotnet":  "PdfluentParseException (no dedicated subtype — gap)",
         "java":    "PdfluentParseException (no dedicated subtype — gap)",
         "c_abi":   "PDF_STATUS_ERROR_CORRUPT_PDF (no dedicated code — gap)",
@@ -215,7 +290,7 @@ BINDING_STATUS: dict[str, dict[str, str]] = {
     "E-COMPLIANCE-PDFA-INVALID": {
         "python":  "PdfluentValidationError",
         "wasm_ts": "INVALID_ARGUMENT (no dedicated code — gap)",
-        "node":    "TBD (no dedicated subtype)",
+        "node":    "PdfluentError (not raised by any Node operation)",
         "dotnet":  "PdfluentValidationException",
         "java":    "PdfluentValidationException",
         "c_abi":   "PDF_STATUS_ERROR_CONVERT (partial)",
@@ -223,7 +298,7 @@ BINDING_STATUS: dict[str, dict[str, str]] = {
     "E-SECURITY-DECRYPTION-FAILED": {
         "python":  "PdfluentEncryptedError",
         "wasm_ts": "OPERATION_FAILED (no dedicated code — gap)",
-        "node":    "PdfluentPasswordError",
+        "node":    "PdfluentError",
         "dotnet":  "PdfluentPermissionException (via PDF_STATUS_ERROR_INVALID_PASS)",
         "java":    "PdfluentEncryptedDocumentException",
         "c_abi":   "PDF_STATUS_ERROR_INVALID_PASS",
@@ -231,7 +306,7 @@ BINDING_STATUS: dict[str, dict[str, str]] = {
     "E-SECURITY-INVALID-SIGNATURE": {
         "python":  "TBD (no dedicated subtype — gap)",
         "wasm_ts": "OPERATION_FAILED (no dedicated code — gap)",
-        "node":    "TBD (no dedicated subtype — gap)",
+        "node":    "PdfluentError (not raised by any Node operation)",
         "dotnet":  "TBD (no dedicated subtype — gap)",
         "java":    "TBD (no dedicated subtype — gap)",
         "c_abi":   "PDF_STATUS_ERROR_SIGN (partial — sign covers both signing failure and invalid sig)",
@@ -247,7 +322,7 @@ BINDING_STATUS: dict[str, dict[str, str]] = {
     "E-ENV-MISSING-DEPENDENCY": {
         "python":  "TBD (no dedicated subtype — gap)",
         "wasm_ts": "N/A (WASM has no native dependencies)",
-        "node":    "TBD (no dedicated subtype — gap)",
+        "node":    "PdfluentError (not raised by any Node operation)",
         "dotnet":  "TBD (no dedicated subtype — gap)",
         "java":    "TBD (no dedicated subtype — gap)",
         "c_abi":   "PDF_STATUS_ERROR_UNKNOWN (gap)",
@@ -255,7 +330,7 @@ BINDING_STATUS: dict[str, dict[str, str]] = {
     "E-BUDGET-MEMORY-EXCEEDED": {
         "python":  "PdfluentLimitError",
         "wasm_ts": "OPERATION_FAILED (no dedicated code — gap)",
-        "node":    "TBD (no dedicated subtype — gap)",
+        "node":    "PdfluentError (not raised by any Node operation)",
         "dotnet":  "PdfluentLimitException",
         "java":    "PdfluentLimitException",
         "c_abi":   "PDF_STATUS_ERROR_UNKNOWN (gap — no budget C code)",
@@ -263,18 +338,46 @@ BINDING_STATUS: dict[str, dict[str, str]] = {
     "E-BUDGET-RESOURCE-LIMIT": {
         "python":  "PdfluentLimitError",
         "wasm_ts": "OPERATION_FAILED (no dedicated code — gap)",
-        "node":    "TBD (no dedicated subtype — gap)",
+        "node":    "PdfluentError",
         "dotnet":  "PdfluentLimitException",
         "java":    "PdfluentLimitException",
         "c_abi":   "PDF_STATUS_ERROR_UNKNOWN (gap — no budget C code)",
     },
+    "E-PAGE-OUT-OF-RANGE": {
+        "python":  "PdfluentValueError (gap — no dedicated subtype yet)",
+        "wasm_ts": "INVALID_ARGUMENT (gap)",
+        "node":    "PdfluentError",
+        "dotnet":  "PdfluentArgumentException (gap)",
+        "java":    "PdfluentPageRangeException",
+        "c_abi":   "PDF_STATUS_ERROR_INVALID_ARGUMENT (gap)",
+    },
+    "E-PAGE-RANGE-INVALID": {
+        "python":  "PdfluentValueError (gap — no dedicated subtype yet)",
+        "wasm_ts": "INVALID_ARGUMENT (gap)",
+        "node":    "PdfluentError (not raised by any Node operation)",
+        "dotnet":  "PdfluentArgumentException (gap)",
+        "java":    "PdfluentPageRangeException (gap — thrown from the binding's own index check, not from this code)",
+        "c_abi":   "PDF_STATUS_ERROR_INVALID_ARGUMENT (gap)",
+    },
+    "E-UNSUPPORTED": {
+        "python":  "PdfluentError (base, no dedicated subtype — gap)",
+        "wasm_ts": "OPERATION_FAILED (no dedicated code — gap)",
+        "node":    "PdfluentError",
+        "dotnet":  "PdfluentException (base — gap)",
+        "java":    "PdfluentException (base — gap)",
+        "c_abi":   "PDF_STATUS_ERROR_UNKNOWN (gap)",
+    },
     "E-INTERNAL": {
         "python":  "PdfluentError (base, no dedicated subtype)",
         "wasm_ts": "OPERATION_FAILED",
-        "node":    "PdfluentOperationError",
+        "node":    "PdfluentError",
         "dotnet":  "PdfluentException (base)",
         "java":    "PdfluentException (base)",
         "c_abi":   "PDF_STATUS_ERROR_UNKNOWN",
+    },
+    # Only the Node column is confirmed for this code (#587); the rest stay TBD.
+    "E-EDIT-TEXT-FAILED": {
+        "node":    "PdfluentError",
     },
     # fmt: on
 }
@@ -294,6 +397,11 @@ HEADER = """\
 >
 > **Version scope:** PDFluent 1.x (GA hardening branch). Generated from
 > `crates/pdfluent/src/error.rs`.
+>
+> **Node column:** every error a Node operation raises is a `PdfluentError`
+> whose `.code` is the code in the first column; there are no per-family
+> subclasses (#587). `scripts/release/error_catalogue_sync.sh` refuses a class
+> in this column that the package does not export.
 >
 > **Per-binding columns:** status as of C8 survey. `TBD` = binding terminal
 > (C8-3 through C8-8) has not yet confirmed the mapping. `gap` annotations
@@ -396,6 +504,20 @@ def build_catalogue(variants: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def build_sdk_error_codes(variants: list[dict]) -> str:
+    """The public anchor list, in the shape pdfluent.com/errors renders."""
+    entries = [
+        {
+            "code": v["code"],
+            "variant": v["variant"],
+            "what": PUBLIC_WHAT.get(v["code"], v["doc"]),
+            "fix": HOW_TO_FIX.get(v["code"], "TBD"),
+        }
+        for v in variants
+    ]
+    return json.dumps(entries, indent=2, ensure_ascii=False) + "\n"
+
+
 def main() -> int:
     if not ERROR_RS.exists():
         print(f"ERROR: {ERROR_RS} not found", file=sys.stderr)
@@ -407,6 +529,9 @@ def main() -> int:
     OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     OUT_FILE.write_text(catalogue, encoding="utf-8")
     print(f"Wrote {len(variants)} variants to {OUT_FILE}")
+
+    JSON_OUT_FILE.write_text(build_sdk_error_codes(variants), encoding="utf-8")
+    print(f"Wrote {len(variants)} variants to {JSON_OUT_FILE}")
     return 0
 
 

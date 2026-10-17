@@ -15,6 +15,9 @@ try {
   mod = null
 }
 
+if (!mod) {
+  process.stderr.write('SKIPPED (not a pass): native addon not built — runtime half of the typed-error layer not checked\n');
+}
 const d = mod ? describe : describe.skip
 
 d('typed-error layer survives napi build', () => {
@@ -57,7 +60,7 @@ describe('ESM wrapper (index.mjs) matches CJS surface (index.js)', () => {
   const exportBlock = (mjs.match(/export\s*\{([^}]*)\}/) || [, ''])[1]
   const esmExports = exportBlock.split(',').map((s) => s.trim()).filter(Boolean)
   const cjsExports = new Set(
-    [...cjs.matchAll(/module\.exports\.([A-Za-z]+)/g)].map((m) => m[1])
+    [...cjs.matchAll(/module\.exports\.([A-Za-z0-9_]+)/g)].map((m) => m[1])
   )
 
   test('every ESM export exists in the CJS entry (no phantom exports)', () => {
@@ -68,5 +71,24 @@ describe('ESM wrapper (index.mjs) matches CJS surface (index.js)', () => {
   test('ESM re-exports the typed-error class', () => {
     expect(esmExports).toContain('PdfluentError')
     expect(esmExports).not.toContain('PdfluentLicenseError')
+  })
+
+  // The other direction, which nothing asserted until #585. Checking only
+  // ESM ⊆ CJS let `TextEditor` — the find-and-replace surface the package
+  // description leads with — exist in index.js and in index.d.ts while
+  // index.mjs never re-exported it: `import { TextEditor }` was `undefined`
+  // for every ESM consumer, and the types said it was fine.
+  test('every CJS export is re-exported by the ESM wrapper (no ESM-only gap)', () => {
+    const missing = [...cjsExports].filter((n) => !esmExports.includes(n))
+    expect(missing).toEqual([])
+  })
+
+  // Types are a third surface and drift the same way.
+  test('every class the typings declare is re-exported by both entry points', () => {
+    const dts = fs.readFileSync(path.join(root, 'index.d.ts'), 'utf8')
+    const declared = [...dts.matchAll(/^export declare (?:class|function) ([A-Za-z0-9_]+)/gm)].map((m) => m[1])
+    expect(declared.length).toBeGreaterThan(0)
+    expect(declared.filter((n) => !cjsExports.has(n))).toEqual([])
+    expect(declared.filter((n) => !esmExports.includes(n))).toEqual([])
   })
 })

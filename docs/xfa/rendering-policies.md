@@ -24,7 +24,7 @@ Honours the embedded form DOM: render the instance set the document was last sav
 with, and suppress template/data instances the form DOM did not enumerate.
 
 - **Default.** Selected automatically when no policy is specified.
-- **Production-supported.** This is the policy the `pdfluent`/`xfa-cli flatten`
+- **Production-supported.** This is the policy the `xfa-runner flatten`
   command applies. It is byte-stable across releases for a given input.
 - **When to use:** always, unless you have a specific, validated reason to recover
   data the saved state omitted. Sensitive / regulated workflows (legal, government,
@@ -40,7 +40,7 @@ the form DOM omitted** (non-hidden, non-zero-instance, data-bound, not
   (`fresh-merge` / `FreshMergeExperimental`).
 - **Not produced by `flatten`.** The `flatten` command applies SavedStateFaithful
   only and rejects a `fresh-merge` request. Exercise FreshMerge via the policy-aware
-  API (`flatten_xfa_to_pdf_with_policy`) or `pdfluent measure --policy fresh-merge`.
+  API (`flatten_xfa_to_pdf_with_policy`) or `xfa-runner measure --policy fresh-merge`.
 - **May diverge from the embedded Adobe Reader saved state.** Because it recomputes
   the instance set, output (page count, content) can differ from what a viewer shows
   for the saved document. On some documents it recovers genuinely missing data rows;
@@ -69,7 +69,7 @@ conservative, intent-preserving `SavedStateFaithful` as the default and exposes
 ## What D13 will measure
 
 D13 is the corpus-scale validation of `FreshMergeExperimental`. Using the
-`pdfluent measure` entry point and the runner
+`xfa-runner measure` entry point and the runner
 (`scripts/xfa_fidelity/run_fresh_merge_policy_comparison.py`), it will, per document
 and per policy, record page count, text-operator count, file size, admitted-node
 count, output validity, and a classification (improved / neutral / likely-overrender

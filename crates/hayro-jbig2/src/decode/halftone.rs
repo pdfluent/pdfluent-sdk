@@ -6,8 +6,9 @@ use alloc::vec::Vec;
 use super::RegionBitmap;
 use super::pattern::PatternDictionary;
 use super::{CombinationOperator, RegionSegmentInfo, Template, parse_region_segment_info};
-use crate::bitmap::Bitmap;
-use crate::error::{ParseError, RegionError, Result};
+use crate::ScratchBuffers;
+use crate::bitmap::{Bitmap, MAX_DIMENSION, WORD_BITS};
+use crate::error::{OverflowError, ParseError, RegionError, Result, bail};
 use crate::gray_scale::{GrayScaleParams, decode_gray_scale_image};
 use crate::reader::Reader;
 
@@ -15,6 +16,7 @@ use crate::reader::Reader;
 pub(crate) fn decode(
     header: &HalftoneRegionHeader<'_>,
     pattern_dict: &PatternDictionary,
+    ctx: &mut ScratchBuffers,
 ) -> Result<RegionBitmap> {
     let region = &header.region_info;
 
@@ -24,9 +26,9 @@ pub(crate) fn decode(
         region.x_location,
         region.y_location,
         header.flags.initial_pixel_color,
-    );
+    )?;
 
-    decode_into(header, pattern_dict, &mut htreg)?;
+    decode_into(header, pattern_dict, &mut htreg, ctx)?;
 
     Ok(RegionBitmap {
         bitmap: htreg,
@@ -38,6 +40,7 @@ pub(crate) fn decode_into(
     header: &HalftoneRegionHeader<'_>,
     pattern_dict: &PatternDictionary,
     htreg: &mut Bitmap,
+    ctx: &mut ScratchBuffers,
 ) -> Result<()> {
     let skip_bitmap = if header.flags.enable_skip {
         Some(compute_skip_bitmap(header, pattern_dict, htreg)?)
@@ -61,11 +64,10 @@ pub(crate) fn decode_into(
         template: header.flags.template,
         skip_mask: skip_bitmap.as_deref(),
     };
-    let gi = decode_gray_scale_image(header.data, &gs_params)?;
+    let gi = decode_gray_scale_image(header.data, &gs_params, ctx)?;
 
     // "5) Place sequentially the patterns corresponding to the values in GI into
     // HTREG by the procedure described in 6.6.5.2." (6.6.5)
-    // TODO: Optimize drawing axis-aligned grids.
     render_patterns(htreg, &gi, header, pattern_dict)?;
 
     Ok(())
@@ -91,6 +93,13 @@ pub(crate) fn parse<'a>(reader: &mut Reader<'a>) -> Result<HalftoneRegionHeader<
 
     let grid_width = reader.read_u32().ok_or(ParseError::UnexpectedEof)?;
     let grid_height = reader.read_u32().ok_or(ParseError::UnexpectedEof)?;
+
+    if grid_width > MAX_DIMENSION || grid_height > MAX_DIMENSION {
+        bail!(OverflowError::GridDimension);
+    }
+
+    // TODO: Check grid offsets as well.
+
     let grid_horizontal_offset = reader.read_i32().ok_or(ParseError::UnexpectedEof)?;
     let grid_vertical_offset = reader.read_i32().ok_or(ParseError::UnexpectedEof)?;
 
@@ -212,7 +221,10 @@ fn compute_skip_bitmap(
     let region_height = htreg.height as i32;
 
     let stride = grid.width.div_ceil(32);
-    let mut hskip = vec![0_u32; (stride * grid.height) as usize];
+    let len = stride
+        .checked_mul(grid.height)
+        .ok_or(OverflowError::BitmapDimension)? as usize;
+    let mut hskip = vec![0_u32; len];
     let mut coords = GridCoords::new(grid, &header.grid_vector);
 
     for m_g in 0..grid.height {
@@ -246,9 +258,49 @@ fn render_patterns(
     pattern_dict: &PatternDictionary,
 ) -> Result<()> {
     let grid = &header.grid_position_and_size;
-    let mut coords = GridCoords::new(grid, &header.grid_vector);
+    let op = header.flags.combination_operator;
+    let pw = pattern_dict.pattern_width;
+    let ph = pattern_dict.pattern_height;
+    let region_w = region.width as i32;
+    let region_h = region.height as i32;
+    let stride = region.stride;
+    let num_patterns = pattern_dict.patterns.len();
 
+    // The original pattern mask has 1s in the top `pw` bits.
+    let original_mask = if pw >= WORD_BITS {
+        !0_u32
+    } else {
+        !0_u32 << (WORD_BITS - pw)
+    };
+
+    macro_rules! blit_rows {
+        ($data:expr, $shifted:expr, $yu:expr, $first_word:expr, $two:expr,
+         |$d0:ident, $s0:ident| $op0:expr, |$d1:ident, $s1:ident| $op1:expr) => {
+            if $two {
+                for row in 0..ph {
+                    let base = (($yu + row) * stride + $first_word) as usize;
+                    let si = row as usize * 2;
+                    let $d0 = $data[base];
+                    let $s0 = $shifted[si];
+                    $data[base] = $op0;
+                    let $d1 = $data[base + 1];
+                    let $s1 = $shifted[si + 1];
+                    $data[base + 1] = $op1;
+                }
+            } else {
+                for row in 0..ph {
+                    let base = (($yu + row) * stride + $first_word) as usize;
+                    let $d0 = $data[base];
+                    let $s0 = $shifted[row as usize * 2];
+                    $data[base] = $op0;
+                }
+            }
+        };
+    }
+
+    let mut coords = GridCoords::new(grid, &header.grid_vector);
     let mut gi_idx = 0;
+
     for _ in 0..grid.height {
         for _ in 0..grid.width {
             let (x, y) = coords.get();
@@ -256,12 +308,109 @@ fn render_patterns(
             let pattern_index = gi[gi_idx] as usize;
             gi_idx += 1;
 
-            let pattern = pattern_dict
-                .patterns
-                .get(pattern_index)
-                .ok_or(RegionError::InvalidDimension)?;
+            if pattern_index >= num_patterns {
+                bail!(RegionError::GrayScaleOutOfRange);
+            }
 
-            region.combine(pattern, x, y, header.flags.combination_operator);
+            // Check whether we can use the blit fast path.
+            let shifted =
+                if x >= 0 && y >= 0 && x + pw as i32 <= region_w && y + ph as i32 <= region_h {
+                    pattern_dict.shifted_pattern(pattern_index, x as u32 % WORD_BITS)
+                } else {
+                    None
+                };
+
+            if let Some(shifted) = shifted {
+                let xu = x as u32;
+                let yu = y as u32;
+                let first_word = xu / WORD_BITS;
+                let offset = xu % WORD_BITS;
+                let two = offset != 0 && first_word + 1 < stride;
+
+                // TODO: It seems our current test suite only triggers for
+                // `Or`.
+
+                match op {
+                    CombinationOperator::Or => {
+                        blit_rows!(
+                            region.data,
+                            shifted,
+                            yu,
+                            first_word,
+                            two,
+                            |d, s| d | s,
+                            |d, s| d | s
+                        );
+                    }
+                    CombinationOperator::Xor => {
+                        blit_rows!(
+                            region.data,
+                            shifted,
+                            yu,
+                            first_word,
+                            two,
+                            |d, s| d ^ s,
+                            |d, s| d ^ s
+                        );
+                    }
+                    CombinationOperator::And => {
+                        let inv_mask0 = !(original_mask >> offset);
+                        let inv_mask1 = if offset == 0 {
+                            !0
+                        } else {
+                            !(original_mask << (WORD_BITS - offset))
+                        };
+                        blit_rows!(
+                            region.data,
+                            shifted,
+                            yu,
+                            first_word,
+                            two,
+                            |d, s| d & (s | inv_mask0),
+                            |d, s| d & (s | inv_mask1)
+                        );
+                    }
+                    CombinationOperator::Replace => {
+                        let inv_mask0 = !(original_mask >> offset);
+                        let inv_mask1 = if offset == 0 {
+                            !0
+                        } else {
+                            !(original_mask << (WORD_BITS - offset))
+                        };
+                        blit_rows!(
+                            region.data,
+                            shifted,
+                            yu,
+                            first_word,
+                            two,
+                            |d, s| (d & inv_mask0) | s,
+                            |d, s| (d & inv_mask1) | s
+                        );
+                    }
+                    CombinationOperator::Xnor => {
+                        let mask0 = original_mask >> offset;
+                        let mask1 = if offset == 0 {
+                            0
+                        } else {
+                            original_mask << (WORD_BITS - offset)
+                        };
+                        let inv_mask0 = !mask0;
+                        let inv_mask1 = !mask1;
+                        blit_rows!(
+                            region.data,
+                            shifted,
+                            yu,
+                            first_word,
+                            two,
+                            |d, s| (d & inv_mask0) | (!(d ^ s) & mask0),
+                            |d, s| (d & inv_mask1) | (!(d ^ s) & mask1)
+                        );
+                    }
+                }
+            } else {
+                let pattern = &pattern_dict.patterns[pattern_index];
+                region.combine(pattern, x, y, op);
+            }
 
             coords.advance_col();
         }

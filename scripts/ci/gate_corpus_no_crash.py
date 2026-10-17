@@ -30,7 +30,7 @@ working. What must never happen is a panic, a signal, or a hang.
 
 Usage:
     python3 scripts/ci/gate_corpus_no_crash.py \
-        --binary target/release/pdfluent \
+        --binary target/release/xfa-runner \
         --corpus /tmp/gate-corpus \
         --known corpus/GATE_CORPUS_KNOWN_CRASHES.json
 """

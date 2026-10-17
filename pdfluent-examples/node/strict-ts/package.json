@@ -6,7 +6,7 @@
   "scripts": {
     "typecheck": "tsc --strict --noEmit"
   },
-  "_comment": "During beta development @pdfluent/node resolves via the tsconfig.json 'paths' entry pointing at ../../../crates/pdf-node/index.d.ts. Switch to the published pin once on npm: \"@pdfluent/node\": \"1.0.0-beta.8\".",
+  "_comment": "Type-checked in CI by scripts/ci/node_types_gate.sh, which installs the PACKED tarball into throwaway projects (node16 ESM, node16 CJS, bundler) and compiles this file against the package name. The tsconfig here keeps a 'paths' entry so the file can also be checked by hand against the working tree, but that path never exercises the exports map -- which is why it compiled green for months while the package was broken (#585).",
   "devDependencies": {
     "@types/node": "^20.0.0",
     "typescript": "^5.0.0"

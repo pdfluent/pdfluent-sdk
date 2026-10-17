@@ -1,0 +1,20 @@
+[package]
+name = "xlsx-extract"
+version = "1.1.0"
+edition.workspace = true
+# AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+repository.workspace = true
+description = "XLSX workbook extraction to pdf-engine blocks (pdfluent-internal#636 item 4)"
+readme = "README.md"
+
+[dependencies]
+pdf-engine.workspace = true
+thiserror.workspace = true
+# OOXML parsing. Only permissive licences are allowed here (MIT, Apache-2.0,
+# BSD); both were verified against the vendored crates.io manifests:
+# zip 2.4.2 declares `license = "MIT"`, quick-xml 0.37.5 declares
+# `license = "MIT"`. Same versions as crates/pdf-xlsx. `calamine` was not
+# evaluated further once these two covered the MVP.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+quick-xml = "0.37"

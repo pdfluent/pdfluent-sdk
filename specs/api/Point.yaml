@@ -1,0 +1,219 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for Point, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: Point
+rust_path: pdfluent::compat::Point
+names: {python: Point, node: Point, java: Point, dotnet: Point}
+members:
+  - name: __abs__
+    kind: operator
+    signature: "()"
+    names: {python: __abs__, node: abs, java: abs, dotnet: Abs}
+    rust: "Point::abs"
+    tier: unranked
+    lane: P0
+    status: missing
+    tests: [p0-point-abs]
+  - name: __add__
+    kind: operator
+    signature: "(p)"
+    names: {python: __add__, node: add, java: add, dotnet: Add}
+    rust: "Point::Add"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-add]
+  - name: __bool__
+    kind: operator
+    signature: "()"
+    names: {python: __bool__, node: bool, java: bool, dotnet: Bool}
+    rust: "Point::to_bool"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-bool]
+  - name: __eq__
+    kind: operator
+    signature: "(p)"
+    names: {python: __eq__, node: eq, java: eq, dotnet: Eq}
+    rust: "Point::PartialEq"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-eq]
+  - name: __ge__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ge__, node: ge, java: ge, dotnet: Ge}
+    rust: "Point::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-ge]
+  - name: __getitem__
+    kind: operator
+    signature: "(i)"
+    names: {python: __getitem__, node: getitem, java: getitem, dotnet: Getitem}
+    rust: "Point::Index"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-getitem]
+  - name: __gt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __gt__, node: gt, java: gt, dotnet: Gt}
+    rust: "Point::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-gt]
+  - name: __init__
+    kind: constructor
+    signature: "(*args, x=None, y=None)"
+    names: {python: __init__, node: Point, java: Point, dotnet: Point}
+    rust: "Point::new"
+    tier: T1
+    lane: P0
+    status: missing
+    tests: [p0-point-init]
+  - name: __le__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __le__, node: le, java: le, dotnet: Le}
+    rust: "Point::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-le]
+  - name: __len__
+    kind: operator
+    signature: "()"
+    names: {python: __len__, node: len, java: len, dotnet: Len}
+    rust: "Point::len"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-len]
+  - name: __lt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __lt__, node: lt, java: lt, dotnet: Lt}
+    rust: "Point::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-lt]
+  - name: __mul__
+    kind: operator
+    signature: "(m)"
+    names: {python: __mul__, node: mul, java: mul, dotnet: Mul}
+    rust: "Point::Mul"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-mul]
+  - name: __ne__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ne__, node: ne, java: ne, dotnet: Ne}
+    rust: "Point::PartialEq"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-ne]
+  - name: __neg__
+    kind: operator
+    signature: "()"
+    names: {python: __neg__, node: neg, java: neg, dotnet: Neg}
+    rust: "Point::Neg"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-neg]
+  - name: __pos__
+    kind: operator
+    signature: "()"
+    names: {python: __pos__, node: pos, java: pos, dotnet: Pos}
+    rust: "Point::pos"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-pos]
+  - name: __setitem__
+    kind: operator
+    signature: "(i, v)"
+    names: {python: __setitem__, node: setitem, java: setitem, dotnet: Setitem}
+    rust: "Point::IndexMut"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-setitem]
+  - name: __sub__
+    kind: operator
+    signature: "(p)"
+    names: {python: __sub__, node: sub, java: sub, dotnet: Sub}
+    rust: "Point::Sub"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-sub]
+  - name: __truediv__
+    kind: operator
+    signature: "(m)"
+    names: {python: __truediv__, node: truediv, java: truediv, dotnet: Truediv}
+    rust: "Point::Div"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-truediv]
+  - name: abs_unit
+    kind: property
+    signature: "()"
+    names: {python: abs_unit, node: absUnit, java: getAbsUnit, dotnet: AbsUnit}
+    rust: "Point::abs_unit"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-abs-unit]
+  - name: distance_to
+    kind: method
+    signature: "(*args)"
+    names: {python: distance_to, node: distanceTo, java: distanceTo, dotnet: DistanceTo}
+    rust: "Point::distance_to"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-distance-to]
+  - name: norm
+    kind: method
+    signature: "()"
+    names: {python: norm, node: norm, java: norm, dotnet: Norm}
+    rust: "Point::norm"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-norm]
+  - name: transform
+    kind: method
+    signature: "(m)"
+    names: {python: transform, node: transform, java: transform, dotnet: Transform}
+    rust: "Point::transform"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-transform]
+  - name: unit
+    kind: property
+    signature: "()"
+    names: {python: unit, node: unit, java: getUnit, dotnet: Unit}
+    rust: "Point::unit"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-point-unit]

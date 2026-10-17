@@ -1,0 +1,5481 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Module-level constants, seeded from the pinned
+# black box (PyMuPDF 1.28.2, names read at runtime). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+#
+# Left out on purpose: reference message text (messages are our
+# own), mutable runtime state (load caches, live counters, warning
+# logs), build identity (version and toolchain marks: our build
+# reports itself), and internal sentinels and tables that hold
+# callables rather than values.
+class: constants
+rust_path: pdfluent::compat
+names: {python: pdfluent.compat, node: pdfluent-compat, java: com.pdfluent.compat, dotnet: Pdfluent.Compat}
+members:
+  # geometry bounds and the identity matrix (5).
+  - name: EPSILON
+    kind: property
+    signature: "()"
+    names: {python: EPSILON, node: EPSILON, java: EPSILON, dotnet: EPSILON}
+    rust: "EPSILON"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-constants-epsilon]
+  - name: FLT_EPSILON
+    kind: property
+    signature: "()"
+    names: {python: FLT_EPSILON, node: FLT_EPSILON, java: FLT_EPSILON, dotnet: FLT_EPSILON}
+    rust: "FLT_EPSILON"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-constants-flt-epsilon]
+  - name: FZ_MAX_INF_RECT
+    kind: property
+    signature: "()"
+    names: {python: FZ_MAX_INF_RECT, node: FZ_MAX_INF_RECT, java: FZ_MAX_INF_RECT, dotnet: FZ_MAX_INF_RECT}
+    rust: "FZ_MAX_INF_RECT"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-constants-fz-max-inf-rect]
+  - name: FZ_MIN_INF_RECT
+    kind: property
+    signature: "()"
+    names: {python: FZ_MIN_INF_RECT, node: FZ_MIN_INF_RECT, java: FZ_MIN_INF_RECT, dotnet: FZ_MIN_INF_RECT}
+    rust: "FZ_MIN_INF_RECT"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-constants-fz-min-inf-rect]
+  - name: Identity
+    kind: property
+    signature: "()"
+    names: {python: Identity, node: Identity, java: Identity, dotnet: Identity}
+    rust: "Identity"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-constants-identity]
+  # text extraction flags (42).
+  - name: TEXT_ACCURATE_ASCENDERS
+    kind: property
+    signature: "()"
+    names: {python: TEXT_ACCURATE_ASCENDERS, node: TEXT_ACCURATE_ASCENDERS, java: TEXT_ACCURATE_ASCENDERS, dotnet: TEXT_ACCURATE_ASCENDERS}
+    rust: "TEXT_ACCURATE_ASCENDERS"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-accurate-ascenders]
+  - name: TEXT_ACCURATE_BBOXES
+    kind: property
+    signature: "()"
+    names: {python: TEXT_ACCURATE_BBOXES, node: TEXT_ACCURATE_BBOXES, java: TEXT_ACCURATE_BBOXES, dotnet: TEXT_ACCURATE_BBOXES}
+    rust: "TEXT_ACCURATE_BBOXES"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-accurate-bboxes]
+  - name: TEXT_ACCURATE_SIDE_BEARINGS
+    kind: property
+    signature: "()"
+    names: {python: TEXT_ACCURATE_SIDE_BEARINGS, node: TEXT_ACCURATE_SIDE_BEARINGS, java: TEXT_ACCURATE_SIDE_BEARINGS, dotnet: TEXT_ACCURATE_SIDE_BEARINGS}
+    rust: "TEXT_ACCURATE_SIDE_BEARINGS"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-accurate-side-bearings]
+  - name: TEXT_ALIGN_CENTER
+    kind: property
+    signature: "()"
+    names: {python: TEXT_ALIGN_CENTER, node: TEXT_ALIGN_CENTER, java: TEXT_ALIGN_CENTER, dotnet: TEXT_ALIGN_CENTER}
+    rust: "TEXT_ALIGN_CENTER"
+    tier: T2
+    lane: L1
+    status: missing
+    tests: [l2-constants-all]
+  - name: TEXT_ALIGN_JUSTIFY
+    kind: property
+    signature: "()"
+    names: {python: TEXT_ALIGN_JUSTIFY, node: TEXT_ALIGN_JUSTIFY, java: TEXT_ALIGN_JUSTIFY, dotnet: TEXT_ALIGN_JUSTIFY}
+    rust: "TEXT_ALIGN_JUSTIFY"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-align-justify]
+  - name: TEXT_ALIGN_LEFT
+    kind: property
+    signature: "()"
+    names: {python: TEXT_ALIGN_LEFT, node: TEXT_ALIGN_LEFT, java: TEXT_ALIGN_LEFT, dotnet: TEXT_ALIGN_LEFT}
+    rust: "TEXT_ALIGN_LEFT"
+    tier: T2
+    lane: L1
+    status: missing
+    tests: [l2-constants-all]
+  - name: TEXT_ALIGN_RIGHT
+    kind: property
+    signature: "()"
+    names: {python: TEXT_ALIGN_RIGHT, node: TEXT_ALIGN_RIGHT, java: TEXT_ALIGN_RIGHT, dotnet: TEXT_ALIGN_RIGHT}
+    rust: "TEXT_ALIGN_RIGHT"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-align-right]
+  - name: TEXT_CID_FOR_UNKNOWN_UNICODE
+    kind: property
+    signature: "()"
+    names: {python: TEXT_CID_FOR_UNKNOWN_UNICODE, node: TEXT_CID_FOR_UNKNOWN_UNICODE, java: TEXT_CID_FOR_UNKNOWN_UNICODE, dotnet: TEXT_CID_FOR_UNKNOWN_UNICODE}
+    rust: "TEXT_CID_FOR_UNKNOWN_UNICODE"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-cid-for-unknown-unicode]
+  - name: TEXT_CLIP
+    kind: property
+    signature: "()"
+    names: {python: TEXT_CLIP, node: TEXT_CLIP, java: TEXT_CLIP, dotnet: TEXT_CLIP}
+    rust: "TEXT_CLIP"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-clip]
+  - name: TEXT_CLIP_RECT
+    kind: property
+    signature: "()"
+    names: {python: TEXT_CLIP_RECT, node: TEXT_CLIP_RECT, java: TEXT_CLIP_RECT, dotnet: TEXT_CLIP_RECT}
+    rust: "TEXT_CLIP_RECT"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-clip-rect]
+  - name: TEXT_COLLECT_STRUCTURE
+    kind: property
+    signature: "()"
+    names: {python: TEXT_COLLECT_STRUCTURE, node: TEXT_COLLECT_STRUCTURE, java: TEXT_COLLECT_STRUCTURE, dotnet: TEXT_COLLECT_STRUCTURE}
+    rust: "TEXT_COLLECT_STRUCTURE"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-collect-structure]
+  - name: TEXT_COLLECT_STYLES
+    kind: property
+    signature: "()"
+    names: {python: TEXT_COLLECT_STYLES, node: TEXT_COLLECT_STYLES, java: TEXT_COLLECT_STYLES, dotnet: TEXT_COLLECT_STYLES}
+    rust: "TEXT_COLLECT_STYLES"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-collect-styles]
+  - name: TEXT_COLLECT_VECTORS
+    kind: property
+    signature: "()"
+    names: {python: TEXT_COLLECT_VECTORS, node: TEXT_COLLECT_VECTORS, java: TEXT_COLLECT_VECTORS, dotnet: TEXT_COLLECT_VECTORS}
+    rust: "TEXT_COLLECT_VECTORS"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-collect-vectors]
+  - name: TEXT_DEHYPHENATE
+    kind: property
+    signature: "()"
+    names: {python: TEXT_DEHYPHENATE, node: TEXT_DEHYPHENATE, java: TEXT_DEHYPHENATE, dotnet: TEXT_DEHYPHENATE}
+    rust: "TEXT_DEHYPHENATE"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-dehyphenate]
+  - name: TEXT_ENCODING_CYRILLIC
+    kind: property
+    signature: "()"
+    names: {python: TEXT_ENCODING_CYRILLIC, node: TEXT_ENCODING_CYRILLIC, java: TEXT_ENCODING_CYRILLIC, dotnet: TEXT_ENCODING_CYRILLIC}
+    rust: "TEXT_ENCODING_CYRILLIC"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-encoding-cyrillic]
+  - name: TEXT_ENCODING_GREEK
+    kind: property
+    signature: "()"
+    names: {python: TEXT_ENCODING_GREEK, node: TEXT_ENCODING_GREEK, java: TEXT_ENCODING_GREEK, dotnet: TEXT_ENCODING_GREEK}
+    rust: "TEXT_ENCODING_GREEK"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-encoding-greek]
+  - name: TEXT_ENCODING_LATIN
+    kind: property
+    signature: "()"
+    names: {python: TEXT_ENCODING_LATIN, node: TEXT_ENCODING_LATIN, java: TEXT_ENCODING_LATIN, dotnet: TEXT_ENCODING_LATIN}
+    rust: "TEXT_ENCODING_LATIN"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-encoding-latin]
+  - name: TEXT_FONT_BOLD
+    kind: property
+    signature: "()"
+    names: {python: TEXT_FONT_BOLD, node: TEXT_FONT_BOLD, java: TEXT_FONT_BOLD, dotnet: TEXT_FONT_BOLD}
+    rust: "TEXT_FONT_BOLD"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-font-bold]
+  - name: TEXT_FONT_ITALIC
+    kind: property
+    signature: "()"
+    names: {python: TEXT_FONT_ITALIC, node: TEXT_FONT_ITALIC, java: TEXT_FONT_ITALIC, dotnet: TEXT_FONT_ITALIC}
+    rust: "TEXT_FONT_ITALIC"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-font-italic]
+  - name: TEXT_FONT_MONOSPACED
+    kind: property
+    signature: "()"
+    names: {python: TEXT_FONT_MONOSPACED, node: TEXT_FONT_MONOSPACED, java: TEXT_FONT_MONOSPACED, dotnet: TEXT_FONT_MONOSPACED}
+    rust: "TEXT_FONT_MONOSPACED"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-font-monospaced]
+  - name: TEXT_FONT_SERIFED
+    kind: property
+    signature: "()"
+    names: {python: TEXT_FONT_SERIFED, node: TEXT_FONT_SERIFED, java: TEXT_FONT_SERIFED, dotnet: TEXT_FONT_SERIFED}
+    rust: "TEXT_FONT_SERIFED"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-font-serifed]
+  - name: TEXT_FONT_SUPERSCRIPT
+    kind: property
+    signature: "()"
+    names: {python: TEXT_FONT_SUPERSCRIPT, node: TEXT_FONT_SUPERSCRIPT, java: TEXT_FONT_SUPERSCRIPT, dotnet: TEXT_FONT_SUPERSCRIPT}
+    rust: "TEXT_FONT_SUPERSCRIPT"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-font-superscript]
+  - name: TEXT_FUZZY_VECTORS
+    kind: property
+    signature: "()"
+    names: {python: TEXT_FUZZY_VECTORS, node: TEXT_FUZZY_VECTORS, java: TEXT_FUZZY_VECTORS, dotnet: TEXT_FUZZY_VECTORS}
+    rust: "TEXT_FUZZY_VECTORS"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-fuzzy-vectors]
+  - name: TEXT_IGNORE_ACTUALTEXT
+    kind: property
+    signature: "()"
+    names: {python: TEXT_IGNORE_ACTUALTEXT, node: TEXT_IGNORE_ACTUALTEXT, java: TEXT_IGNORE_ACTUALTEXT, dotnet: TEXT_IGNORE_ACTUALTEXT}
+    rust: "TEXT_IGNORE_ACTUALTEXT"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-ignore-actualtext]
+  - name: TEXT_INHIBIT_SPACES
+    kind: property
+    signature: "()"
+    names: {python: TEXT_INHIBIT_SPACES, node: TEXT_INHIBIT_SPACES, java: TEXT_INHIBIT_SPACES, dotnet: TEXT_INHIBIT_SPACES}
+    rust: "TEXT_INHIBIT_SPACES"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-inhibit-spaces]
+  - name: TEXT_LAZY_VECTORS
+    kind: property
+    signature: "()"
+    names: {python: TEXT_LAZY_VECTORS, node: TEXT_LAZY_VECTORS, java: TEXT_LAZY_VECTORS, dotnet: TEXT_LAZY_VECTORS}
+    rust: "TEXT_LAZY_VECTORS"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-lazy-vectors]
+  - name: TEXT_MEDIABOX_CLIP
+    kind: property
+    signature: "()"
+    names: {python: TEXT_MEDIABOX_CLIP, node: TEXT_MEDIABOX_CLIP, java: TEXT_MEDIABOX_CLIP, dotnet: TEXT_MEDIABOX_CLIP}
+    rust: "TEXT_MEDIABOX_CLIP"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-mediabox-clip]
+  - name: TEXT_OUTPUT_HTML
+    kind: property
+    signature: "()"
+    names: {python: TEXT_OUTPUT_HTML, node: TEXT_OUTPUT_HTML, java: TEXT_OUTPUT_HTML, dotnet: TEXT_OUTPUT_HTML}
+    rust: "TEXT_OUTPUT_HTML"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-output-html]
+  - name: TEXT_OUTPUT_JSON
+    kind: property
+    signature: "()"
+    names: {python: TEXT_OUTPUT_JSON, node: TEXT_OUTPUT_JSON, java: TEXT_OUTPUT_JSON, dotnet: TEXT_OUTPUT_JSON}
+    rust: "TEXT_OUTPUT_JSON"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-output-json]
+  - name: TEXT_OUTPUT_TEXT
+    kind: property
+    signature: "()"
+    names: {python: TEXT_OUTPUT_TEXT, node: TEXT_OUTPUT_TEXT, java: TEXT_OUTPUT_TEXT, dotnet: TEXT_OUTPUT_TEXT}
+    rust: "TEXT_OUTPUT_TEXT"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-output-text]
+  - name: TEXT_OUTPUT_XHTML
+    kind: property
+    signature: "()"
+    names: {python: TEXT_OUTPUT_XHTML, node: TEXT_OUTPUT_XHTML, java: TEXT_OUTPUT_XHTML, dotnet: TEXT_OUTPUT_XHTML}
+    rust: "TEXT_OUTPUT_XHTML"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-output-xhtml]
+  - name: TEXT_OUTPUT_XML
+    kind: property
+    signature: "()"
+    names: {python: TEXT_OUTPUT_XML, node: TEXT_OUTPUT_XML, java: TEXT_OUTPUT_XML, dotnet: TEXT_OUTPUT_XML}
+    rust: "TEXT_OUTPUT_XML"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-output-xml]
+  - name: TEXT_PARAGRAPH_BREAK
+    kind: property
+    signature: "()"
+    names: {python: TEXT_PARAGRAPH_BREAK, node: TEXT_PARAGRAPH_BREAK, java: TEXT_PARAGRAPH_BREAK, dotnet: TEXT_PARAGRAPH_BREAK}
+    rust: "TEXT_PARAGRAPH_BREAK"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-paragraph-break]
+  - name: TEXT_PRESERVE_IMAGES
+    kind: property
+    signature: "()"
+    names: {python: TEXT_PRESERVE_IMAGES, node: TEXT_PRESERVE_IMAGES, java: TEXT_PRESERVE_IMAGES, dotnet: TEXT_PRESERVE_IMAGES}
+    rust: "TEXT_PRESERVE_IMAGES"
+    tier: T2
+    lane: L1
+    status: missing
+    tests: [l2-constants-all]
+  - name: TEXT_PRESERVE_LIGATURES
+    kind: property
+    signature: "()"
+    names: {python: TEXT_PRESERVE_LIGATURES, node: TEXT_PRESERVE_LIGATURES, java: TEXT_PRESERVE_LIGATURES, dotnet: TEXT_PRESERVE_LIGATURES}
+    rust: "TEXT_PRESERVE_LIGATURES"
+    tier: T2
+    lane: L1
+    status: missing
+    tests: [l2-constants-all]
+  - name: TEXT_PRESERVE_SPANS
+    kind: property
+    signature: "()"
+    names: {python: TEXT_PRESERVE_SPANS, node: TEXT_PRESERVE_SPANS, java: TEXT_PRESERVE_SPANS, dotnet: TEXT_PRESERVE_SPANS}
+    rust: "TEXT_PRESERVE_SPANS"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-preserve-spans]
+  - name: TEXT_PRESERVE_WHITESPACE
+    kind: property
+    signature: "()"
+    names: {python: TEXT_PRESERVE_WHITESPACE, node: TEXT_PRESERVE_WHITESPACE, java: TEXT_PRESERVE_WHITESPACE, dotnet: TEXT_PRESERVE_WHITESPACE}
+    rust: "TEXT_PRESERVE_WHITESPACE"
+    tier: T2
+    lane: L1
+    status: missing
+    tests: [l2-constants-all]
+  - name: TEXT_SEGMENT
+    kind: property
+    signature: "()"
+    names: {python: TEXT_SEGMENT, node: TEXT_SEGMENT, java: TEXT_SEGMENT, dotnet: TEXT_SEGMENT}
+    rust: "TEXT_SEGMENT"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-segment]
+  - name: TEXT_STEXT_SEGMENT
+    kind: property
+    signature: "()"
+    names: {python: TEXT_STEXT_SEGMENT, node: TEXT_STEXT_SEGMENT, java: TEXT_STEXT_SEGMENT, dotnet: TEXT_STEXT_SEGMENT}
+    rust: "TEXT_STEXT_SEGMENT"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-stext-segment]
+  - name: TEXT_TABLE_HUNT
+    kind: property
+    signature: "()"
+    names: {python: TEXT_TABLE_HUNT, node: TEXT_TABLE_HUNT, java: TEXT_TABLE_HUNT, dotnet: TEXT_TABLE_HUNT}
+    rust: "TEXT_TABLE_HUNT"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-table-hunt]
+  - name: TEXT_USE_CID_FOR_UNKNOWN_UNICODE
+    kind: property
+    signature: "()"
+    names: {python: TEXT_USE_CID_FOR_UNKNOWN_UNICODE, node: TEXT_USE_CID_FOR_UNKNOWN_UNICODE, java: TEXT_USE_CID_FOR_UNKNOWN_UNICODE, dotnet: TEXT_USE_CID_FOR_UNKNOWN_UNICODE}
+    rust: "TEXT_USE_CID_FOR_UNKNOWN_UNICODE"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-use-cid-for-unknown-unicode]
+  - name: TEXT_USE_GID_FOR_UNKNOWN_UNICODE
+    kind: property
+    signature: "()"
+    names: {python: TEXT_USE_GID_FOR_UNKNOWN_UNICODE, node: TEXT_USE_GID_FOR_UNKNOWN_UNICODE, java: TEXT_USE_GID_FOR_UNKNOWN_UNICODE, dotnet: TEXT_USE_GID_FOR_UNKNOWN_UNICODE}
+    rust: "TEXT_USE_GID_FOR_UNKNOWN_UNICODE"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-text-use-gid-for-unknown-unicode]
+  # text flag presets (9).
+  - name: TEXTFLAGS_BLOCKS
+    kind: property
+    signature: "()"
+    names: {python: TEXTFLAGS_BLOCKS, node: TEXTFLAGS_BLOCKS, java: TEXTFLAGS_BLOCKS, dotnet: TEXTFLAGS_BLOCKS}
+    rust: "TEXTFLAGS_BLOCKS"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-textflags-blocks]
+  - name: TEXTFLAGS_DICT
+    kind: property
+    signature: "()"
+    names: {python: TEXTFLAGS_DICT, node: TEXTFLAGS_DICT, java: TEXTFLAGS_DICT, dotnet: TEXTFLAGS_DICT}
+    rust: "TEXTFLAGS_DICT"
+    tier: T2
+    lane: L1
+    status: missing
+    tests: [l2-constants-all]
+  - name: TEXTFLAGS_HTML
+    kind: property
+    signature: "()"
+    names: {python: TEXTFLAGS_HTML, node: TEXTFLAGS_HTML, java: TEXTFLAGS_HTML, dotnet: TEXTFLAGS_HTML}
+    rust: "TEXTFLAGS_HTML"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-textflags-html]
+  - name: TEXTFLAGS_RAWDICT
+    kind: property
+    signature: "()"
+    names: {python: TEXTFLAGS_RAWDICT, node: TEXTFLAGS_RAWDICT, java: TEXTFLAGS_RAWDICT, dotnet: TEXTFLAGS_RAWDICT}
+    rust: "TEXTFLAGS_RAWDICT"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-textflags-rawdict]
+  - name: TEXTFLAGS_SEARCH
+    kind: property
+    signature: "()"
+    names: {python: TEXTFLAGS_SEARCH, node: TEXTFLAGS_SEARCH, java: TEXTFLAGS_SEARCH, dotnet: TEXTFLAGS_SEARCH}
+    rust: "TEXTFLAGS_SEARCH"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-textflags-search]
+  - name: TEXTFLAGS_TEXT
+    kind: property
+    signature: "()"
+    names: {python: TEXTFLAGS_TEXT, node: TEXTFLAGS_TEXT, java: TEXTFLAGS_TEXT, dotnet: TEXTFLAGS_TEXT}
+    rust: "TEXTFLAGS_TEXT"
+    tier: T2
+    lane: L1
+    status: missing
+    tests: [l2-constants-all]
+  - name: TEXTFLAGS_WORDS
+    kind: property
+    signature: "()"
+    names: {python: TEXTFLAGS_WORDS, node: TEXTFLAGS_WORDS, java: TEXTFLAGS_WORDS, dotnet: TEXTFLAGS_WORDS}
+    rust: "TEXTFLAGS_WORDS"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-textflags-words]
+  - name: TEXTFLAGS_XHTML
+    kind: property
+    signature: "()"
+    names: {python: TEXTFLAGS_XHTML, node: TEXTFLAGS_XHTML, java: TEXTFLAGS_XHTML, dotnet: TEXTFLAGS_XHTML}
+    rust: "TEXTFLAGS_XHTML"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-textflags-xhtml]
+  - name: TEXTFLAGS_XML
+    kind: property
+    signature: "()"
+    names: {python: TEXTFLAGS_XML, node: TEXTFLAGS_XML, java: TEXTFLAGS_XML, dotnet: TEXTFLAGS_XML}
+    rust: "TEXTFLAGS_XML"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-textflags-xml]
+  # structured-text dict keys (53).
+  - name: dictkey_align
+    kind: property
+    signature: "()"
+    names: {python: dictkey_align, node: dictkey_align, java: dictkey_align, dotnet: dictkey_align}
+    rust: "dictkey_align"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-align]
+  - name: dictkey_asc
+    kind: property
+    signature: "()"
+    names: {python: dictkey_asc, node: dictkey_asc, java: dictkey_asc, dotnet: dictkey_asc}
+    rust: "dictkey_asc"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-asc]
+  - name: dictkey_bbox
+    kind: property
+    signature: "()"
+    names: {python: dictkey_bbox, node: dictkey_bbox, java: dictkey_bbox, dotnet: dictkey_bbox}
+    rust: "dictkey_bbox"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-bbox]
+  - name: dictkey_bidi
+    kind: property
+    signature: "()"
+    names: {python: dictkey_bidi, node: dictkey_bidi, java: dictkey_bidi, dotnet: dictkey_bidi}
+    rust: "dictkey_bidi"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-bidi]
+  - name: dictkey_blocks
+    kind: property
+    signature: "()"
+    names: {python: dictkey_blocks, node: dictkey_blocks, java: dictkey_blocks, dotnet: dictkey_blocks}
+    rust: "dictkey_blocks"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-blocks]
+  - name: dictkey_bpc
+    kind: property
+    signature: "()"
+    names: {python: dictkey_bpc, node: dictkey_bpc, java: dictkey_bpc, dotnet: dictkey_bpc}
+    rust: "dictkey_bpc"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-bpc]
+  - name: dictkey_c
+    kind: property
+    signature: "()"
+    names: {python: dictkey_c, node: dictkey_c, java: dictkey_c, dotnet: dictkey_c}
+    rust: "dictkey_c"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-c]
+  - name: dictkey_char_flags
+    kind: property
+    signature: "()"
+    names: {python: dictkey_char_flags, node: dictkey_char_flags, java: dictkey_char_flags, dotnet: dictkey_char_flags}
+    rust: "dictkey_char_flags"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-char-flags]
+  - name: dictkey_chars
+    kind: property
+    signature: "()"
+    names: {python: dictkey_chars, node: dictkey_chars, java: dictkey_chars, dotnet: dictkey_chars}
+    rust: "dictkey_chars"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-chars]
+  - name: dictkey_color
+    kind: property
+    signature: "()"
+    names: {python: dictkey_color, node: dictkey_color, java: dictkey_color, dotnet: dictkey_color}
+    rust: "dictkey_color"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-color]
+  - name: dictkey_colorspace
+    kind: property
+    signature: "()"
+    names: {python: dictkey_colorspace, node: dictkey_colorspace, java: dictkey_colorspace, dotnet: dictkey_colorspace}
+    rust: "dictkey_colorspace"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-colorspace]
+  - name: dictkey_content
+    kind: property
+    signature: "()"
+    names: {python: dictkey_content, node: dictkey_content, java: dictkey_content, dotnet: dictkey_content}
+    rust: "dictkey_content"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-content]
+  - name: dictkey_creationDate
+    kind: property
+    signature: "()"
+    names: {python: dictkey_creationDate, node: dictkey_creationDate, java: dictkey_creationDate, dotnet: dictkey_creationDate}
+    rust: "dictkey_creationDate"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-creationdate]
+  - name: dictkey_cs_name
+    kind: property
+    signature: "()"
+    names: {python: dictkey_cs_name, node: dictkey_cs_name, java: dictkey_cs_name, dotnet: dictkey_cs_name}
+    rust: "dictkey_cs_name"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-cs-name]
+  - name: dictkey_da
+    kind: property
+    signature: "()"
+    names: {python: dictkey_da, node: dictkey_da, java: dictkey_da, dotnet: dictkey_da}
+    rust: "dictkey_da"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-da]
+  - name: dictkey_dashes
+    kind: property
+    signature: "()"
+    names: {python: dictkey_dashes, node: dictkey_dashes, java: dictkey_dashes, dotnet: dictkey_dashes}
+    rust: "dictkey_dashes"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-dashes]
+  - name: dictkey_desc
+    kind: property
+    signature: "()"
+    names: {python: dictkey_desc, node: dictkey_desc, java: dictkey_desc, dotnet: dictkey_desc}
+    rust: "dictkey_desc"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-desc]
+  - name: dictkey_descr
+    kind: property
+    signature: "()"
+    names: {python: dictkey_descr, node: dictkey_descr, java: dictkey_descr, dotnet: dictkey_descr}
+    rust: "dictkey_descr"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-descr]
+  - name: dictkey_dir
+    kind: property
+    signature: "()"
+    names: {python: dictkey_dir, node: dictkey_dir, java: dictkey_dir, dotnet: dictkey_dir}
+    rust: "dictkey_dir"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-dir]
+  - name: dictkey_effect
+    kind: property
+    signature: "()"
+    names: {python: dictkey_effect, node: dictkey_effect, java: dictkey_effect, dotnet: dictkey_effect}
+    rust: "dictkey_effect"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-effect]
+  - name: dictkey_ext
+    kind: property
+    signature: "()"
+    names: {python: dictkey_ext, node: dictkey_ext, java: dictkey_ext, dotnet: dictkey_ext}
+    rust: "dictkey_ext"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-ext]
+  - name: dictkey_filename
+    kind: property
+    signature: "()"
+    names: {python: dictkey_filename, node: dictkey_filename, java: dictkey_filename, dotnet: dictkey_filename}
+    rust: "dictkey_filename"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-filename]
+  - name: dictkey_fill
+    kind: property
+    signature: "()"
+    names: {python: dictkey_fill, node: dictkey_fill, java: dictkey_fill, dotnet: dictkey_fill}
+    rust: "dictkey_fill"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-fill]
+  - name: dictkey_flags
+    kind: property
+    signature: "()"
+    names: {python: dictkey_flags, node: dictkey_flags, java: dictkey_flags, dotnet: dictkey_flags}
+    rust: "dictkey_flags"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-flags]
+  - name: dictkey_font
+    kind: property
+    signature: "()"
+    names: {python: dictkey_font, node: dictkey_font, java: dictkey_font, dotnet: dictkey_font}
+    rust: "dictkey_font"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-font]
+  - name: dictkey_glyph
+    kind: property
+    signature: "()"
+    names: {python: dictkey_glyph, node: dictkey_glyph, java: dictkey_glyph, dotnet: dictkey_glyph}
+    rust: "dictkey_glyph"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-glyph]
+  - name: dictkey_height
+    kind: property
+    signature: "()"
+    names: {python: dictkey_height, node: dictkey_height, java: dictkey_height, dotnet: dictkey_height}
+    rust: "dictkey_height"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-height]
+  - name: dictkey_id
+    kind: property
+    signature: "()"
+    names: {python: dictkey_id, node: dictkey_id, java: dictkey_id, dotnet: dictkey_id}
+    rust: "dictkey_id"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-id]
+  - name: dictkey_image
+    kind: property
+    signature: "()"
+    names: {python: dictkey_image, node: dictkey_image, java: dictkey_image, dotnet: dictkey_image}
+    rust: "dictkey_image"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-image]
+  - name: dictkey_items
+    kind: property
+    signature: "()"
+    names: {python: dictkey_items, node: dictkey_items, java: dictkey_items, dotnet: dictkey_items}
+    rust: "dictkey_items"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-items]
+  - name: dictkey_length
+    kind: property
+    signature: "()"
+    names: {python: dictkey_length, node: dictkey_length, java: dictkey_length, dotnet: dictkey_length}
+    rust: "dictkey_length"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-length]
+  - name: dictkey_lines
+    kind: property
+    signature: "()"
+    names: {python: dictkey_lines, node: dictkey_lines, java: dictkey_lines, dotnet: dictkey_lines}
+    rust: "dictkey_lines"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-lines]
+  - name: dictkey_matrix
+    kind: property
+    signature: "()"
+    names: {python: dictkey_matrix, node: dictkey_matrix, java: dictkey_matrix, dotnet: dictkey_matrix}
+    rust: "dictkey_matrix"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-matrix]
+  - name: dictkey_modDate
+    kind: property
+    signature: "()"
+    names: {python: dictkey_modDate, node: dictkey_modDate, java: dictkey_modDate, dotnet: dictkey_modDate}
+    rust: "dictkey_modDate"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-moddate]
+  - name: dictkey_name
+    kind: property
+    signature: "()"
+    names: {python: dictkey_name, node: dictkey_name, java: dictkey_name, dotnet: dictkey_name}
+    rust: "dictkey_name"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-name]
+  - name: dictkey_number
+    kind: property
+    signature: "()"
+    names: {python: dictkey_number, node: dictkey_number, java: dictkey_number, dotnet: dictkey_number}
+    rust: "dictkey_number"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-number]
+  - name: dictkey_origin
+    kind: property
+    signature: "()"
+    names: {python: dictkey_origin, node: dictkey_origin, java: dictkey_origin, dotnet: dictkey_origin}
+    rust: "dictkey_origin"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-origin]
+  - name: dictkey_rect
+    kind: property
+    signature: "()"
+    names: {python: dictkey_rect, node: dictkey_rect, java: dictkey_rect, dotnet: dictkey_rect}
+    rust: "dictkey_rect"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-rect]
+  - name: dictkey_size
+    kind: property
+    signature: "()"
+    names: {python: dictkey_size, node: dictkey_size, java: dictkey_size, dotnet: dictkey_size}
+    rust: "dictkey_size"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-size]
+  - name: dictkey_smask
+    kind: property
+    signature: "()"
+    names: {python: dictkey_smask, node: dictkey_smask, java: dictkey_smask, dotnet: dictkey_smask}
+    rust: "dictkey_smask"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-smask]
+  - name: dictkey_spans
+    kind: property
+    signature: "()"
+    names: {python: dictkey_spans, node: dictkey_spans, java: dictkey_spans, dotnet: dictkey_spans}
+    rust: "dictkey_spans"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-spans]
+  - name: dictkey_stroke
+    kind: property
+    signature: "()"
+    names: {python: dictkey_stroke, node: dictkey_stroke, java: dictkey_stroke, dotnet: dictkey_stroke}
+    rust: "dictkey_stroke"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-stroke]
+  - name: dictkey_style
+    kind: property
+    signature: "()"
+    names: {python: dictkey_style, node: dictkey_style, java: dictkey_style, dotnet: dictkey_style}
+    rust: "dictkey_style"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-style]
+  - name: dictkey_subject
+    kind: property
+    signature: "()"
+    names: {python: dictkey_subject, node: dictkey_subject, java: dictkey_subject, dotnet: dictkey_subject}
+    rust: "dictkey_subject"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-subject]
+  - name: dictkey_text
+    kind: property
+    signature: "()"
+    names: {python: dictkey_text, node: dictkey_text, java: dictkey_text, dotnet: dictkey_text}
+    rust: "dictkey_text"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-text]
+  - name: dictkey_title
+    kind: property
+    signature: "()"
+    names: {python: dictkey_title, node: dictkey_title, java: dictkey_title, dotnet: dictkey_title}
+    rust: "dictkey_title"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-title]
+  - name: dictkey_type
+    kind: property
+    signature: "()"
+    names: {python: dictkey_type, node: dictkey_type, java: dictkey_type, dotnet: dictkey_type}
+    rust: "dictkey_type"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-type]
+  - name: dictkey_ufilename
+    kind: property
+    signature: "()"
+    names: {python: dictkey_ufilename, node: dictkey_ufilename, java: dictkey_ufilename, dotnet: dictkey_ufilename}
+    rust: "dictkey_ufilename"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-ufilename]
+  - name: dictkey_width
+    kind: property
+    signature: "()"
+    names: {python: dictkey_width, node: dictkey_width, java: dictkey_width, dotnet: dictkey_width}
+    rust: "dictkey_width"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-width]
+  - name: dictkey_wmode
+    kind: property
+    signature: "()"
+    names: {python: dictkey_wmode, node: dictkey_wmode, java: dictkey_wmode, dotnet: dictkey_wmode}
+    rust: "dictkey_wmode"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-wmode]
+  - name: dictkey_xref
+    kind: property
+    signature: "()"
+    names: {python: dictkey_xref, node: dictkey_xref, java: dictkey_xref, dotnet: dictkey_xref}
+    rust: "dictkey_xref"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-xref]
+  - name: dictkey_xres
+    kind: property
+    signature: "()"
+    names: {python: dictkey_xres, node: dictkey_xres, java: dictkey_xres, dotnet: dictkey_xres}
+    rust: "dictkey_xres"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-xres]
+  - name: dictkey_yres
+    kind: property
+    signature: "()"
+    names: {python: dictkey_yres, node: dictkey_yres, java: dictkey_yres, dotnet: dictkey_yres}
+    rust: "dictkey_yres"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-dictkey-yres]
+  # structure-tree marks (8).
+  - name: PDF_STRUCT_BROKEN
+    kind: property
+    signature: "()"
+    names: {python: PDF_STRUCT_BROKEN, node: PDF_STRUCT_BROKEN, java: PDF_STRUCT_BROKEN, dotnet: PDF_STRUCT_BROKEN}
+    rust: "PDF_STRUCT_BROKEN"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-pdf-struct-broken]
+  - name: PDF_STRUCT_FIXED
+    kind: property
+    signature: "()"
+    names: {python: PDF_STRUCT_FIXED, node: PDF_STRUCT_FIXED, java: PDF_STRUCT_FIXED, dotnet: PDF_STRUCT_FIXED}
+    rust: "PDF_STRUCT_FIXED"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-pdf-struct-fixed]
+  - name: PDF_STRUCT_HAS_ATTRIBUTES
+    kind: property
+    signature: "()"
+    names: {python: PDF_STRUCT_HAS_ATTRIBUTES, node: PDF_STRUCT_HAS_ATTRIBUTES, java: PDF_STRUCT_HAS_ATTRIBUTES, dotnet: PDF_STRUCT_HAS_ATTRIBUTES}
+    rust: "PDF_STRUCT_HAS_ATTRIBUTES"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-pdf-struct-has-attributes]
+  - name: PDF_STRUCT_HAS_CYCLE
+    kind: property
+    signature: "()"
+    names: {python: PDF_STRUCT_HAS_CYCLE, node: PDF_STRUCT_HAS_CYCLE, java: PDF_STRUCT_HAS_CYCLE, dotnet: PDF_STRUCT_HAS_CYCLE}
+    rust: "PDF_STRUCT_HAS_CYCLE"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-pdf-struct-has-cycle]
+  - name: PDF_STRUCT_HAS_TABLE_ATTRIBUTES
+    kind: property
+    signature: "()"
+    names: {python: PDF_STRUCT_HAS_TABLE_ATTRIBUTES, node: PDF_STRUCT_HAS_TABLE_ATTRIBUTES, java: PDF_STRUCT_HAS_TABLE_ATTRIBUTES, dotnet: PDF_STRUCT_HAS_TABLE_ATTRIBUTES}
+    rust: "PDF_STRUCT_HAS_TABLE_ATTRIBUTES"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-pdf-struct-has-table-attributes]
+  - name: PDF_STRUCT_HAS_TABLE_SPAN_ATTRIBUTES
+    kind: property
+    signature: "()"
+    names: {python: PDF_STRUCT_HAS_TABLE_SPAN_ATTRIBUTES, node: PDF_STRUCT_HAS_TABLE_SPAN_ATTRIBUTES, java: PDF_STRUCT_HAS_TABLE_SPAN_ATTRIBUTES, dotnet: PDF_STRUCT_HAS_TABLE_SPAN_ATTRIBUTES}
+    rust: "PDF_STRUCT_HAS_TABLE_SPAN_ATTRIBUTES"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-pdf-struct-has-table-span-attributes]
+  - name: PDF_STRUCT_NOT_PRESENT
+    kind: property
+    signature: "()"
+    names: {python: PDF_STRUCT_NOT_PRESENT, node: PDF_STRUCT_NOT_PRESENT, java: PDF_STRUCT_NOT_PRESENT, dotnet: PDF_STRUCT_NOT_PRESENT}
+    rust: "PDF_STRUCT_NOT_PRESENT"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-pdf-struct-not-present]
+  - name: PDF_STRUCT_PRESENT
+    kind: property
+    signature: "()"
+    names: {python: PDF_STRUCT_PRESENT, node: PDF_STRUCT_PRESENT, java: PDF_STRUCT_PRESENT, dotnet: PDF_STRUCT_PRESENT}
+    rust: "PDF_STRUCT_PRESENT"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-constants-pdf-struct-present]
+  # link kinds and flags (13).
+  - name: LINK_FLAG_B_VALID
+    kind: property
+    signature: "()"
+    names: {python: LINK_FLAG_B_VALID, node: LINK_FLAG_B_VALID, java: LINK_FLAG_B_VALID, dotnet: LINK_FLAG_B_VALID}
+    rust: "LINK_FLAG_B_VALID"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-link-flag-b-valid]
+  - name: LINK_FLAG_FIT_H
+    kind: property
+    signature: "()"
+    names: {python: LINK_FLAG_FIT_H, node: LINK_FLAG_FIT_H, java: LINK_FLAG_FIT_H, dotnet: LINK_FLAG_FIT_H}
+    rust: "LINK_FLAG_FIT_H"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-link-flag-fit-h]
+  - name: LINK_FLAG_FIT_V
+    kind: property
+    signature: "()"
+    names: {python: LINK_FLAG_FIT_V, node: LINK_FLAG_FIT_V, java: LINK_FLAG_FIT_V, dotnet: LINK_FLAG_FIT_V}
+    rust: "LINK_FLAG_FIT_V"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-link-flag-fit-v]
+  - name: LINK_FLAG_L_VALID
+    kind: property
+    signature: "()"
+    names: {python: LINK_FLAG_L_VALID, node: LINK_FLAG_L_VALID, java: LINK_FLAG_L_VALID, dotnet: LINK_FLAG_L_VALID}
+    rust: "LINK_FLAG_L_VALID"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-link-flag-l-valid]
+  - name: LINK_FLAG_R_IS_ZOOM
+    kind: property
+    signature: "()"
+    names: {python: LINK_FLAG_R_IS_ZOOM, node: LINK_FLAG_R_IS_ZOOM, java: LINK_FLAG_R_IS_ZOOM, dotnet: LINK_FLAG_R_IS_ZOOM}
+    rust: "LINK_FLAG_R_IS_ZOOM"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-link-flag-r-is-zoom]
+  - name: LINK_FLAG_R_VALID
+    kind: property
+    signature: "()"
+    names: {python: LINK_FLAG_R_VALID, node: LINK_FLAG_R_VALID, java: LINK_FLAG_R_VALID, dotnet: LINK_FLAG_R_VALID}
+    rust: "LINK_FLAG_R_VALID"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-link-flag-r-valid]
+  - name: LINK_FLAG_T_VALID
+    kind: property
+    signature: "()"
+    names: {python: LINK_FLAG_T_VALID, node: LINK_FLAG_T_VALID, java: LINK_FLAG_T_VALID, dotnet: LINK_FLAG_T_VALID}
+    rust: "LINK_FLAG_T_VALID"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-link-flag-t-valid]
+  - name: LINK_GOTO
+    kind: property
+    signature: "()"
+    names: {python: LINK_GOTO, node: LINK_GOTO, java: LINK_GOTO, dotnet: LINK_GOTO}
+    rust: "LINK_GOTO"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-constants-all]
+  - name: LINK_GOTOR
+    kind: property
+    signature: "()"
+    names: {python: LINK_GOTOR, node: LINK_GOTOR, java: LINK_GOTOR, dotnet: LINK_GOTOR}
+    rust: "LINK_GOTOR"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-link-gotor]
+  - name: LINK_LAUNCH
+    kind: property
+    signature: "()"
+    names: {python: LINK_LAUNCH, node: LINK_LAUNCH, java: LINK_LAUNCH, dotnet: LINK_LAUNCH}
+    rust: "LINK_LAUNCH"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-link-launch]
+  - name: LINK_NAMED
+    kind: property
+    signature: "()"
+    names: {python: LINK_NAMED, node: LINK_NAMED, java: LINK_NAMED, dotnet: LINK_NAMED}
+    rust: "LINK_NAMED"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-link-named]
+  - name: LINK_NONE
+    kind: property
+    signature: "()"
+    names: {python: LINK_NONE, node: LINK_NONE, java: LINK_NONE, dotnet: LINK_NONE}
+    rust: "LINK_NONE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-link-none]
+  - name: LINK_URI
+    kind: property
+    signature: "()"
+    names: {python: LINK_URI, node: LINK_URI, java: LINK_URI, dotnet: LINK_URI}
+    rust: "LINK_URI"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-constants-all]
+  # encryption methods (7).
+  - name: PDF_ENCRYPT_AES_128
+    kind: property
+    signature: "()"
+    names: {python: PDF_ENCRYPT_AES_128, node: PDF_ENCRYPT_AES_128, java: PDF_ENCRYPT_AES_128, dotnet: PDF_ENCRYPT_AES_128}
+    rust: "PDF_ENCRYPT_AES_128"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-encrypt-aes-128]
+  - name: PDF_ENCRYPT_AES_256
+    kind: property
+    signature: "()"
+    names: {python: PDF_ENCRYPT_AES_256, node: PDF_ENCRYPT_AES_256, java: PDF_ENCRYPT_AES_256, dotnet: PDF_ENCRYPT_AES_256}
+    rust: "PDF_ENCRYPT_AES_256"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-constants-all]
+  - name: PDF_ENCRYPT_KEEP
+    kind: property
+    signature: "()"
+    names: {python: PDF_ENCRYPT_KEEP, node: PDF_ENCRYPT_KEEP, java: PDF_ENCRYPT_KEEP, dotnet: PDF_ENCRYPT_KEEP}
+    rust: "PDF_ENCRYPT_KEEP"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-constants-all]
+  - name: PDF_ENCRYPT_NONE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ENCRYPT_NONE, node: PDF_ENCRYPT_NONE, java: PDF_ENCRYPT_NONE, dotnet: PDF_ENCRYPT_NONE}
+    rust: "PDF_ENCRYPT_NONE"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-constants-all]
+  - name: PDF_ENCRYPT_RC4_128
+    kind: property
+    signature: "()"
+    names: {python: PDF_ENCRYPT_RC4_128, node: PDF_ENCRYPT_RC4_128, java: PDF_ENCRYPT_RC4_128, dotnet: PDF_ENCRYPT_RC4_128}
+    rust: "PDF_ENCRYPT_RC4_128"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-encrypt-rc4-128]
+  - name: PDF_ENCRYPT_RC4_40
+    kind: property
+    signature: "()"
+    names: {python: PDF_ENCRYPT_RC4_40, node: PDF_ENCRYPT_RC4_40, java: PDF_ENCRYPT_RC4_40, dotnet: PDF_ENCRYPT_RC4_40}
+    rust: "PDF_ENCRYPT_RC4_40"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-encrypt-rc4-40]
+  - name: PDF_ENCRYPT_UNKNOWN
+    kind: property
+    signature: "()"
+    names: {python: PDF_ENCRYPT_UNKNOWN, node: PDF_ENCRYPT_UNKNOWN, java: PDF_ENCRYPT_UNKNOWN, dotnet: PDF_ENCRYPT_UNKNOWN}
+    rust: "PDF_ENCRYPT_UNKNOWN"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-encrypt-unknown]
+  # permission bits (8).
+  - name: PDF_PERM_ACCESSIBILITY
+    kind: property
+    signature: "()"
+    names: {python: PDF_PERM_ACCESSIBILITY, node: PDF_PERM_ACCESSIBILITY, java: PDF_PERM_ACCESSIBILITY, dotnet: PDF_PERM_ACCESSIBILITY}
+    rust: "PDF_PERM_ACCESSIBILITY"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-perm-accessibility]
+  - name: PDF_PERM_ANNOTATE
+    kind: property
+    signature: "()"
+    names: {python: PDF_PERM_ANNOTATE, node: PDF_PERM_ANNOTATE, java: PDF_PERM_ANNOTATE, dotnet: PDF_PERM_ANNOTATE}
+    rust: "PDF_PERM_ANNOTATE"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-constants-all]
+  - name: PDF_PERM_ASSEMBLE
+    kind: property
+    signature: "()"
+    names: {python: PDF_PERM_ASSEMBLE, node: PDF_PERM_ASSEMBLE, java: PDF_PERM_ASSEMBLE, dotnet: PDF_PERM_ASSEMBLE}
+    rust: "PDF_PERM_ASSEMBLE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-perm-assemble]
+  - name: PDF_PERM_COPY
+    kind: property
+    signature: "()"
+    names: {python: PDF_PERM_COPY, node: PDF_PERM_COPY, java: PDF_PERM_COPY, dotnet: PDF_PERM_COPY}
+    rust: "PDF_PERM_COPY"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-constants-all]
+  - name: PDF_PERM_FORM
+    kind: property
+    signature: "()"
+    names: {python: PDF_PERM_FORM, node: PDF_PERM_FORM, java: PDF_PERM_FORM, dotnet: PDF_PERM_FORM}
+    rust: "PDF_PERM_FORM"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-constants-all]
+  - name: PDF_PERM_MODIFY
+    kind: property
+    signature: "()"
+    names: {python: PDF_PERM_MODIFY, node: PDF_PERM_MODIFY, java: PDF_PERM_MODIFY, dotnet: PDF_PERM_MODIFY}
+    rust: "PDF_PERM_MODIFY"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-constants-all]
+  - name: PDF_PERM_PRINT
+    kind: property
+    signature: "()"
+    names: {python: PDF_PERM_PRINT, node: PDF_PERM_PRINT, java: PDF_PERM_PRINT, dotnet: PDF_PERM_PRINT}
+    rust: "PDF_PERM_PRINT"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-constants-all]
+  - name: PDF_PERM_PRINT_HQ
+    kind: property
+    signature: "()"
+    names: {python: PDF_PERM_PRINT_HQ, node: PDF_PERM_PRINT_HQ, java: PDF_PERM_PRINT_HQ, dotnet: PDF_PERM_PRINT_HQ}
+    rust: "PDF_PERM_PRINT_HQ"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-constants-all]
+  # page label styles (6).
+  - name: PDF_PAGE_LABEL_ALPHA_LC
+    kind: property
+    signature: "()"
+    names: {python: PDF_PAGE_LABEL_ALPHA_LC, node: PDF_PAGE_LABEL_ALPHA_LC, java: PDF_PAGE_LABEL_ALPHA_LC, dotnet: PDF_PAGE_LABEL_ALPHA_LC}
+    rust: "PDF_PAGE_LABEL_ALPHA_LC"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-page-label-alpha-lc]
+  - name: PDF_PAGE_LABEL_ALPHA_UC
+    kind: property
+    signature: "()"
+    names: {python: PDF_PAGE_LABEL_ALPHA_UC, node: PDF_PAGE_LABEL_ALPHA_UC, java: PDF_PAGE_LABEL_ALPHA_UC, dotnet: PDF_PAGE_LABEL_ALPHA_UC}
+    rust: "PDF_PAGE_LABEL_ALPHA_UC"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-page-label-alpha-uc]
+  - name: PDF_PAGE_LABEL_DECIMAL
+    kind: property
+    signature: "()"
+    names: {python: PDF_PAGE_LABEL_DECIMAL, node: PDF_PAGE_LABEL_DECIMAL, java: PDF_PAGE_LABEL_DECIMAL, dotnet: PDF_PAGE_LABEL_DECIMAL}
+    rust: "PDF_PAGE_LABEL_DECIMAL"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-page-label-decimal]
+  - name: PDF_PAGE_LABEL_NONE
+    kind: property
+    signature: "()"
+    names: {python: PDF_PAGE_LABEL_NONE, node: PDF_PAGE_LABEL_NONE, java: PDF_PAGE_LABEL_NONE, dotnet: PDF_PAGE_LABEL_NONE}
+    rust: "PDF_PAGE_LABEL_NONE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-page-label-none]
+  - name: PDF_PAGE_LABEL_ROMAN_LC
+    kind: property
+    signature: "()"
+    names: {python: PDF_PAGE_LABEL_ROMAN_LC, node: PDF_PAGE_LABEL_ROMAN_LC, java: PDF_PAGE_LABEL_ROMAN_LC, dotnet: PDF_PAGE_LABEL_ROMAN_LC}
+    rust: "PDF_PAGE_LABEL_ROMAN_LC"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-page-label-roman-lc]
+  - name: PDF_PAGE_LABEL_ROMAN_UC
+    kind: property
+    signature: "()"
+    names: {python: PDF_PAGE_LABEL_ROMAN_UC, node: PDF_PAGE_LABEL_ROMAN_UC, java: PDF_PAGE_LABEL_ROMAN_UC, dotnet: PDF_PAGE_LABEL_ROMAN_UC}
+    rust: "PDF_PAGE_LABEL_ROMAN_UC"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-page-label-roman-uc]
+  # signatures (18).
+  - name: PDF_SIGNATURE_DEFAULT_APPEARANCE
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_DEFAULT_APPEARANCE, node: PDF_SIGNATURE_DEFAULT_APPEARANCE, java: PDF_SIGNATURE_DEFAULT_APPEARANCE, dotnet: PDF_SIGNATURE_DEFAULT_APPEARANCE}
+    rust: "PDF_SIGNATURE_DEFAULT_APPEARANCE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-default-appearance]
+  - name: PDF_SIGNATURE_ERROR_DIGEST_FAILURE
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_ERROR_DIGEST_FAILURE, node: PDF_SIGNATURE_ERROR_DIGEST_FAILURE, java: PDF_SIGNATURE_ERROR_DIGEST_FAILURE, dotnet: PDF_SIGNATURE_ERROR_DIGEST_FAILURE}
+    rust: "PDF_SIGNATURE_ERROR_DIGEST_FAILURE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-error-digest-failure]
+  - name: PDF_SIGNATURE_ERROR_NOT_SIGNED
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_ERROR_NOT_SIGNED, node: PDF_SIGNATURE_ERROR_NOT_SIGNED, java: PDF_SIGNATURE_ERROR_NOT_SIGNED, dotnet: PDF_SIGNATURE_ERROR_NOT_SIGNED}
+    rust: "PDF_SIGNATURE_ERROR_NOT_SIGNED"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-error-not-signed]
+  - name: PDF_SIGNATURE_ERROR_NOT_TRUSTED
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_ERROR_NOT_TRUSTED, node: PDF_SIGNATURE_ERROR_NOT_TRUSTED, java: PDF_SIGNATURE_ERROR_NOT_TRUSTED, dotnet: PDF_SIGNATURE_ERROR_NOT_TRUSTED}
+    rust: "PDF_SIGNATURE_ERROR_NOT_TRUSTED"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-error-not-trusted]
+  - name: PDF_SIGNATURE_ERROR_NO_CERTIFICATE
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_ERROR_NO_CERTIFICATE, node: PDF_SIGNATURE_ERROR_NO_CERTIFICATE, java: PDF_SIGNATURE_ERROR_NO_CERTIFICATE, dotnet: PDF_SIGNATURE_ERROR_NO_CERTIFICATE}
+    rust: "PDF_SIGNATURE_ERROR_NO_CERTIFICATE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-error-no-certificate]
+  - name: PDF_SIGNATURE_ERROR_NO_SIGNATURES
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_ERROR_NO_SIGNATURES, node: PDF_SIGNATURE_ERROR_NO_SIGNATURES, java: PDF_SIGNATURE_ERROR_NO_SIGNATURES, dotnet: PDF_SIGNATURE_ERROR_NO_SIGNATURES}
+    rust: "PDF_SIGNATURE_ERROR_NO_SIGNATURES"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-error-no-signatures]
+  - name: PDF_SIGNATURE_ERROR_OKAY
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_ERROR_OKAY, node: PDF_SIGNATURE_ERROR_OKAY, java: PDF_SIGNATURE_ERROR_OKAY, dotnet: PDF_SIGNATURE_ERROR_OKAY}
+    rust: "PDF_SIGNATURE_ERROR_OKAY"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-error-okay]
+  - name: PDF_SIGNATURE_ERROR_SELF_SIGNED
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_ERROR_SELF_SIGNED, node: PDF_SIGNATURE_ERROR_SELF_SIGNED, java: PDF_SIGNATURE_ERROR_SELF_SIGNED, dotnet: PDF_SIGNATURE_ERROR_SELF_SIGNED}
+    rust: "PDF_SIGNATURE_ERROR_SELF_SIGNED"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-error-self-signed]
+  - name: PDF_SIGNATURE_ERROR_SELF_SIGNED_IN_CHAIN
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_ERROR_SELF_SIGNED_IN_CHAIN, node: PDF_SIGNATURE_ERROR_SELF_SIGNED_IN_CHAIN, java: PDF_SIGNATURE_ERROR_SELF_SIGNED_IN_CHAIN, dotnet: PDF_SIGNATURE_ERROR_SELF_SIGNED_IN_CHAIN}
+    rust: "PDF_SIGNATURE_ERROR_SELF_SIGNED_IN_CHAIN"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-error-self-signed-in-chain]
+  - name: PDF_SIGNATURE_ERROR_UNKNOWN
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_ERROR_UNKNOWN, node: PDF_SIGNATURE_ERROR_UNKNOWN, java: PDF_SIGNATURE_ERROR_UNKNOWN, dotnet: PDF_SIGNATURE_ERROR_UNKNOWN}
+    rust: "PDF_SIGNATURE_ERROR_UNKNOWN"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-error-unknown]
+  - name: PDF_SIGNATURE_SHOW_DATE
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_SHOW_DATE, node: PDF_SIGNATURE_SHOW_DATE, java: PDF_SIGNATURE_SHOW_DATE, dotnet: PDF_SIGNATURE_SHOW_DATE}
+    rust: "PDF_SIGNATURE_SHOW_DATE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-show-date]
+  - name: PDF_SIGNATURE_SHOW_DN
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_SHOW_DN, node: PDF_SIGNATURE_SHOW_DN, java: PDF_SIGNATURE_SHOW_DN, dotnet: PDF_SIGNATURE_SHOW_DN}
+    rust: "PDF_SIGNATURE_SHOW_DN"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-show-dn]
+  - name: PDF_SIGNATURE_SHOW_GRAPHIC_NAME
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_SHOW_GRAPHIC_NAME, node: PDF_SIGNATURE_SHOW_GRAPHIC_NAME, java: PDF_SIGNATURE_SHOW_GRAPHIC_NAME, dotnet: PDF_SIGNATURE_SHOW_GRAPHIC_NAME}
+    rust: "PDF_SIGNATURE_SHOW_GRAPHIC_NAME"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-show-graphic-name]
+  - name: PDF_SIGNATURE_SHOW_LABELS
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_SHOW_LABELS, node: PDF_SIGNATURE_SHOW_LABELS, java: PDF_SIGNATURE_SHOW_LABELS, dotnet: PDF_SIGNATURE_SHOW_LABELS}
+    rust: "PDF_SIGNATURE_SHOW_LABELS"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-show-labels]
+  - name: PDF_SIGNATURE_SHOW_LOGO
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_SHOW_LOGO, node: PDF_SIGNATURE_SHOW_LOGO, java: PDF_SIGNATURE_SHOW_LOGO, dotnet: PDF_SIGNATURE_SHOW_LOGO}
+    rust: "PDF_SIGNATURE_SHOW_LOGO"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-show-logo]
+  - name: PDF_SIGNATURE_SHOW_TEXT_NAME
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIGNATURE_SHOW_TEXT_NAME, node: PDF_SIGNATURE_SHOW_TEXT_NAME, java: PDF_SIGNATURE_SHOW_TEXT_NAME, dotnet: PDF_SIGNATURE_SHOW_TEXT_NAME}
+    rust: "PDF_SIGNATURE_SHOW_TEXT_NAME"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-signature-show-text-name]
+  - name: SigFlag_AppendOnly
+    kind: property
+    signature: "()"
+    names: {python: SigFlag_AppendOnly, node: SigFlag_AppendOnly, java: SigFlag_AppendOnly, dotnet: SigFlag_AppendOnly}
+    rust: "SigFlag_AppendOnly"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-sigflag-appendonly]
+  - name: SigFlag_SignaturesExist
+    kind: property
+    signature: "()"
+    names: {python: SigFlag_SignaturesExist, node: SigFlag_SignaturesExist, java: SigFlag_SignaturesExist, dotnet: SigFlag_SignaturesExist}
+    rust: "SigFlag_SignaturesExist"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-sigflag-signaturesexist]
+  # alerts and document events (19).
+  - name: PDF_ALERT_BUTTON_CANCEL
+    kind: property
+    signature: "()"
+    names: {python: PDF_ALERT_BUTTON_CANCEL, node: PDF_ALERT_BUTTON_CANCEL, java: PDF_ALERT_BUTTON_CANCEL, dotnet: PDF_ALERT_BUTTON_CANCEL}
+    rust: "PDF_ALERT_BUTTON_CANCEL"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-alert-button-cancel]
+  - name: PDF_ALERT_BUTTON_GROUP_OK
+    kind: property
+    signature: "()"
+    names: {python: PDF_ALERT_BUTTON_GROUP_OK, node: PDF_ALERT_BUTTON_GROUP_OK, java: PDF_ALERT_BUTTON_GROUP_OK, dotnet: PDF_ALERT_BUTTON_GROUP_OK}
+    rust: "PDF_ALERT_BUTTON_GROUP_OK"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-alert-button-group-ok]
+  - name: PDF_ALERT_BUTTON_GROUP_OK_CANCEL
+    kind: property
+    signature: "()"
+    names: {python: PDF_ALERT_BUTTON_GROUP_OK_CANCEL, node: PDF_ALERT_BUTTON_GROUP_OK_CANCEL, java: PDF_ALERT_BUTTON_GROUP_OK_CANCEL, dotnet: PDF_ALERT_BUTTON_GROUP_OK_CANCEL}
+    rust: "PDF_ALERT_BUTTON_GROUP_OK_CANCEL"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-alert-button-group-ok-cancel]
+  - name: PDF_ALERT_BUTTON_GROUP_YES_NO
+    kind: property
+    signature: "()"
+    names: {python: PDF_ALERT_BUTTON_GROUP_YES_NO, node: PDF_ALERT_BUTTON_GROUP_YES_NO, java: PDF_ALERT_BUTTON_GROUP_YES_NO, dotnet: PDF_ALERT_BUTTON_GROUP_YES_NO}
+    rust: "PDF_ALERT_BUTTON_GROUP_YES_NO"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-alert-button-group-yes-no]
+  - name: PDF_ALERT_BUTTON_GROUP_YES_NO_CANCEL
+    kind: property
+    signature: "()"
+    names: {python: PDF_ALERT_BUTTON_GROUP_YES_NO_CANCEL, node: PDF_ALERT_BUTTON_GROUP_YES_NO_CANCEL, java: PDF_ALERT_BUTTON_GROUP_YES_NO_CANCEL, dotnet: PDF_ALERT_BUTTON_GROUP_YES_NO_CANCEL}
+    rust: "PDF_ALERT_BUTTON_GROUP_YES_NO_CANCEL"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-alert-button-group-yes-no-cancel]
+  - name: PDF_ALERT_BUTTON_NO
+    kind: property
+    signature: "()"
+    names: {python: PDF_ALERT_BUTTON_NO, node: PDF_ALERT_BUTTON_NO, java: PDF_ALERT_BUTTON_NO, dotnet: PDF_ALERT_BUTTON_NO}
+    rust: "PDF_ALERT_BUTTON_NO"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-alert-button-no]
+  - name: PDF_ALERT_BUTTON_NONE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ALERT_BUTTON_NONE, node: PDF_ALERT_BUTTON_NONE, java: PDF_ALERT_BUTTON_NONE, dotnet: PDF_ALERT_BUTTON_NONE}
+    rust: "PDF_ALERT_BUTTON_NONE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-alert-button-none]
+  - name: PDF_ALERT_BUTTON_OK
+    kind: property
+    signature: "()"
+    names: {python: PDF_ALERT_BUTTON_OK, node: PDF_ALERT_BUTTON_OK, java: PDF_ALERT_BUTTON_OK, dotnet: PDF_ALERT_BUTTON_OK}
+    rust: "PDF_ALERT_BUTTON_OK"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-alert-button-ok]
+  - name: PDF_ALERT_BUTTON_YES
+    kind: property
+    signature: "()"
+    names: {python: PDF_ALERT_BUTTON_YES, node: PDF_ALERT_BUTTON_YES, java: PDF_ALERT_BUTTON_YES, dotnet: PDF_ALERT_BUTTON_YES}
+    rust: "PDF_ALERT_BUTTON_YES"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-alert-button-yes]
+  - name: PDF_ALERT_ICON_ERROR
+    kind: property
+    signature: "()"
+    names: {python: PDF_ALERT_ICON_ERROR, node: PDF_ALERT_ICON_ERROR, java: PDF_ALERT_ICON_ERROR, dotnet: PDF_ALERT_ICON_ERROR}
+    rust: "PDF_ALERT_ICON_ERROR"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-alert-icon-error]
+  - name: PDF_ALERT_ICON_QUESTION
+    kind: property
+    signature: "()"
+    names: {python: PDF_ALERT_ICON_QUESTION, node: PDF_ALERT_ICON_QUESTION, java: PDF_ALERT_ICON_QUESTION, dotnet: PDF_ALERT_ICON_QUESTION}
+    rust: "PDF_ALERT_ICON_QUESTION"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-alert-icon-question]
+  - name: PDF_ALERT_ICON_STATUS
+    kind: property
+    signature: "()"
+    names: {python: PDF_ALERT_ICON_STATUS, node: PDF_ALERT_ICON_STATUS, java: PDF_ALERT_ICON_STATUS, dotnet: PDF_ALERT_ICON_STATUS}
+    rust: "PDF_ALERT_ICON_STATUS"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-alert-icon-status]
+  - name: PDF_ALERT_ICON_WARNING
+    kind: property
+    signature: "()"
+    names: {python: PDF_ALERT_ICON_WARNING, node: PDF_ALERT_ICON_WARNING, java: PDF_ALERT_ICON_WARNING, dotnet: PDF_ALERT_ICON_WARNING}
+    rust: "PDF_ALERT_ICON_WARNING"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-alert-icon-warning]
+  - name: PDF_DOCUMENT_EVENT_ALERT
+    kind: property
+    signature: "()"
+    names: {python: PDF_DOCUMENT_EVENT_ALERT, node: PDF_DOCUMENT_EVENT_ALERT, java: PDF_DOCUMENT_EVENT_ALERT, dotnet: PDF_DOCUMENT_EVENT_ALERT}
+    rust: "PDF_DOCUMENT_EVENT_ALERT"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-document-event-alert]
+  - name: PDF_DOCUMENT_EVENT_EXEC_MENU_ITEM
+    kind: property
+    signature: "()"
+    names: {python: PDF_DOCUMENT_EVENT_EXEC_MENU_ITEM, node: PDF_DOCUMENT_EVENT_EXEC_MENU_ITEM, java: PDF_DOCUMENT_EVENT_EXEC_MENU_ITEM, dotnet: PDF_DOCUMENT_EVENT_EXEC_MENU_ITEM}
+    rust: "PDF_DOCUMENT_EVENT_EXEC_MENU_ITEM"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-document-event-exec-menu-item]
+  - name: PDF_DOCUMENT_EVENT_LAUNCH_URL
+    kind: property
+    signature: "()"
+    names: {python: PDF_DOCUMENT_EVENT_LAUNCH_URL, node: PDF_DOCUMENT_EVENT_LAUNCH_URL, java: PDF_DOCUMENT_EVENT_LAUNCH_URL, dotnet: PDF_DOCUMENT_EVENT_LAUNCH_URL}
+    rust: "PDF_DOCUMENT_EVENT_LAUNCH_URL"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-document-event-launch-url]
+  - name: PDF_DOCUMENT_EVENT_MAIL_DOC
+    kind: property
+    signature: "()"
+    names: {python: PDF_DOCUMENT_EVENT_MAIL_DOC, node: PDF_DOCUMENT_EVENT_MAIL_DOC, java: PDF_DOCUMENT_EVENT_MAIL_DOC, dotnet: PDF_DOCUMENT_EVENT_MAIL_DOC}
+    rust: "PDF_DOCUMENT_EVENT_MAIL_DOC"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-document-event-mail-doc]
+  - name: PDF_DOCUMENT_EVENT_PRINT
+    kind: property
+    signature: "()"
+    names: {python: PDF_DOCUMENT_EVENT_PRINT, node: PDF_DOCUMENT_EVENT_PRINT, java: PDF_DOCUMENT_EVENT_PRINT, dotnet: PDF_DOCUMENT_EVENT_PRINT}
+    rust: "PDF_DOCUMENT_EVENT_PRINT"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-document-event-print]
+  - name: PDF_DOCUMENT_EVENT_SUBMIT
+    kind: property
+    signature: "()"
+    names: {python: PDF_DOCUMENT_EVENT_SUBMIT, node: PDF_DOCUMENT_EVENT_SUBMIT, java: PDF_DOCUMENT_EVENT_SUBMIT, dotnet: PDF_DOCUMENT_EVENT_SUBMIT}
+    rust: "PDF_DOCUMENT_EVENT_SUBMIT"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-document-event-submit]
+  # layers and optional content (6).
+  - name: PDF_LAYER_UI_CHECKBOX
+    kind: property
+    signature: "()"
+    names: {python: PDF_LAYER_UI_CHECKBOX, node: PDF_LAYER_UI_CHECKBOX, java: PDF_LAYER_UI_CHECKBOX, dotnet: PDF_LAYER_UI_CHECKBOX}
+    rust: "PDF_LAYER_UI_CHECKBOX"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-layer-ui-checkbox]
+  - name: PDF_LAYER_UI_LABEL
+    kind: property
+    signature: "()"
+    names: {python: PDF_LAYER_UI_LABEL, node: PDF_LAYER_UI_LABEL, java: PDF_LAYER_UI_LABEL, dotnet: PDF_LAYER_UI_LABEL}
+    rust: "PDF_LAYER_UI_LABEL"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-layer-ui-label]
+  - name: PDF_LAYER_UI_RADIOBOX
+    kind: property
+    signature: "()"
+    names: {python: PDF_LAYER_UI_RADIOBOX, node: PDF_LAYER_UI_RADIOBOX, java: PDF_LAYER_UI_RADIOBOX, dotnet: PDF_LAYER_UI_RADIOBOX}
+    rust: "PDF_LAYER_UI_RADIOBOX"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-layer-ui-radiobox]
+  - name: PDF_OC_OFF
+    kind: property
+    signature: "()"
+    names: {python: PDF_OC_OFF, node: PDF_OC_OFF, java: PDF_OC_OFF, dotnet: PDF_OC_OFF}
+    rust: "PDF_OC_OFF"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-oc-off]
+  - name: PDF_OC_ON
+    kind: property
+    signature: "()"
+    names: {python: PDF_OC_ON, node: PDF_OC_ON, java: PDF_OC_ON, dotnet: PDF_OC_ON}
+    rust: "PDF_OC_ON"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-oc-on]
+  - name: PDF_OC_TOGGLE
+    kind: property
+    signature: "()"
+    names: {python: PDF_OC_TOGGLE, node: PDF_OC_TOGGLE, java: PDF_OC_TOGGLE, dotnet: PDF_OC_TOGGLE}
+    rust: "PDF_OC_TOGGLE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-oc-toggle]
+  # electronic invoicing marks (8).
+  - name: PDF_NOT_ZUGFERD
+    kind: property
+    signature: "()"
+    names: {python: PDF_NOT_ZUGFERD, node: PDF_NOT_ZUGFERD, java: PDF_NOT_ZUGFERD, dotnet: PDF_NOT_ZUGFERD}
+    rust: "PDF_NOT_ZUGFERD"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-not-zugferd]
+  - name: PDF_ZUGFERD_BASIC
+    kind: property
+    signature: "()"
+    names: {python: PDF_ZUGFERD_BASIC, node: PDF_ZUGFERD_BASIC, java: PDF_ZUGFERD_BASIC, dotnet: PDF_ZUGFERD_BASIC}
+    rust: "PDF_ZUGFERD_BASIC"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-zugferd-basic]
+  - name: PDF_ZUGFERD_BASIC_WL
+    kind: property
+    signature: "()"
+    names: {python: PDF_ZUGFERD_BASIC_WL, node: PDF_ZUGFERD_BASIC_WL, java: PDF_ZUGFERD_BASIC_WL, dotnet: PDF_ZUGFERD_BASIC_WL}
+    rust: "PDF_ZUGFERD_BASIC_WL"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-zugferd-basic-wl]
+  - name: PDF_ZUGFERD_COMFORT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ZUGFERD_COMFORT, node: PDF_ZUGFERD_COMFORT, java: PDF_ZUGFERD_COMFORT, dotnet: PDF_ZUGFERD_COMFORT}
+    rust: "PDF_ZUGFERD_COMFORT"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-zugferd-comfort]
+  - name: PDF_ZUGFERD_EXTENDED
+    kind: property
+    signature: "()"
+    names: {python: PDF_ZUGFERD_EXTENDED, node: PDF_ZUGFERD_EXTENDED, java: PDF_ZUGFERD_EXTENDED, dotnet: PDF_ZUGFERD_EXTENDED}
+    rust: "PDF_ZUGFERD_EXTENDED"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-zugferd-extended]
+  - name: PDF_ZUGFERD_MINIMUM
+    kind: property
+    signature: "()"
+    names: {python: PDF_ZUGFERD_MINIMUM, node: PDF_ZUGFERD_MINIMUM, java: PDF_ZUGFERD_MINIMUM, dotnet: PDF_ZUGFERD_MINIMUM}
+    rust: "PDF_ZUGFERD_MINIMUM"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-zugferd-minimum]
+  - name: PDF_ZUGFERD_UNKNOWN
+    kind: property
+    signature: "()"
+    names: {python: PDF_ZUGFERD_UNKNOWN, node: PDF_ZUGFERD_UNKNOWN, java: PDF_ZUGFERD_UNKNOWN, dotnet: PDF_ZUGFERD_UNKNOWN}
+    rust: "PDF_ZUGFERD_UNKNOWN"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-zugferd-unknown]
+  - name: PDF_ZUGFERD_XRECHNUNG
+    kind: property
+    signature: "()"
+    names: {python: PDF_ZUGFERD_XRECHNUNG, node: PDF_ZUGFERD_XRECHNUNG, java: PDF_ZUGFERD_XRECHNUNG, dotnet: PDF_ZUGFERD_XRECHNUNG}
+    rust: "PDF_ZUGFERD_XRECHNUNG"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-zugferd-xrechnung]
+  # document cleanup (4).
+  - name: PDF_CLEAN_STRUCTURE_DROP
+    kind: property
+    signature: "()"
+    names: {python: PDF_CLEAN_STRUCTURE_DROP, node: PDF_CLEAN_STRUCTURE_DROP, java: PDF_CLEAN_STRUCTURE_DROP, dotnet: PDF_CLEAN_STRUCTURE_DROP}
+    rust: "PDF_CLEAN_STRUCTURE_DROP"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-clean-structure-drop]
+  - name: PDF_CLEAN_STRUCTURE_KEEP
+    kind: property
+    signature: "()"
+    names: {python: PDF_CLEAN_STRUCTURE_KEEP, node: PDF_CLEAN_STRUCTURE_KEEP, java: PDF_CLEAN_STRUCTURE_KEEP, dotnet: PDF_CLEAN_STRUCTURE_KEEP}
+    rust: "PDF_CLEAN_STRUCTURE_KEEP"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-clean-structure-keep]
+  - name: PDF_CLEAN_VECTORIZE_NO
+    kind: property
+    signature: "()"
+    names: {python: PDF_CLEAN_VECTORIZE_NO, node: PDF_CLEAN_VECTORIZE_NO, java: PDF_CLEAN_VECTORIZE_NO, dotnet: PDF_CLEAN_VECTORIZE_NO}
+    rust: "PDF_CLEAN_VECTORIZE_NO"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-clean-vectorize-no]
+  - name: PDF_CLEAN_VECTORIZE_YES
+    kind: property
+    signature: "()"
+    names: {python: PDF_CLEAN_VECTORIZE_YES, node: PDF_CLEAN_VECTORIZE_YES, java: PDF_CLEAN_VECTORIZE_YES, dotnet: PDF_CLEAN_VECTORIZE_YES}
+    rust: "PDF_CLEAN_VECTORIZE_YES"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-clean-vectorize-yes]
+  # colour-space presets (6).
+  - name: CS_CMYK
+    kind: property
+    signature: "()"
+    names: {python: CS_CMYK, node: CS_CMYK, java: CS_CMYK, dotnet: CS_CMYK}
+    rust: "CS_CMYK"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-constants-cs-cmyk]
+  - name: CS_GRAY
+    kind: property
+    signature: "()"
+    names: {python: CS_GRAY, node: CS_GRAY, java: CS_GRAY, dotnet: CS_GRAY}
+    rust: "CS_GRAY"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-constants-cs-gray]
+  - name: CS_RGB
+    kind: property
+    signature: "()"
+    names: {python: CS_RGB, node: CS_RGB, java: CS_RGB, dotnet: CS_RGB}
+    rust: "CS_RGB"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-constants-cs-rgb]
+  - name: csCMYK
+    kind: property
+    signature: "()"
+    names: {python: csCMYK, node: csCMYK, java: csCMYK, dotnet: csCMYK}
+    rust: "csCMYK"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-constants-cscmyk]
+  - name: csGRAY
+    kind: property
+    signature: "()"
+    names: {python: csGRAY, node: csGRAY, java: csGRAY, dotnet: csGRAY}
+    rust: "csGRAY"
+    tier: T1
+    lane: L3
+    status: missing
+    tests: [l2-constants-all]
+  - name: csRGB
+    kind: property
+    signature: "()"
+    names: {python: csRGB, node: csRGB, java: csRGB, dotnet: csRGB}
+    rust: "csRGB"
+    tier: T1
+    lane: L3
+    status: missing
+    tests: [l2-constants-all]
+  # image recompression (8).
+  - name: FZ_RECOMPRESS_FAX
+    kind: property
+    signature: "()"
+    names: {python: FZ_RECOMPRESS_FAX, node: FZ_RECOMPRESS_FAX, java: FZ_RECOMPRESS_FAX, dotnet: FZ_RECOMPRESS_FAX}
+    rust: "FZ_RECOMPRESS_FAX"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-constants-fz-recompress-fax]
+  - name: FZ_RECOMPRESS_J2K
+    kind: property
+    signature: "()"
+    names: {python: FZ_RECOMPRESS_J2K, node: FZ_RECOMPRESS_J2K, java: FZ_RECOMPRESS_J2K, dotnet: FZ_RECOMPRESS_J2K}
+    rust: "FZ_RECOMPRESS_J2K"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-constants-fz-recompress-j2k]
+  - name: FZ_RECOMPRESS_JPEG
+    kind: property
+    signature: "()"
+    names: {python: FZ_RECOMPRESS_JPEG, node: FZ_RECOMPRESS_JPEG, java: FZ_RECOMPRESS_JPEG, dotnet: FZ_RECOMPRESS_JPEG}
+    rust: "FZ_RECOMPRESS_JPEG"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-constants-fz-recompress-jpeg]
+  - name: FZ_RECOMPRESS_LOSSLESS
+    kind: property
+    signature: "()"
+    names: {python: FZ_RECOMPRESS_LOSSLESS, node: FZ_RECOMPRESS_LOSSLESS, java: FZ_RECOMPRESS_LOSSLESS, dotnet: FZ_RECOMPRESS_LOSSLESS}
+    rust: "FZ_RECOMPRESS_LOSSLESS"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-constants-fz-recompress-lossless]
+  - name: FZ_RECOMPRESS_NEVER
+    kind: property
+    signature: "()"
+    names: {python: FZ_RECOMPRESS_NEVER, node: FZ_RECOMPRESS_NEVER, java: FZ_RECOMPRESS_NEVER, dotnet: FZ_RECOMPRESS_NEVER}
+    rust: "FZ_RECOMPRESS_NEVER"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-constants-fz-recompress-never]
+  - name: FZ_RECOMPRESS_SAME
+    kind: property
+    signature: "()"
+    names: {python: FZ_RECOMPRESS_SAME, node: FZ_RECOMPRESS_SAME, java: FZ_RECOMPRESS_SAME, dotnet: FZ_RECOMPRESS_SAME}
+    rust: "FZ_RECOMPRESS_SAME"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-constants-fz-recompress-same]
+  - name: FZ_SUBSAMPLE_AVERAGE
+    kind: property
+    signature: "()"
+    names: {python: FZ_SUBSAMPLE_AVERAGE, node: FZ_SUBSAMPLE_AVERAGE, java: FZ_SUBSAMPLE_AVERAGE, dotnet: FZ_SUBSAMPLE_AVERAGE}
+    rust: "FZ_SUBSAMPLE_AVERAGE"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-constants-fz-subsample-average]
+  - name: FZ_SUBSAMPLE_BICUBIC
+    kind: property
+    signature: "()"
+    names: {python: FZ_SUBSAMPLE_BICUBIC, node: FZ_SUBSAMPLE_BICUBIC, java: FZ_SUBSAMPLE_BICUBIC, dotnet: FZ_SUBSAMPLE_BICUBIC}
+    rust: "FZ_SUBSAMPLE_BICUBIC"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-constants-fz-subsample-bicubic]
+  # annotation kinds, flags and ends (63).
+  - name: PDF_ANNOT_3D
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_3D, node: PDF_ANNOT_3D, java: PDF_ANNOT_3D, dotnet: PDF_ANNOT_3D}
+    rust: "PDF_ANNOT_3D"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-3d]
+  - name: PDF_ANNOT_CARET
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_CARET, node: PDF_ANNOT_CARET, java: PDF_ANNOT_CARET, dotnet: PDF_ANNOT_CARET}
+    rust: "PDF_ANNOT_CARET"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-caret]
+  - name: PDF_ANNOT_CIRCLE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_CIRCLE, node: PDF_ANNOT_CIRCLE, java: PDF_ANNOT_CIRCLE, dotnet: PDF_ANNOT_CIRCLE}
+    rust: "PDF_ANNOT_CIRCLE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-circle]
+  - name: PDF_ANNOT_FILE_ATTACHMENT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_FILE_ATTACHMENT, node: PDF_ANNOT_FILE_ATTACHMENT, java: PDF_ANNOT_FILE_ATTACHMENT, dotnet: PDF_ANNOT_FILE_ATTACHMENT}
+    rust: "PDF_ANNOT_FILE_ATTACHMENT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-file-attachment]
+  - name: PDF_ANNOT_FREE_TEXT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_FREE_TEXT, node: PDF_ANNOT_FREE_TEXT, java: PDF_ANNOT_FREE_TEXT, dotnet: PDF_ANNOT_FREE_TEXT}
+    rust: "PDF_ANNOT_FREE_TEXT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-free-text]
+  - name: PDF_ANNOT_HIGHLIGHT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_HIGHLIGHT, node: PDF_ANNOT_HIGHLIGHT, java: PDF_ANNOT_HIGHLIGHT, dotnet: PDF_ANNOT_HIGHLIGHT}
+    rust: "PDF_ANNOT_HIGHLIGHT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-highlight]
+  - name: PDF_ANNOT_INK
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_INK, node: PDF_ANNOT_INK, java: PDF_ANNOT_INK, dotnet: PDF_ANNOT_INK}
+    rust: "PDF_ANNOT_INK"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-ink]
+  - name: PDF_ANNOT_IS_HIDDEN
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IS_HIDDEN, node: PDF_ANNOT_IS_HIDDEN, java: PDF_ANNOT_IS_HIDDEN, dotnet: PDF_ANNOT_IS_HIDDEN}
+    rust: "PDF_ANNOT_IS_HIDDEN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-is-hidden]
+  - name: PDF_ANNOT_IS_INVISIBLE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IS_INVISIBLE, node: PDF_ANNOT_IS_INVISIBLE, java: PDF_ANNOT_IS_INVISIBLE, dotnet: PDF_ANNOT_IS_INVISIBLE}
+    rust: "PDF_ANNOT_IS_INVISIBLE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-is-invisible]
+  - name: PDF_ANNOT_IS_LOCKED
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IS_LOCKED, node: PDF_ANNOT_IS_LOCKED, java: PDF_ANNOT_IS_LOCKED, dotnet: PDF_ANNOT_IS_LOCKED}
+    rust: "PDF_ANNOT_IS_LOCKED"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-is-locked]
+  - name: PDF_ANNOT_IS_LOCKED_CONTENTS
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IS_LOCKED_CONTENTS, node: PDF_ANNOT_IS_LOCKED_CONTENTS, java: PDF_ANNOT_IS_LOCKED_CONTENTS, dotnet: PDF_ANNOT_IS_LOCKED_CONTENTS}
+    rust: "PDF_ANNOT_IS_LOCKED_CONTENTS"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-is-locked-contents]
+  - name: PDF_ANNOT_IS_NO_ROTATE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IS_NO_ROTATE, node: PDF_ANNOT_IS_NO_ROTATE, java: PDF_ANNOT_IS_NO_ROTATE, dotnet: PDF_ANNOT_IS_NO_ROTATE}
+    rust: "PDF_ANNOT_IS_NO_ROTATE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-is-no-rotate]
+  - name: PDF_ANNOT_IS_NO_VIEW
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IS_NO_VIEW, node: PDF_ANNOT_IS_NO_VIEW, java: PDF_ANNOT_IS_NO_VIEW, dotnet: PDF_ANNOT_IS_NO_VIEW}
+    rust: "PDF_ANNOT_IS_NO_VIEW"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-is-no-view]
+  - name: PDF_ANNOT_IS_NO_ZOOM
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IS_NO_ZOOM, node: PDF_ANNOT_IS_NO_ZOOM, java: PDF_ANNOT_IS_NO_ZOOM, dotnet: PDF_ANNOT_IS_NO_ZOOM}
+    rust: "PDF_ANNOT_IS_NO_ZOOM"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-is-no-zoom]
+  - name: PDF_ANNOT_IS_PRINT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IS_PRINT, node: PDF_ANNOT_IS_PRINT, java: PDF_ANNOT_IS_PRINT, dotnet: PDF_ANNOT_IS_PRINT}
+    rust: "PDF_ANNOT_IS_PRINT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-is-print]
+  - name: PDF_ANNOT_IS_READ_ONLY
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IS_READ_ONLY, node: PDF_ANNOT_IS_READ_ONLY, java: PDF_ANNOT_IS_READ_ONLY, dotnet: PDF_ANNOT_IS_READ_ONLY}
+    rust: "PDF_ANNOT_IS_READ_ONLY"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-is-read-only]
+  - name: PDF_ANNOT_IS_TOGGLE_NO_VIEW
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IS_TOGGLE_NO_VIEW, node: PDF_ANNOT_IS_TOGGLE_NO_VIEW, java: PDF_ANNOT_IS_TOGGLE_NO_VIEW, dotnet: PDF_ANNOT_IS_TOGGLE_NO_VIEW}
+    rust: "PDF_ANNOT_IS_TOGGLE_NO_VIEW"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-is-toggle-no-view]
+  - name: PDF_ANNOT_IT_DEFAULT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IT_DEFAULT, node: PDF_ANNOT_IT_DEFAULT, java: PDF_ANNOT_IT_DEFAULT, dotnet: PDF_ANNOT_IT_DEFAULT}
+    rust: "PDF_ANNOT_IT_DEFAULT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-it-default]
+  - name: PDF_ANNOT_IT_FREETEXT_CALLOUT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IT_FREETEXT_CALLOUT, node: PDF_ANNOT_IT_FREETEXT_CALLOUT, java: PDF_ANNOT_IT_FREETEXT_CALLOUT, dotnet: PDF_ANNOT_IT_FREETEXT_CALLOUT}
+    rust: "PDF_ANNOT_IT_FREETEXT_CALLOUT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-it-freetext-callout]
+  - name: PDF_ANNOT_IT_FREETEXT_TYPEWRITER
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IT_FREETEXT_TYPEWRITER, node: PDF_ANNOT_IT_FREETEXT_TYPEWRITER, java: PDF_ANNOT_IT_FREETEXT_TYPEWRITER, dotnet: PDF_ANNOT_IT_FREETEXT_TYPEWRITER}
+    rust: "PDF_ANNOT_IT_FREETEXT_TYPEWRITER"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-it-freetext-typewriter]
+  - name: PDF_ANNOT_IT_LINE_ARROW
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IT_LINE_ARROW, node: PDF_ANNOT_IT_LINE_ARROW, java: PDF_ANNOT_IT_LINE_ARROW, dotnet: PDF_ANNOT_IT_LINE_ARROW}
+    rust: "PDF_ANNOT_IT_LINE_ARROW"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-it-line-arrow]
+  - name: PDF_ANNOT_IT_LINE_DIMENSION
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IT_LINE_DIMENSION, node: PDF_ANNOT_IT_LINE_DIMENSION, java: PDF_ANNOT_IT_LINE_DIMENSION, dotnet: PDF_ANNOT_IT_LINE_DIMENSION}
+    rust: "PDF_ANNOT_IT_LINE_DIMENSION"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-it-line-dimension]
+  - name: PDF_ANNOT_IT_POLYGON_CLOUD
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IT_POLYGON_CLOUD, node: PDF_ANNOT_IT_POLYGON_CLOUD, java: PDF_ANNOT_IT_POLYGON_CLOUD, dotnet: PDF_ANNOT_IT_POLYGON_CLOUD}
+    rust: "PDF_ANNOT_IT_POLYGON_CLOUD"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-it-polygon-cloud]
+  - name: PDF_ANNOT_IT_POLYGON_DIMENSION
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IT_POLYGON_DIMENSION, node: PDF_ANNOT_IT_POLYGON_DIMENSION, java: PDF_ANNOT_IT_POLYGON_DIMENSION, dotnet: PDF_ANNOT_IT_POLYGON_DIMENSION}
+    rust: "PDF_ANNOT_IT_POLYGON_DIMENSION"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-it-polygon-dimension]
+  - name: PDF_ANNOT_IT_POLYLINE_DIMENSION
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IT_POLYLINE_DIMENSION, node: PDF_ANNOT_IT_POLYLINE_DIMENSION, java: PDF_ANNOT_IT_POLYLINE_DIMENSION, dotnet: PDF_ANNOT_IT_POLYLINE_DIMENSION}
+    rust: "PDF_ANNOT_IT_POLYLINE_DIMENSION"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-it-polyline-dimension]
+  - name: PDF_ANNOT_IT_STAMP_IMAGE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IT_STAMP_IMAGE, node: PDF_ANNOT_IT_STAMP_IMAGE, java: PDF_ANNOT_IT_STAMP_IMAGE, dotnet: PDF_ANNOT_IT_STAMP_IMAGE}
+    rust: "PDF_ANNOT_IT_STAMP_IMAGE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-it-stamp-image]
+  - name: PDF_ANNOT_IT_STAMP_SNAPSHOT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IT_STAMP_SNAPSHOT, node: PDF_ANNOT_IT_STAMP_SNAPSHOT, java: PDF_ANNOT_IT_STAMP_SNAPSHOT, dotnet: PDF_ANNOT_IT_STAMP_SNAPSHOT}
+    rust: "PDF_ANNOT_IT_STAMP_SNAPSHOT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-it-stamp-snapshot]
+  - name: PDF_ANNOT_IT_UNKNOWN
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_IT_UNKNOWN, node: PDF_ANNOT_IT_UNKNOWN, java: PDF_ANNOT_IT_UNKNOWN, dotnet: PDF_ANNOT_IT_UNKNOWN}
+    rust: "PDF_ANNOT_IT_UNKNOWN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-it-unknown]
+  - name: PDF_ANNOT_LE_BUTT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_LE_BUTT, node: PDF_ANNOT_LE_BUTT, java: PDF_ANNOT_LE_BUTT, dotnet: PDF_ANNOT_LE_BUTT}
+    rust: "PDF_ANNOT_LE_BUTT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-le-butt]
+  - name: PDF_ANNOT_LE_CIRCLE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_LE_CIRCLE, node: PDF_ANNOT_LE_CIRCLE, java: PDF_ANNOT_LE_CIRCLE, dotnet: PDF_ANNOT_LE_CIRCLE}
+    rust: "PDF_ANNOT_LE_CIRCLE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-le-circle]
+  - name: PDF_ANNOT_LE_CLOSED_ARROW
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_LE_CLOSED_ARROW, node: PDF_ANNOT_LE_CLOSED_ARROW, java: PDF_ANNOT_LE_CLOSED_ARROW, dotnet: PDF_ANNOT_LE_CLOSED_ARROW}
+    rust: "PDF_ANNOT_LE_CLOSED_ARROW"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-le-closed-arrow]
+  - name: PDF_ANNOT_LE_DIAMOND
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_LE_DIAMOND, node: PDF_ANNOT_LE_DIAMOND, java: PDF_ANNOT_LE_DIAMOND, dotnet: PDF_ANNOT_LE_DIAMOND}
+    rust: "PDF_ANNOT_LE_DIAMOND"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-le-diamond]
+  - name: PDF_ANNOT_LE_NONE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_LE_NONE, node: PDF_ANNOT_LE_NONE, java: PDF_ANNOT_LE_NONE, dotnet: PDF_ANNOT_LE_NONE}
+    rust: "PDF_ANNOT_LE_NONE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-le-none]
+  - name: PDF_ANNOT_LE_OPEN_ARROW
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_LE_OPEN_ARROW, node: PDF_ANNOT_LE_OPEN_ARROW, java: PDF_ANNOT_LE_OPEN_ARROW, dotnet: PDF_ANNOT_LE_OPEN_ARROW}
+    rust: "PDF_ANNOT_LE_OPEN_ARROW"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-le-open-arrow]
+  - name: PDF_ANNOT_LE_R_CLOSED_ARROW
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_LE_R_CLOSED_ARROW, node: PDF_ANNOT_LE_R_CLOSED_ARROW, java: PDF_ANNOT_LE_R_CLOSED_ARROW, dotnet: PDF_ANNOT_LE_R_CLOSED_ARROW}
+    rust: "PDF_ANNOT_LE_R_CLOSED_ARROW"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-le-r-closed-arrow]
+  - name: PDF_ANNOT_LE_R_OPEN_ARROW
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_LE_R_OPEN_ARROW, node: PDF_ANNOT_LE_R_OPEN_ARROW, java: PDF_ANNOT_LE_R_OPEN_ARROW, dotnet: PDF_ANNOT_LE_R_OPEN_ARROW}
+    rust: "PDF_ANNOT_LE_R_OPEN_ARROW"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-le-r-open-arrow]
+  - name: PDF_ANNOT_LE_SLASH
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_LE_SLASH, node: PDF_ANNOT_LE_SLASH, java: PDF_ANNOT_LE_SLASH, dotnet: PDF_ANNOT_LE_SLASH}
+    rust: "PDF_ANNOT_LE_SLASH"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-le-slash]
+  - name: PDF_ANNOT_LE_SQUARE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_LE_SQUARE, node: PDF_ANNOT_LE_SQUARE, java: PDF_ANNOT_LE_SQUARE, dotnet: PDF_ANNOT_LE_SQUARE}
+    rust: "PDF_ANNOT_LE_SQUARE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-le-square]
+  - name: PDF_ANNOT_LINE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_LINE, node: PDF_ANNOT_LINE, java: PDF_ANNOT_LINE, dotnet: PDF_ANNOT_LINE}
+    rust: "PDF_ANNOT_LINE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-line]
+  - name: PDF_ANNOT_LINK
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_LINK, node: PDF_ANNOT_LINK, java: PDF_ANNOT_LINK, dotnet: PDF_ANNOT_LINK}
+    rust: "PDF_ANNOT_LINK"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-link]
+  - name: PDF_ANNOT_MOVIE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_MOVIE, node: PDF_ANNOT_MOVIE, java: PDF_ANNOT_MOVIE, dotnet: PDF_ANNOT_MOVIE}
+    rust: "PDF_ANNOT_MOVIE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-movie]
+  - name: PDF_ANNOT_POLYGON
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_POLYGON, node: PDF_ANNOT_POLYGON, java: PDF_ANNOT_POLYGON, dotnet: PDF_ANNOT_POLYGON}
+    rust: "PDF_ANNOT_POLYGON"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-polygon]
+  - name: PDF_ANNOT_POLY_LINE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_POLY_LINE, node: PDF_ANNOT_POLY_LINE, java: PDF_ANNOT_POLY_LINE, dotnet: PDF_ANNOT_POLY_LINE}
+    rust: "PDF_ANNOT_POLY_LINE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-poly-line]
+  - name: PDF_ANNOT_POPUP
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_POPUP, node: PDF_ANNOT_POPUP, java: PDF_ANNOT_POPUP, dotnet: PDF_ANNOT_POPUP}
+    rust: "PDF_ANNOT_POPUP"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-popup]
+  - name: PDF_ANNOT_PRINTER_MARK
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_PRINTER_MARK, node: PDF_ANNOT_PRINTER_MARK, java: PDF_ANNOT_PRINTER_MARK, dotnet: PDF_ANNOT_PRINTER_MARK}
+    rust: "PDF_ANNOT_PRINTER_MARK"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-printer-mark]
+  - name: PDF_ANNOT_PROJECTION
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_PROJECTION, node: PDF_ANNOT_PROJECTION, java: PDF_ANNOT_PROJECTION, dotnet: PDF_ANNOT_PROJECTION}
+    rust: "PDF_ANNOT_PROJECTION"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-projection]
+  - name: PDF_ANNOT_Q_CENTER
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_Q_CENTER, node: PDF_ANNOT_Q_CENTER, java: PDF_ANNOT_Q_CENTER, dotnet: PDF_ANNOT_Q_CENTER}
+    rust: "PDF_ANNOT_Q_CENTER"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-q-center]
+  - name: PDF_ANNOT_Q_LEFT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_Q_LEFT, node: PDF_ANNOT_Q_LEFT, java: PDF_ANNOT_Q_LEFT, dotnet: PDF_ANNOT_Q_LEFT}
+    rust: "PDF_ANNOT_Q_LEFT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-q-left]
+  - name: PDF_ANNOT_Q_RIGHT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_Q_RIGHT, node: PDF_ANNOT_Q_RIGHT, java: PDF_ANNOT_Q_RIGHT, dotnet: PDF_ANNOT_Q_RIGHT}
+    rust: "PDF_ANNOT_Q_RIGHT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-q-right]
+  - name: PDF_ANNOT_REDACT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_REDACT, node: PDF_ANNOT_REDACT, java: PDF_ANNOT_REDACT, dotnet: PDF_ANNOT_REDACT}
+    rust: "PDF_ANNOT_REDACT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-redact]
+  - name: PDF_ANNOT_RICH_MEDIA
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_RICH_MEDIA, node: PDF_ANNOT_RICH_MEDIA, java: PDF_ANNOT_RICH_MEDIA, dotnet: PDF_ANNOT_RICH_MEDIA}
+    rust: "PDF_ANNOT_RICH_MEDIA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-rich-media]
+  - name: PDF_ANNOT_SCREEN
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_SCREEN, node: PDF_ANNOT_SCREEN, java: PDF_ANNOT_SCREEN, dotnet: PDF_ANNOT_SCREEN}
+    rust: "PDF_ANNOT_SCREEN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-screen]
+  - name: PDF_ANNOT_SOUND
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_SOUND, node: PDF_ANNOT_SOUND, java: PDF_ANNOT_SOUND, dotnet: PDF_ANNOT_SOUND}
+    rust: "PDF_ANNOT_SOUND"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-sound]
+  - name: PDF_ANNOT_SQUARE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_SQUARE, node: PDF_ANNOT_SQUARE, java: PDF_ANNOT_SQUARE, dotnet: PDF_ANNOT_SQUARE}
+    rust: "PDF_ANNOT_SQUARE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-square]
+  - name: PDF_ANNOT_SQUIGGLY
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_SQUIGGLY, node: PDF_ANNOT_SQUIGGLY, java: PDF_ANNOT_SQUIGGLY, dotnet: PDF_ANNOT_SQUIGGLY}
+    rust: "PDF_ANNOT_SQUIGGLY"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-squiggly]
+  - name: PDF_ANNOT_STAMP
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_STAMP, node: PDF_ANNOT_STAMP, java: PDF_ANNOT_STAMP, dotnet: PDF_ANNOT_STAMP}
+    rust: "PDF_ANNOT_STAMP"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-stamp]
+  - name: PDF_ANNOT_STRIKE_OUT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_STRIKE_OUT, node: PDF_ANNOT_STRIKE_OUT, java: PDF_ANNOT_STRIKE_OUT, dotnet: PDF_ANNOT_STRIKE_OUT}
+    rust: "PDF_ANNOT_STRIKE_OUT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-strike-out]
+  - name: PDF_ANNOT_TEXT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_TEXT, node: PDF_ANNOT_TEXT, java: PDF_ANNOT_TEXT, dotnet: PDF_ANNOT_TEXT}
+    rust: "PDF_ANNOT_TEXT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-text]
+  - name: PDF_ANNOT_TRAP_NET
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_TRAP_NET, node: PDF_ANNOT_TRAP_NET, java: PDF_ANNOT_TRAP_NET, dotnet: PDF_ANNOT_TRAP_NET}
+    rust: "PDF_ANNOT_TRAP_NET"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-trap-net]
+  - name: PDF_ANNOT_UNDERLINE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_UNDERLINE, node: PDF_ANNOT_UNDERLINE, java: PDF_ANNOT_UNDERLINE, dotnet: PDF_ANNOT_UNDERLINE}
+    rust: "PDF_ANNOT_UNDERLINE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-underline]
+  - name: PDF_ANNOT_UNKNOWN
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_UNKNOWN, node: PDF_ANNOT_UNKNOWN, java: PDF_ANNOT_UNKNOWN, dotnet: PDF_ANNOT_UNKNOWN}
+    rust: "PDF_ANNOT_UNKNOWN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-unknown]
+  - name: PDF_ANNOT_WATERMARK
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_WATERMARK, node: PDF_ANNOT_WATERMARK, java: PDF_ANNOT_WATERMARK, dotnet: PDF_ANNOT_WATERMARK}
+    rust: "PDF_ANNOT_WATERMARK"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-watermark]
+  - name: PDF_ANNOT_WIDGET
+    kind: property
+    signature: "()"
+    names: {python: PDF_ANNOT_WIDGET, node: PDF_ANNOT_WIDGET, java: PDF_ANNOT_WIDGET, dotnet: PDF_ANNOT_WIDGET}
+    rust: "PDF_ANNOT_WIDGET"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-annot-widget]
+  # annotation borders (7).
+  - name: PDF_BORDER_EFFECT_CLOUDY
+    kind: property
+    signature: "()"
+    names: {python: PDF_BORDER_EFFECT_CLOUDY, node: PDF_BORDER_EFFECT_CLOUDY, java: PDF_BORDER_EFFECT_CLOUDY, dotnet: PDF_BORDER_EFFECT_CLOUDY}
+    rust: "PDF_BORDER_EFFECT_CLOUDY"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-border-effect-cloudy]
+  - name: PDF_BORDER_EFFECT_NONE
+    kind: property
+    signature: "()"
+    names: {python: PDF_BORDER_EFFECT_NONE, node: PDF_BORDER_EFFECT_NONE, java: PDF_BORDER_EFFECT_NONE, dotnet: PDF_BORDER_EFFECT_NONE}
+    rust: "PDF_BORDER_EFFECT_NONE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-border-effect-none]
+  - name: PDF_BORDER_STYLE_BEVELED
+    kind: property
+    signature: "()"
+    names: {python: PDF_BORDER_STYLE_BEVELED, node: PDF_BORDER_STYLE_BEVELED, java: PDF_BORDER_STYLE_BEVELED, dotnet: PDF_BORDER_STYLE_BEVELED}
+    rust: "PDF_BORDER_STYLE_BEVELED"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-border-style-beveled]
+  - name: PDF_BORDER_STYLE_DASHED
+    kind: property
+    signature: "()"
+    names: {python: PDF_BORDER_STYLE_DASHED, node: PDF_BORDER_STYLE_DASHED, java: PDF_BORDER_STYLE_DASHED, dotnet: PDF_BORDER_STYLE_DASHED}
+    rust: "PDF_BORDER_STYLE_DASHED"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-border-style-dashed]
+  - name: PDF_BORDER_STYLE_INSET
+    kind: property
+    signature: "()"
+    names: {python: PDF_BORDER_STYLE_INSET, node: PDF_BORDER_STYLE_INSET, java: PDF_BORDER_STYLE_INSET, dotnet: PDF_BORDER_STYLE_INSET}
+    rust: "PDF_BORDER_STYLE_INSET"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-border-style-inset]
+  - name: PDF_BORDER_STYLE_SOLID
+    kind: property
+    signature: "()"
+    names: {python: PDF_BORDER_STYLE_SOLID, node: PDF_BORDER_STYLE_SOLID, java: PDF_BORDER_STYLE_SOLID, dotnet: PDF_BORDER_STYLE_SOLID}
+    rust: "PDF_BORDER_STYLE_SOLID"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-border-style-solid]
+  - name: PDF_BORDER_STYLE_UNDERLINE
+    kind: property
+    signature: "()"
+    names: {python: PDF_BORDER_STYLE_UNDERLINE, node: PDF_BORDER_STYLE_UNDERLINE, java: PDF_BORDER_STYLE_UNDERLINE, dotnet: PDF_BORDER_STYLE_UNDERLINE}
+    rust: "PDF_BORDER_STYLE_UNDERLINE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-border-style-underline]
+  # widget and field flags (33).
+  - name: PDF_BTN_FIELD_IS_NO_TOGGLE_TO_OFF
+    kind: property
+    signature: "()"
+    names: {python: PDF_BTN_FIELD_IS_NO_TOGGLE_TO_OFF, node: PDF_BTN_FIELD_IS_NO_TOGGLE_TO_OFF, java: PDF_BTN_FIELD_IS_NO_TOGGLE_TO_OFF, dotnet: PDF_BTN_FIELD_IS_NO_TOGGLE_TO_OFF}
+    rust: "PDF_BTN_FIELD_IS_NO_TOGGLE_TO_OFF"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-btn-field-is-no-toggle-to-off]
+  - name: PDF_BTN_FIELD_IS_PUSHBUTTON
+    kind: property
+    signature: "()"
+    names: {python: PDF_BTN_FIELD_IS_PUSHBUTTON, node: PDF_BTN_FIELD_IS_PUSHBUTTON, java: PDF_BTN_FIELD_IS_PUSHBUTTON, dotnet: PDF_BTN_FIELD_IS_PUSHBUTTON}
+    rust: "PDF_BTN_FIELD_IS_PUSHBUTTON"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-btn-field-is-pushbutton]
+  - name: PDF_BTN_FIELD_IS_RADIO
+    kind: property
+    signature: "()"
+    names: {python: PDF_BTN_FIELD_IS_RADIO, node: PDF_BTN_FIELD_IS_RADIO, java: PDF_BTN_FIELD_IS_RADIO, dotnet: PDF_BTN_FIELD_IS_RADIO}
+    rust: "PDF_BTN_FIELD_IS_RADIO"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-btn-field-is-radio]
+  - name: PDF_BTN_FIELD_IS_RADIOS_IN_UNISON
+    kind: property
+    signature: "()"
+    names: {python: PDF_BTN_FIELD_IS_RADIOS_IN_UNISON, node: PDF_BTN_FIELD_IS_RADIOS_IN_UNISON, java: PDF_BTN_FIELD_IS_RADIOS_IN_UNISON, dotnet: PDF_BTN_FIELD_IS_RADIOS_IN_UNISON}
+    rust: "PDF_BTN_FIELD_IS_RADIOS_IN_UNISON"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-btn-field-is-radios-in-unison]
+  - name: PDF_CH_FIELD_IS_COMBO
+    kind: property
+    signature: "()"
+    names: {python: PDF_CH_FIELD_IS_COMBO, node: PDF_CH_FIELD_IS_COMBO, java: PDF_CH_FIELD_IS_COMBO, dotnet: PDF_CH_FIELD_IS_COMBO}
+    rust: "PDF_CH_FIELD_IS_COMBO"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-ch-field-is-combo]
+  - name: PDF_CH_FIELD_IS_COMMIT_ON_SEL_CHANGE
+    kind: property
+    signature: "()"
+    names: {python: PDF_CH_FIELD_IS_COMMIT_ON_SEL_CHANGE, node: PDF_CH_FIELD_IS_COMMIT_ON_SEL_CHANGE, java: PDF_CH_FIELD_IS_COMMIT_ON_SEL_CHANGE, dotnet: PDF_CH_FIELD_IS_COMMIT_ON_SEL_CHANGE}
+    rust: "PDF_CH_FIELD_IS_COMMIT_ON_SEL_CHANGE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-ch-field-is-commit-on-sel-change]
+  - name: PDF_CH_FIELD_IS_DO_NOT_SPELL_CHECK
+    kind: property
+    signature: "()"
+    names: {python: PDF_CH_FIELD_IS_DO_NOT_SPELL_CHECK, node: PDF_CH_FIELD_IS_DO_NOT_SPELL_CHECK, java: PDF_CH_FIELD_IS_DO_NOT_SPELL_CHECK, dotnet: PDF_CH_FIELD_IS_DO_NOT_SPELL_CHECK}
+    rust: "PDF_CH_FIELD_IS_DO_NOT_SPELL_CHECK"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-ch-field-is-do-not-spell-check]
+  - name: PDF_CH_FIELD_IS_EDIT
+    kind: property
+    signature: "()"
+    names: {python: PDF_CH_FIELD_IS_EDIT, node: PDF_CH_FIELD_IS_EDIT, java: PDF_CH_FIELD_IS_EDIT, dotnet: PDF_CH_FIELD_IS_EDIT}
+    rust: "PDF_CH_FIELD_IS_EDIT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-ch-field-is-edit]
+  - name: PDF_CH_FIELD_IS_MULTI_SELECT
+    kind: property
+    signature: "()"
+    names: {python: PDF_CH_FIELD_IS_MULTI_SELECT, node: PDF_CH_FIELD_IS_MULTI_SELECT, java: PDF_CH_FIELD_IS_MULTI_SELECT, dotnet: PDF_CH_FIELD_IS_MULTI_SELECT}
+    rust: "PDF_CH_FIELD_IS_MULTI_SELECT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-ch-field-is-multi-select]
+  - name: PDF_CH_FIELD_IS_SORT
+    kind: property
+    signature: "()"
+    names: {python: PDF_CH_FIELD_IS_SORT, node: PDF_CH_FIELD_IS_SORT, java: PDF_CH_FIELD_IS_SORT, dotnet: PDF_CH_FIELD_IS_SORT}
+    rust: "PDF_CH_FIELD_IS_SORT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-ch-field-is-sort]
+  - name: PDF_FIELD_IS_NO_EXPORT
+    kind: property
+    signature: "()"
+    names: {python: PDF_FIELD_IS_NO_EXPORT, node: PDF_FIELD_IS_NO_EXPORT, java: PDF_FIELD_IS_NO_EXPORT, dotnet: PDF_FIELD_IS_NO_EXPORT}
+    rust: "PDF_FIELD_IS_NO_EXPORT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-field-is-no-export]
+  - name: PDF_FIELD_IS_READ_ONLY
+    kind: property
+    signature: "()"
+    names: {python: PDF_FIELD_IS_READ_ONLY, node: PDF_FIELD_IS_READ_ONLY, java: PDF_FIELD_IS_READ_ONLY, dotnet: PDF_FIELD_IS_READ_ONLY}
+    rust: "PDF_FIELD_IS_READ_ONLY"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-field-is-read-only]
+  - name: PDF_FIELD_IS_REQUIRED
+    kind: property
+    signature: "()"
+    names: {python: PDF_FIELD_IS_REQUIRED, node: PDF_FIELD_IS_REQUIRED, java: PDF_FIELD_IS_REQUIRED, dotnet: PDF_FIELD_IS_REQUIRED}
+    rust: "PDF_FIELD_IS_REQUIRED"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-field-is-required]
+  - name: PDF_TX_FIELD_IS_COMB
+    kind: property
+    signature: "()"
+    names: {python: PDF_TX_FIELD_IS_COMB, node: PDF_TX_FIELD_IS_COMB, java: PDF_TX_FIELD_IS_COMB, dotnet: PDF_TX_FIELD_IS_COMB}
+    rust: "PDF_TX_FIELD_IS_COMB"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-tx-field-is-comb]
+  - name: PDF_TX_FIELD_IS_DO_NOT_SCROLL
+    kind: property
+    signature: "()"
+    names: {python: PDF_TX_FIELD_IS_DO_NOT_SCROLL, node: PDF_TX_FIELD_IS_DO_NOT_SCROLL, java: PDF_TX_FIELD_IS_DO_NOT_SCROLL, dotnet: PDF_TX_FIELD_IS_DO_NOT_SCROLL}
+    rust: "PDF_TX_FIELD_IS_DO_NOT_SCROLL"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-tx-field-is-do-not-scroll]
+  - name: PDF_TX_FIELD_IS_DO_NOT_SPELL_CHECK
+    kind: property
+    signature: "()"
+    names: {python: PDF_TX_FIELD_IS_DO_NOT_SPELL_CHECK, node: PDF_TX_FIELD_IS_DO_NOT_SPELL_CHECK, java: PDF_TX_FIELD_IS_DO_NOT_SPELL_CHECK, dotnet: PDF_TX_FIELD_IS_DO_NOT_SPELL_CHECK}
+    rust: "PDF_TX_FIELD_IS_DO_NOT_SPELL_CHECK"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-tx-field-is-do-not-spell-check]
+  - name: PDF_TX_FIELD_IS_FILE_SELECT
+    kind: property
+    signature: "()"
+    names: {python: PDF_TX_FIELD_IS_FILE_SELECT, node: PDF_TX_FIELD_IS_FILE_SELECT, java: PDF_TX_FIELD_IS_FILE_SELECT, dotnet: PDF_TX_FIELD_IS_FILE_SELECT}
+    rust: "PDF_TX_FIELD_IS_FILE_SELECT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-tx-field-is-file-select]
+  - name: PDF_TX_FIELD_IS_MULTILINE
+    kind: property
+    signature: "()"
+    names: {python: PDF_TX_FIELD_IS_MULTILINE, node: PDF_TX_FIELD_IS_MULTILINE, java: PDF_TX_FIELD_IS_MULTILINE, dotnet: PDF_TX_FIELD_IS_MULTILINE}
+    rust: "PDF_TX_FIELD_IS_MULTILINE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-tx-field-is-multiline]
+  - name: PDF_TX_FIELD_IS_PASSWORD
+    kind: property
+    signature: "()"
+    names: {python: PDF_TX_FIELD_IS_PASSWORD, node: PDF_TX_FIELD_IS_PASSWORD, java: PDF_TX_FIELD_IS_PASSWORD, dotnet: PDF_TX_FIELD_IS_PASSWORD}
+    rust: "PDF_TX_FIELD_IS_PASSWORD"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-tx-field-is-password]
+  - name: PDF_TX_FIELD_IS_RICH_TEXT
+    kind: property
+    signature: "()"
+    names: {python: PDF_TX_FIELD_IS_RICH_TEXT, node: PDF_TX_FIELD_IS_RICH_TEXT, java: PDF_TX_FIELD_IS_RICH_TEXT, dotnet: PDF_TX_FIELD_IS_RICH_TEXT}
+    rust: "PDF_TX_FIELD_IS_RICH_TEXT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-tx-field-is-rich-text]
+  - name: PDF_WIDGET_TX_FORMAT_DATE
+    kind: property
+    signature: "()"
+    names: {python: PDF_WIDGET_TX_FORMAT_DATE, node: PDF_WIDGET_TX_FORMAT_DATE, java: PDF_WIDGET_TX_FORMAT_DATE, dotnet: PDF_WIDGET_TX_FORMAT_DATE}
+    rust: "PDF_WIDGET_TX_FORMAT_DATE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-widget-tx-format-date]
+  - name: PDF_WIDGET_TX_FORMAT_NONE
+    kind: property
+    signature: "()"
+    names: {python: PDF_WIDGET_TX_FORMAT_NONE, node: PDF_WIDGET_TX_FORMAT_NONE, java: PDF_WIDGET_TX_FORMAT_NONE, dotnet: PDF_WIDGET_TX_FORMAT_NONE}
+    rust: "PDF_WIDGET_TX_FORMAT_NONE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-widget-tx-format-none]
+  - name: PDF_WIDGET_TX_FORMAT_NUMBER
+    kind: property
+    signature: "()"
+    names: {python: PDF_WIDGET_TX_FORMAT_NUMBER, node: PDF_WIDGET_TX_FORMAT_NUMBER, java: PDF_WIDGET_TX_FORMAT_NUMBER, dotnet: PDF_WIDGET_TX_FORMAT_NUMBER}
+    rust: "PDF_WIDGET_TX_FORMAT_NUMBER"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-widget-tx-format-number]
+  - name: PDF_WIDGET_TX_FORMAT_SPECIAL
+    kind: property
+    signature: "()"
+    names: {python: PDF_WIDGET_TX_FORMAT_SPECIAL, node: PDF_WIDGET_TX_FORMAT_SPECIAL, java: PDF_WIDGET_TX_FORMAT_SPECIAL, dotnet: PDF_WIDGET_TX_FORMAT_SPECIAL}
+    rust: "PDF_WIDGET_TX_FORMAT_SPECIAL"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-widget-tx-format-special]
+  - name: PDF_WIDGET_TX_FORMAT_TIME
+    kind: property
+    signature: "()"
+    names: {python: PDF_WIDGET_TX_FORMAT_TIME, node: PDF_WIDGET_TX_FORMAT_TIME, java: PDF_WIDGET_TX_FORMAT_TIME, dotnet: PDF_WIDGET_TX_FORMAT_TIME}
+    rust: "PDF_WIDGET_TX_FORMAT_TIME"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-widget-tx-format-time]
+  - name: PDF_WIDGET_TYPE_BUTTON
+    kind: property
+    signature: "()"
+    names: {python: PDF_WIDGET_TYPE_BUTTON, node: PDF_WIDGET_TYPE_BUTTON, java: PDF_WIDGET_TYPE_BUTTON, dotnet: PDF_WIDGET_TYPE_BUTTON}
+    rust: "PDF_WIDGET_TYPE_BUTTON"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-widget-type-button]
+  - name: PDF_WIDGET_TYPE_CHECKBOX
+    kind: property
+    signature: "()"
+    names: {python: PDF_WIDGET_TYPE_CHECKBOX, node: PDF_WIDGET_TYPE_CHECKBOX, java: PDF_WIDGET_TYPE_CHECKBOX, dotnet: PDF_WIDGET_TYPE_CHECKBOX}
+    rust: "PDF_WIDGET_TYPE_CHECKBOX"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-widget-type-checkbox]
+  - name: PDF_WIDGET_TYPE_COMBOBOX
+    kind: property
+    signature: "()"
+    names: {python: PDF_WIDGET_TYPE_COMBOBOX, node: PDF_WIDGET_TYPE_COMBOBOX, java: PDF_WIDGET_TYPE_COMBOBOX, dotnet: PDF_WIDGET_TYPE_COMBOBOX}
+    rust: "PDF_WIDGET_TYPE_COMBOBOX"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-widget-type-combobox]
+  - name: PDF_WIDGET_TYPE_LISTBOX
+    kind: property
+    signature: "()"
+    names: {python: PDF_WIDGET_TYPE_LISTBOX, node: PDF_WIDGET_TYPE_LISTBOX, java: PDF_WIDGET_TYPE_LISTBOX, dotnet: PDF_WIDGET_TYPE_LISTBOX}
+    rust: "PDF_WIDGET_TYPE_LISTBOX"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-widget-type-listbox]
+  - name: PDF_WIDGET_TYPE_RADIOBUTTON
+    kind: property
+    signature: "()"
+    names: {python: PDF_WIDGET_TYPE_RADIOBUTTON, node: PDF_WIDGET_TYPE_RADIOBUTTON, java: PDF_WIDGET_TYPE_RADIOBUTTON, dotnet: PDF_WIDGET_TYPE_RADIOBUTTON}
+    rust: "PDF_WIDGET_TYPE_RADIOBUTTON"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-widget-type-radiobutton]
+  - name: PDF_WIDGET_TYPE_SIGNATURE
+    kind: property
+    signature: "()"
+    names: {python: PDF_WIDGET_TYPE_SIGNATURE, node: PDF_WIDGET_TYPE_SIGNATURE, java: PDF_WIDGET_TYPE_SIGNATURE, dotnet: PDF_WIDGET_TYPE_SIGNATURE}
+    rust: "PDF_WIDGET_TYPE_SIGNATURE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-widget-type-signature]
+  - name: PDF_WIDGET_TYPE_TEXT
+    kind: property
+    signature: "()"
+    names: {python: PDF_WIDGET_TYPE_TEXT, node: PDF_WIDGET_TYPE_TEXT, java: PDF_WIDGET_TYPE_TEXT, dotnet: PDF_WIDGET_TYPE_TEXT}
+    rust: "PDF_WIDGET_TYPE_TEXT"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l2-constants-all]
+  - name: PDF_WIDGET_TYPE_UNKNOWN
+    kind: property
+    signature: "()"
+    names: {python: PDF_WIDGET_TYPE_UNKNOWN, node: PDF_WIDGET_TYPE_UNKNOWN, java: PDF_WIDGET_TYPE_UNKNOWN, dotnet: PDF_WIDGET_TYPE_UNKNOWN}
+    rust: "PDF_WIDGET_TYPE_UNKNOWN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-widget-type-unknown]
+  # stamp names (14).
+  - name: STAMP_Approved
+    kind: property
+    signature: "()"
+    names: {python: STAMP_Approved, node: STAMP_Approved, java: STAMP_Approved, dotnet: STAMP_Approved}
+    rust: "STAMP_Approved"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-stamp-approved]
+  - name: STAMP_AsIs
+    kind: property
+    signature: "()"
+    names: {python: STAMP_AsIs, node: STAMP_AsIs, java: STAMP_AsIs, dotnet: STAMP_AsIs}
+    rust: "STAMP_AsIs"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-stamp-asis]
+  - name: STAMP_Confidential
+    kind: property
+    signature: "()"
+    names: {python: STAMP_Confidential, node: STAMP_Confidential, java: STAMP_Confidential, dotnet: STAMP_Confidential}
+    rust: "STAMP_Confidential"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-stamp-confidential]
+  - name: STAMP_Departmental
+    kind: property
+    signature: "()"
+    names: {python: STAMP_Departmental, node: STAMP_Departmental, java: STAMP_Departmental, dotnet: STAMP_Departmental}
+    rust: "STAMP_Departmental"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-stamp-departmental]
+  - name: STAMP_Draft
+    kind: property
+    signature: "()"
+    names: {python: STAMP_Draft, node: STAMP_Draft, java: STAMP_Draft, dotnet: STAMP_Draft}
+    rust: "STAMP_Draft"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-stamp-draft]
+  - name: STAMP_Experimental
+    kind: property
+    signature: "()"
+    names: {python: STAMP_Experimental, node: STAMP_Experimental, java: STAMP_Experimental, dotnet: STAMP_Experimental}
+    rust: "STAMP_Experimental"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-stamp-experimental]
+  - name: STAMP_Expired
+    kind: property
+    signature: "()"
+    names: {python: STAMP_Expired, node: STAMP_Expired, java: STAMP_Expired, dotnet: STAMP_Expired}
+    rust: "STAMP_Expired"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-stamp-expired]
+  - name: STAMP_Final
+    kind: property
+    signature: "()"
+    names: {python: STAMP_Final, node: STAMP_Final, java: STAMP_Final, dotnet: STAMP_Final}
+    rust: "STAMP_Final"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-stamp-final]
+  - name: STAMP_ForComment
+    kind: property
+    signature: "()"
+    names: {python: STAMP_ForComment, node: STAMP_ForComment, java: STAMP_ForComment, dotnet: STAMP_ForComment}
+    rust: "STAMP_ForComment"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-stamp-forcomment]
+  - name: STAMP_ForPublicRelease
+    kind: property
+    signature: "()"
+    names: {python: STAMP_ForPublicRelease, node: STAMP_ForPublicRelease, java: STAMP_ForPublicRelease, dotnet: STAMP_ForPublicRelease}
+    rust: "STAMP_ForPublicRelease"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-stamp-forpublicrelease]
+  - name: STAMP_NotApproved
+    kind: property
+    signature: "()"
+    names: {python: STAMP_NotApproved, node: STAMP_NotApproved, java: STAMP_NotApproved, dotnet: STAMP_NotApproved}
+    rust: "STAMP_NotApproved"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-stamp-notapproved]
+  - name: STAMP_NotForPublicRelease
+    kind: property
+    signature: "()"
+    names: {python: STAMP_NotForPublicRelease, node: STAMP_NotForPublicRelease, java: STAMP_NotForPublicRelease, dotnet: STAMP_NotForPublicRelease}
+    rust: "STAMP_NotForPublicRelease"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-stamp-notforpublicrelease]
+  - name: STAMP_Sold
+    kind: property
+    signature: "()"
+    names: {python: STAMP_Sold, node: STAMP_Sold, java: STAMP_Sold, dotnet: STAMP_Sold}
+    rust: "STAMP_Sold"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-stamp-sold]
+  - name: STAMP_TopSecret
+    kind: property
+    signature: "()"
+    names: {python: STAMP_TopSecret, node: STAMP_TopSecret, java: STAMP_TopSecret, dotnet: STAMP_TopSecret}
+    rust: "STAMP_TopSecret"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-stamp-topsecret]
+  # blend modes (16).
+  - name: PDF_BM_Color
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_Color, node: PDF_BM_Color, java: PDF_BM_Color, dotnet: PDF_BM_Color}
+    rust: "PDF_BM_Color"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-color]
+  - name: PDF_BM_ColorBurn
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_ColorBurn, node: PDF_BM_ColorBurn, java: PDF_BM_ColorBurn, dotnet: PDF_BM_ColorBurn}
+    rust: "PDF_BM_ColorBurn"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-colorburn]
+  - name: PDF_BM_ColorDodge
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_ColorDodge, node: PDF_BM_ColorDodge, java: PDF_BM_ColorDodge, dotnet: PDF_BM_ColorDodge}
+    rust: "PDF_BM_ColorDodge"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-colordodge]
+  - name: PDF_BM_Darken
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_Darken, node: PDF_BM_Darken, java: PDF_BM_Darken, dotnet: PDF_BM_Darken}
+    rust: "PDF_BM_Darken"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-darken]
+  - name: PDF_BM_Difference
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_Difference, node: PDF_BM_Difference, java: PDF_BM_Difference, dotnet: PDF_BM_Difference}
+    rust: "PDF_BM_Difference"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-difference]
+  - name: PDF_BM_Exclusion
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_Exclusion, node: PDF_BM_Exclusion, java: PDF_BM_Exclusion, dotnet: PDF_BM_Exclusion}
+    rust: "PDF_BM_Exclusion"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-exclusion]
+  - name: PDF_BM_HardLight
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_HardLight, node: PDF_BM_HardLight, java: PDF_BM_HardLight, dotnet: PDF_BM_HardLight}
+    rust: "PDF_BM_HardLight"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-hardlight]
+  - name: PDF_BM_Hue
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_Hue, node: PDF_BM_Hue, java: PDF_BM_Hue, dotnet: PDF_BM_Hue}
+    rust: "PDF_BM_Hue"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-hue]
+  - name: PDF_BM_Lighten
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_Lighten, node: PDF_BM_Lighten, java: PDF_BM_Lighten, dotnet: PDF_BM_Lighten}
+    rust: "PDF_BM_Lighten"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-lighten]
+  - name: PDF_BM_Luminosity
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_Luminosity, node: PDF_BM_Luminosity, java: PDF_BM_Luminosity, dotnet: PDF_BM_Luminosity}
+    rust: "PDF_BM_Luminosity"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-luminosity]
+  - name: PDF_BM_Multiply
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_Multiply, node: PDF_BM_Multiply, java: PDF_BM_Multiply, dotnet: PDF_BM_Multiply}
+    rust: "PDF_BM_Multiply"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-multiply]
+  - name: PDF_BM_Normal
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_Normal, node: PDF_BM_Normal, java: PDF_BM_Normal, dotnet: PDF_BM_Normal}
+    rust: "PDF_BM_Normal"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-normal]
+  - name: PDF_BM_Overlay
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_Overlay, node: PDF_BM_Overlay, java: PDF_BM_Overlay, dotnet: PDF_BM_Overlay}
+    rust: "PDF_BM_Overlay"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-overlay]
+  - name: PDF_BM_Saturation
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_Saturation, node: PDF_BM_Saturation, java: PDF_BM_Saturation, dotnet: PDF_BM_Saturation}
+    rust: "PDF_BM_Saturation"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-saturation]
+  - name: PDF_BM_Screen
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_Screen, node: PDF_BM_Screen, java: PDF_BM_Screen, dotnet: PDF_BM_Screen}
+    rust: "PDF_BM_Screen"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-screen]
+  - name: PDF_BM_SoftLight
+    kind: property
+    signature: "()"
+    names: {python: PDF_BM_SoftLight, node: PDF_BM_SoftLight, java: PDF_BM_SoftLight, dotnet: PDF_BM_SoftLight}
+    rust: "PDF_BM_SoftLight"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-bm-softlight]
+  # redaction controls (10).
+  - name: PDF_REDACT_IMAGE_NONE
+    kind: property
+    signature: "()"
+    names: {python: PDF_REDACT_IMAGE_NONE, node: PDF_REDACT_IMAGE_NONE, java: PDF_REDACT_IMAGE_NONE, dotnet: PDF_REDACT_IMAGE_NONE}
+    rust: "PDF_REDACT_IMAGE_NONE"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l2-constants-all]
+  - name: PDF_REDACT_IMAGE_PIXELS
+    kind: property
+    signature: "()"
+    names: {python: PDF_REDACT_IMAGE_PIXELS, node: PDF_REDACT_IMAGE_PIXELS, java: PDF_REDACT_IMAGE_PIXELS, dotnet: PDF_REDACT_IMAGE_PIXELS}
+    rust: "PDF_REDACT_IMAGE_PIXELS"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-redact-image-pixels]
+  - name: PDF_REDACT_IMAGE_REMOVE
+    kind: property
+    signature: "()"
+    names: {python: PDF_REDACT_IMAGE_REMOVE, node: PDF_REDACT_IMAGE_REMOVE, java: PDF_REDACT_IMAGE_REMOVE, dotnet: PDF_REDACT_IMAGE_REMOVE}
+    rust: "PDF_REDACT_IMAGE_REMOVE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-redact-image-remove]
+  - name: PDF_REDACT_IMAGE_REMOVE_UNLESS_INVISIBLE
+    kind: property
+    signature: "()"
+    names: {python: PDF_REDACT_IMAGE_REMOVE_UNLESS_INVISIBLE, node: PDF_REDACT_IMAGE_REMOVE_UNLESS_INVISIBLE, java: PDF_REDACT_IMAGE_REMOVE_UNLESS_INVISIBLE, dotnet: PDF_REDACT_IMAGE_REMOVE_UNLESS_INVISIBLE}
+    rust: "PDF_REDACT_IMAGE_REMOVE_UNLESS_INVISIBLE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-redact-image-remove-unless-invisible]
+  - name: PDF_REDACT_LINE_ART_NONE
+    kind: property
+    signature: "()"
+    names: {python: PDF_REDACT_LINE_ART_NONE, node: PDF_REDACT_LINE_ART_NONE, java: PDF_REDACT_LINE_ART_NONE, dotnet: PDF_REDACT_LINE_ART_NONE}
+    rust: "PDF_REDACT_LINE_ART_NONE"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l2-constants-all]
+  - name: PDF_REDACT_LINE_ART_REMOVE_IF_COVERED
+    kind: property
+    signature: "()"
+    names: {python: PDF_REDACT_LINE_ART_REMOVE_IF_COVERED, node: PDF_REDACT_LINE_ART_REMOVE_IF_COVERED, java: PDF_REDACT_LINE_ART_REMOVE_IF_COVERED, dotnet: PDF_REDACT_LINE_ART_REMOVE_IF_COVERED}
+    rust: "PDF_REDACT_LINE_ART_REMOVE_IF_COVERED"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-redact-line-art-remove-if-covered]
+  - name: PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED
+    kind: property
+    signature: "()"
+    names: {python: PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED, node: PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED, java: PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED, dotnet: PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED}
+    rust: "PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-redact-line-art-remove-if-touched]
+  - name: PDF_REDACT_TEXT_NONE
+    kind: property
+    signature: "()"
+    names: {python: PDF_REDACT_TEXT_NONE, node: PDF_REDACT_TEXT_NONE, java: PDF_REDACT_TEXT_NONE, dotnet: PDF_REDACT_TEXT_NONE}
+    rust: "PDF_REDACT_TEXT_NONE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-redact-text-none]
+  - name: PDF_REDACT_TEXT_REMOVE
+    kind: property
+    signature: "()"
+    names: {python: PDF_REDACT_TEXT_REMOVE, node: PDF_REDACT_TEXT_REMOVE, java: PDF_REDACT_TEXT_REMOVE, dotnet: PDF_REDACT_TEXT_REMOVE}
+    rust: "PDF_REDACT_TEXT_REMOVE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-redact-text-remove]
+  - name: PDF_REDACT_TEXT_REMOVE_INVISIBLE
+    kind: property
+    signature: "()"
+    names: {python: PDF_REDACT_TEXT_REMOVE_INVISIBLE, node: PDF_REDACT_TEXT_REMOVE_INVISIBLE, java: PDF_REDACT_TEXT_REMOVE_INVISIBLE, dotnet: PDF_REDACT_TEXT_REMOVE_INVISIBLE}
+    rust: "PDF_REDACT_TEXT_REMOVE_INVISIBLE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-redact-text-remove-invisible]
+  # script codes for font setup (171).
+  - name: UCDN_SCRIPT_ADLAM
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_ADLAM, node: UCDN_SCRIPT_ADLAM, java: UCDN_SCRIPT_ADLAM, dotnet: UCDN_SCRIPT_ADLAM}
+    rust: "UCDN_SCRIPT_ADLAM"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-adlam]
+  - name: UCDN_SCRIPT_AHOM
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_AHOM, node: UCDN_SCRIPT_AHOM, java: UCDN_SCRIPT_AHOM, dotnet: UCDN_SCRIPT_AHOM}
+    rust: "UCDN_SCRIPT_AHOM"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-ahom]
+  - name: UCDN_SCRIPT_ANATOLIAN_HIEROGLYPHS
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_ANATOLIAN_HIEROGLYPHS, node: UCDN_SCRIPT_ANATOLIAN_HIEROGLYPHS, java: UCDN_SCRIPT_ANATOLIAN_HIEROGLYPHS, dotnet: UCDN_SCRIPT_ANATOLIAN_HIEROGLYPHS}
+    rust: "UCDN_SCRIPT_ANATOLIAN_HIEROGLYPHS"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-anatolian-hieroglyphs]
+  - name: UCDN_SCRIPT_ARABIC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_ARABIC, node: UCDN_SCRIPT_ARABIC, java: UCDN_SCRIPT_ARABIC, dotnet: UCDN_SCRIPT_ARABIC}
+    rust: "UCDN_SCRIPT_ARABIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-arabic]
+  - name: UCDN_SCRIPT_ARMENIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_ARMENIAN, node: UCDN_SCRIPT_ARMENIAN, java: UCDN_SCRIPT_ARMENIAN, dotnet: UCDN_SCRIPT_ARMENIAN}
+    rust: "UCDN_SCRIPT_ARMENIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-armenian]
+  - name: UCDN_SCRIPT_AVESTAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_AVESTAN, node: UCDN_SCRIPT_AVESTAN, java: UCDN_SCRIPT_AVESTAN, dotnet: UCDN_SCRIPT_AVESTAN}
+    rust: "UCDN_SCRIPT_AVESTAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-avestan]
+  - name: UCDN_SCRIPT_BALINESE
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_BALINESE, node: UCDN_SCRIPT_BALINESE, java: UCDN_SCRIPT_BALINESE, dotnet: UCDN_SCRIPT_BALINESE}
+    rust: "UCDN_SCRIPT_BALINESE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-balinese]
+  - name: UCDN_SCRIPT_BAMUM
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_BAMUM, node: UCDN_SCRIPT_BAMUM, java: UCDN_SCRIPT_BAMUM, dotnet: UCDN_SCRIPT_BAMUM}
+    rust: "UCDN_SCRIPT_BAMUM"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-bamum]
+  - name: UCDN_SCRIPT_BASSA_VAH
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_BASSA_VAH, node: UCDN_SCRIPT_BASSA_VAH, java: UCDN_SCRIPT_BASSA_VAH, dotnet: UCDN_SCRIPT_BASSA_VAH}
+    rust: "UCDN_SCRIPT_BASSA_VAH"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-bassa-vah]
+  - name: UCDN_SCRIPT_BATAK
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_BATAK, node: UCDN_SCRIPT_BATAK, java: UCDN_SCRIPT_BATAK, dotnet: UCDN_SCRIPT_BATAK}
+    rust: "UCDN_SCRIPT_BATAK"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-batak]
+  - name: UCDN_SCRIPT_BENGALI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_BENGALI, node: UCDN_SCRIPT_BENGALI, java: UCDN_SCRIPT_BENGALI, dotnet: UCDN_SCRIPT_BENGALI}
+    rust: "UCDN_SCRIPT_BENGALI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-bengali]
+  - name: UCDN_SCRIPT_BHAIKSUKI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_BHAIKSUKI, node: UCDN_SCRIPT_BHAIKSUKI, java: UCDN_SCRIPT_BHAIKSUKI, dotnet: UCDN_SCRIPT_BHAIKSUKI}
+    rust: "UCDN_SCRIPT_BHAIKSUKI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-bhaiksuki]
+  - name: UCDN_SCRIPT_BOPOMOFO
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_BOPOMOFO, node: UCDN_SCRIPT_BOPOMOFO, java: UCDN_SCRIPT_BOPOMOFO, dotnet: UCDN_SCRIPT_BOPOMOFO}
+    rust: "UCDN_SCRIPT_BOPOMOFO"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-bopomofo]
+  - name: UCDN_SCRIPT_BRAHMI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_BRAHMI, node: UCDN_SCRIPT_BRAHMI, java: UCDN_SCRIPT_BRAHMI, dotnet: UCDN_SCRIPT_BRAHMI}
+    rust: "UCDN_SCRIPT_BRAHMI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-brahmi]
+  - name: UCDN_SCRIPT_BRAILLE
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_BRAILLE, node: UCDN_SCRIPT_BRAILLE, java: UCDN_SCRIPT_BRAILLE, dotnet: UCDN_SCRIPT_BRAILLE}
+    rust: "UCDN_SCRIPT_BRAILLE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-braille]
+  - name: UCDN_SCRIPT_BUGINESE
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_BUGINESE, node: UCDN_SCRIPT_BUGINESE, java: UCDN_SCRIPT_BUGINESE, dotnet: UCDN_SCRIPT_BUGINESE}
+    rust: "UCDN_SCRIPT_BUGINESE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-buginese]
+  - name: UCDN_SCRIPT_BUHID
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_BUHID, node: UCDN_SCRIPT_BUHID, java: UCDN_SCRIPT_BUHID, dotnet: UCDN_SCRIPT_BUHID}
+    rust: "UCDN_SCRIPT_BUHID"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-buhid]
+  - name: UCDN_SCRIPT_CANADIAN_ABORIGINAL
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_CANADIAN_ABORIGINAL, node: UCDN_SCRIPT_CANADIAN_ABORIGINAL, java: UCDN_SCRIPT_CANADIAN_ABORIGINAL, dotnet: UCDN_SCRIPT_CANADIAN_ABORIGINAL}
+    rust: "UCDN_SCRIPT_CANADIAN_ABORIGINAL"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-canadian-aboriginal]
+  - name: UCDN_SCRIPT_CARIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_CARIAN, node: UCDN_SCRIPT_CARIAN, java: UCDN_SCRIPT_CARIAN, dotnet: UCDN_SCRIPT_CARIAN}
+    rust: "UCDN_SCRIPT_CARIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-carian]
+  - name: UCDN_SCRIPT_CAUCASIAN_ALBANIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_CAUCASIAN_ALBANIAN, node: UCDN_SCRIPT_CAUCASIAN_ALBANIAN, java: UCDN_SCRIPT_CAUCASIAN_ALBANIAN, dotnet: UCDN_SCRIPT_CAUCASIAN_ALBANIAN}
+    rust: "UCDN_SCRIPT_CAUCASIAN_ALBANIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-caucasian-albanian]
+  - name: UCDN_SCRIPT_CHAKMA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_CHAKMA, node: UCDN_SCRIPT_CHAKMA, java: UCDN_SCRIPT_CHAKMA, dotnet: UCDN_SCRIPT_CHAKMA}
+    rust: "UCDN_SCRIPT_CHAKMA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-chakma]
+  - name: UCDN_SCRIPT_CHAM
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_CHAM, node: UCDN_SCRIPT_CHAM, java: UCDN_SCRIPT_CHAM, dotnet: UCDN_SCRIPT_CHAM}
+    rust: "UCDN_SCRIPT_CHAM"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-cham]
+  - name: UCDN_SCRIPT_CHEROKEE
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_CHEROKEE, node: UCDN_SCRIPT_CHEROKEE, java: UCDN_SCRIPT_CHEROKEE, dotnet: UCDN_SCRIPT_CHEROKEE}
+    rust: "UCDN_SCRIPT_CHEROKEE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-cherokee]
+  - name: UCDN_SCRIPT_CHORASMIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_CHORASMIAN, node: UCDN_SCRIPT_CHORASMIAN, java: UCDN_SCRIPT_CHORASMIAN, dotnet: UCDN_SCRIPT_CHORASMIAN}
+    rust: "UCDN_SCRIPT_CHORASMIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-chorasmian]
+  - name: UCDN_SCRIPT_COMMON
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_COMMON, node: UCDN_SCRIPT_COMMON, java: UCDN_SCRIPT_COMMON, dotnet: UCDN_SCRIPT_COMMON}
+    rust: "UCDN_SCRIPT_COMMON"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-common]
+  - name: UCDN_SCRIPT_COPTIC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_COPTIC, node: UCDN_SCRIPT_COPTIC, java: UCDN_SCRIPT_COPTIC, dotnet: UCDN_SCRIPT_COPTIC}
+    rust: "UCDN_SCRIPT_COPTIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-coptic]
+  - name: UCDN_SCRIPT_CUNEIFORM
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_CUNEIFORM, node: UCDN_SCRIPT_CUNEIFORM, java: UCDN_SCRIPT_CUNEIFORM, dotnet: UCDN_SCRIPT_CUNEIFORM}
+    rust: "UCDN_SCRIPT_CUNEIFORM"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-cuneiform]
+  - name: UCDN_SCRIPT_CYPRIOT
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_CYPRIOT, node: UCDN_SCRIPT_CYPRIOT, java: UCDN_SCRIPT_CYPRIOT, dotnet: UCDN_SCRIPT_CYPRIOT}
+    rust: "UCDN_SCRIPT_CYPRIOT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-cypriot]
+  - name: UCDN_SCRIPT_CYPRO_MINOAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_CYPRO_MINOAN, node: UCDN_SCRIPT_CYPRO_MINOAN, java: UCDN_SCRIPT_CYPRO_MINOAN, dotnet: UCDN_SCRIPT_CYPRO_MINOAN}
+    rust: "UCDN_SCRIPT_CYPRO_MINOAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-cypro-minoan]
+  - name: UCDN_SCRIPT_CYRILLIC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_CYRILLIC, node: UCDN_SCRIPT_CYRILLIC, java: UCDN_SCRIPT_CYRILLIC, dotnet: UCDN_SCRIPT_CYRILLIC}
+    rust: "UCDN_SCRIPT_CYRILLIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-cyrillic]
+  - name: UCDN_SCRIPT_DESERET
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_DESERET, node: UCDN_SCRIPT_DESERET, java: UCDN_SCRIPT_DESERET, dotnet: UCDN_SCRIPT_DESERET}
+    rust: "UCDN_SCRIPT_DESERET"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-deseret]
+  - name: UCDN_SCRIPT_DEVANAGARI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_DEVANAGARI, node: UCDN_SCRIPT_DEVANAGARI, java: UCDN_SCRIPT_DEVANAGARI, dotnet: UCDN_SCRIPT_DEVANAGARI}
+    rust: "UCDN_SCRIPT_DEVANAGARI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-devanagari]
+  - name: UCDN_SCRIPT_DIVES_AKURU
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_DIVES_AKURU, node: UCDN_SCRIPT_DIVES_AKURU, java: UCDN_SCRIPT_DIVES_AKURU, dotnet: UCDN_SCRIPT_DIVES_AKURU}
+    rust: "UCDN_SCRIPT_DIVES_AKURU"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-dives-akuru]
+  - name: UCDN_SCRIPT_DOGRA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_DOGRA, node: UCDN_SCRIPT_DOGRA, java: UCDN_SCRIPT_DOGRA, dotnet: UCDN_SCRIPT_DOGRA}
+    rust: "UCDN_SCRIPT_DOGRA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-dogra]
+  - name: UCDN_SCRIPT_DUPLOYAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_DUPLOYAN, node: UCDN_SCRIPT_DUPLOYAN, java: UCDN_SCRIPT_DUPLOYAN, dotnet: UCDN_SCRIPT_DUPLOYAN}
+    rust: "UCDN_SCRIPT_DUPLOYAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-duployan]
+  - name: UCDN_SCRIPT_EGYPTIAN_HIEROGLYPHS
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_EGYPTIAN_HIEROGLYPHS, node: UCDN_SCRIPT_EGYPTIAN_HIEROGLYPHS, java: UCDN_SCRIPT_EGYPTIAN_HIEROGLYPHS, dotnet: UCDN_SCRIPT_EGYPTIAN_HIEROGLYPHS}
+    rust: "UCDN_SCRIPT_EGYPTIAN_HIEROGLYPHS"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-egyptian-hieroglyphs]
+  - name: UCDN_SCRIPT_ELBASAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_ELBASAN, node: UCDN_SCRIPT_ELBASAN, java: UCDN_SCRIPT_ELBASAN, dotnet: UCDN_SCRIPT_ELBASAN}
+    rust: "UCDN_SCRIPT_ELBASAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-elbasan]
+  - name: UCDN_SCRIPT_ELYMAIC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_ELYMAIC, node: UCDN_SCRIPT_ELYMAIC, java: UCDN_SCRIPT_ELYMAIC, dotnet: UCDN_SCRIPT_ELYMAIC}
+    rust: "UCDN_SCRIPT_ELYMAIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-elymaic]
+  - name: UCDN_SCRIPT_ETHIOPIC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_ETHIOPIC, node: UCDN_SCRIPT_ETHIOPIC, java: UCDN_SCRIPT_ETHIOPIC, dotnet: UCDN_SCRIPT_ETHIOPIC}
+    rust: "UCDN_SCRIPT_ETHIOPIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-ethiopic]
+  - name: UCDN_SCRIPT_GARAY
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_GARAY, node: UCDN_SCRIPT_GARAY, java: UCDN_SCRIPT_GARAY, dotnet: UCDN_SCRIPT_GARAY}
+    rust: "UCDN_SCRIPT_GARAY"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-garay]
+  - name: UCDN_SCRIPT_GEORGIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_GEORGIAN, node: UCDN_SCRIPT_GEORGIAN, java: UCDN_SCRIPT_GEORGIAN, dotnet: UCDN_SCRIPT_GEORGIAN}
+    rust: "UCDN_SCRIPT_GEORGIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-georgian]
+  - name: UCDN_SCRIPT_GLAGOLITIC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_GLAGOLITIC, node: UCDN_SCRIPT_GLAGOLITIC, java: UCDN_SCRIPT_GLAGOLITIC, dotnet: UCDN_SCRIPT_GLAGOLITIC}
+    rust: "UCDN_SCRIPT_GLAGOLITIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-glagolitic]
+  - name: UCDN_SCRIPT_GOTHIC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_GOTHIC, node: UCDN_SCRIPT_GOTHIC, java: UCDN_SCRIPT_GOTHIC, dotnet: UCDN_SCRIPT_GOTHIC}
+    rust: "UCDN_SCRIPT_GOTHIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-gothic]
+  - name: UCDN_SCRIPT_GRANTHA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_GRANTHA, node: UCDN_SCRIPT_GRANTHA, java: UCDN_SCRIPT_GRANTHA, dotnet: UCDN_SCRIPT_GRANTHA}
+    rust: "UCDN_SCRIPT_GRANTHA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-grantha]
+  - name: UCDN_SCRIPT_GREEK
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_GREEK, node: UCDN_SCRIPT_GREEK, java: UCDN_SCRIPT_GREEK, dotnet: UCDN_SCRIPT_GREEK}
+    rust: "UCDN_SCRIPT_GREEK"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-greek]
+  - name: UCDN_SCRIPT_GUJARATI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_GUJARATI, node: UCDN_SCRIPT_GUJARATI, java: UCDN_SCRIPT_GUJARATI, dotnet: UCDN_SCRIPT_GUJARATI}
+    rust: "UCDN_SCRIPT_GUJARATI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-gujarati]
+  - name: UCDN_SCRIPT_GUNJALA_GONDI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_GUNJALA_GONDI, node: UCDN_SCRIPT_GUNJALA_GONDI, java: UCDN_SCRIPT_GUNJALA_GONDI, dotnet: UCDN_SCRIPT_GUNJALA_GONDI}
+    rust: "UCDN_SCRIPT_GUNJALA_GONDI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-gunjala-gondi]
+  - name: UCDN_SCRIPT_GURMUKHI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_GURMUKHI, node: UCDN_SCRIPT_GURMUKHI, java: UCDN_SCRIPT_GURMUKHI, dotnet: UCDN_SCRIPT_GURMUKHI}
+    rust: "UCDN_SCRIPT_GURMUKHI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-gurmukhi]
+  - name: UCDN_SCRIPT_GURUNG_KHEMA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_GURUNG_KHEMA, node: UCDN_SCRIPT_GURUNG_KHEMA, java: UCDN_SCRIPT_GURUNG_KHEMA, dotnet: UCDN_SCRIPT_GURUNG_KHEMA}
+    rust: "UCDN_SCRIPT_GURUNG_KHEMA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-gurung-khema]
+  - name: UCDN_SCRIPT_HAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_HAN, node: UCDN_SCRIPT_HAN, java: UCDN_SCRIPT_HAN, dotnet: UCDN_SCRIPT_HAN}
+    rust: "UCDN_SCRIPT_HAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-han]
+  - name: UCDN_SCRIPT_HANGUL
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_HANGUL, node: UCDN_SCRIPT_HANGUL, java: UCDN_SCRIPT_HANGUL, dotnet: UCDN_SCRIPT_HANGUL}
+    rust: "UCDN_SCRIPT_HANGUL"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-hangul]
+  - name: UCDN_SCRIPT_HANIFI_ROHINGYA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_HANIFI_ROHINGYA, node: UCDN_SCRIPT_HANIFI_ROHINGYA, java: UCDN_SCRIPT_HANIFI_ROHINGYA, dotnet: UCDN_SCRIPT_HANIFI_ROHINGYA}
+    rust: "UCDN_SCRIPT_HANIFI_ROHINGYA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-hanifi-rohingya]
+  - name: UCDN_SCRIPT_HANUNOO
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_HANUNOO, node: UCDN_SCRIPT_HANUNOO, java: UCDN_SCRIPT_HANUNOO, dotnet: UCDN_SCRIPT_HANUNOO}
+    rust: "UCDN_SCRIPT_HANUNOO"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-hanunoo]
+  - name: UCDN_SCRIPT_HATRAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_HATRAN, node: UCDN_SCRIPT_HATRAN, java: UCDN_SCRIPT_HATRAN, dotnet: UCDN_SCRIPT_HATRAN}
+    rust: "UCDN_SCRIPT_HATRAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-hatran]
+  - name: UCDN_SCRIPT_HEBREW
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_HEBREW, node: UCDN_SCRIPT_HEBREW, java: UCDN_SCRIPT_HEBREW, dotnet: UCDN_SCRIPT_HEBREW}
+    rust: "UCDN_SCRIPT_HEBREW"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-hebrew]
+  - name: UCDN_SCRIPT_HIRAGANA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_HIRAGANA, node: UCDN_SCRIPT_HIRAGANA, java: UCDN_SCRIPT_HIRAGANA, dotnet: UCDN_SCRIPT_HIRAGANA}
+    rust: "UCDN_SCRIPT_HIRAGANA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-hiragana]
+  - name: UCDN_SCRIPT_IMPERIAL_ARAMAIC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_IMPERIAL_ARAMAIC, node: UCDN_SCRIPT_IMPERIAL_ARAMAIC, java: UCDN_SCRIPT_IMPERIAL_ARAMAIC, dotnet: UCDN_SCRIPT_IMPERIAL_ARAMAIC}
+    rust: "UCDN_SCRIPT_IMPERIAL_ARAMAIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-imperial-aramaic]
+  - name: UCDN_SCRIPT_INHERITED
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_INHERITED, node: UCDN_SCRIPT_INHERITED, java: UCDN_SCRIPT_INHERITED, dotnet: UCDN_SCRIPT_INHERITED}
+    rust: "UCDN_SCRIPT_INHERITED"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-inherited]
+  - name: UCDN_SCRIPT_INSCRIPTIONAL_PAHLAVI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_INSCRIPTIONAL_PAHLAVI, node: UCDN_SCRIPT_INSCRIPTIONAL_PAHLAVI, java: UCDN_SCRIPT_INSCRIPTIONAL_PAHLAVI, dotnet: UCDN_SCRIPT_INSCRIPTIONAL_PAHLAVI}
+    rust: "UCDN_SCRIPT_INSCRIPTIONAL_PAHLAVI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-inscriptional-pahlavi]
+  - name: UCDN_SCRIPT_INSCRIPTIONAL_PARTHIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_INSCRIPTIONAL_PARTHIAN, node: UCDN_SCRIPT_INSCRIPTIONAL_PARTHIAN, java: UCDN_SCRIPT_INSCRIPTIONAL_PARTHIAN, dotnet: UCDN_SCRIPT_INSCRIPTIONAL_PARTHIAN}
+    rust: "UCDN_SCRIPT_INSCRIPTIONAL_PARTHIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-inscriptional-parthian]
+  - name: UCDN_SCRIPT_JAVANESE
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_JAVANESE, node: UCDN_SCRIPT_JAVANESE, java: UCDN_SCRIPT_JAVANESE, dotnet: UCDN_SCRIPT_JAVANESE}
+    rust: "UCDN_SCRIPT_JAVANESE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-javanese]
+  - name: UCDN_SCRIPT_KAITHI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_KAITHI, node: UCDN_SCRIPT_KAITHI, java: UCDN_SCRIPT_KAITHI, dotnet: UCDN_SCRIPT_KAITHI}
+    rust: "UCDN_SCRIPT_KAITHI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-kaithi]
+  - name: UCDN_SCRIPT_KANNADA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_KANNADA, node: UCDN_SCRIPT_KANNADA, java: UCDN_SCRIPT_KANNADA, dotnet: UCDN_SCRIPT_KANNADA}
+    rust: "UCDN_SCRIPT_KANNADA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-kannada]
+  - name: UCDN_SCRIPT_KATAKANA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_KATAKANA, node: UCDN_SCRIPT_KATAKANA, java: UCDN_SCRIPT_KATAKANA, dotnet: UCDN_SCRIPT_KATAKANA}
+    rust: "UCDN_SCRIPT_KATAKANA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-katakana]
+  - name: UCDN_SCRIPT_KAWI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_KAWI, node: UCDN_SCRIPT_KAWI, java: UCDN_SCRIPT_KAWI, dotnet: UCDN_SCRIPT_KAWI}
+    rust: "UCDN_SCRIPT_KAWI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-kawi]
+  - name: UCDN_SCRIPT_KAYAH_LI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_KAYAH_LI, node: UCDN_SCRIPT_KAYAH_LI, java: UCDN_SCRIPT_KAYAH_LI, dotnet: UCDN_SCRIPT_KAYAH_LI}
+    rust: "UCDN_SCRIPT_KAYAH_LI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-kayah-li]
+  - name: UCDN_SCRIPT_KHAROSHTHI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_KHAROSHTHI, node: UCDN_SCRIPT_KHAROSHTHI, java: UCDN_SCRIPT_KHAROSHTHI, dotnet: UCDN_SCRIPT_KHAROSHTHI}
+    rust: "UCDN_SCRIPT_KHAROSHTHI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-kharoshthi]
+  - name: UCDN_SCRIPT_KHITAN_SMALL_SCRIPT
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_KHITAN_SMALL_SCRIPT, node: UCDN_SCRIPT_KHITAN_SMALL_SCRIPT, java: UCDN_SCRIPT_KHITAN_SMALL_SCRIPT, dotnet: UCDN_SCRIPT_KHITAN_SMALL_SCRIPT}
+    rust: "UCDN_SCRIPT_KHITAN_SMALL_SCRIPT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-khitan-small-script]
+  - name: UCDN_SCRIPT_KHMER
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_KHMER, node: UCDN_SCRIPT_KHMER, java: UCDN_SCRIPT_KHMER, dotnet: UCDN_SCRIPT_KHMER}
+    rust: "UCDN_SCRIPT_KHMER"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-khmer]
+  - name: UCDN_SCRIPT_KHOJKI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_KHOJKI, node: UCDN_SCRIPT_KHOJKI, java: UCDN_SCRIPT_KHOJKI, dotnet: UCDN_SCRIPT_KHOJKI}
+    rust: "UCDN_SCRIPT_KHOJKI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-khojki]
+  - name: UCDN_SCRIPT_KHUDAWADI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_KHUDAWADI, node: UCDN_SCRIPT_KHUDAWADI, java: UCDN_SCRIPT_KHUDAWADI, dotnet: UCDN_SCRIPT_KHUDAWADI}
+    rust: "UCDN_SCRIPT_KHUDAWADI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-khudawadi]
+  - name: UCDN_SCRIPT_KIRAT_RAI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_KIRAT_RAI, node: UCDN_SCRIPT_KIRAT_RAI, java: UCDN_SCRIPT_KIRAT_RAI, dotnet: UCDN_SCRIPT_KIRAT_RAI}
+    rust: "UCDN_SCRIPT_KIRAT_RAI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-kirat-rai]
+  - name: UCDN_SCRIPT_LAO
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_LAO, node: UCDN_SCRIPT_LAO, java: UCDN_SCRIPT_LAO, dotnet: UCDN_SCRIPT_LAO}
+    rust: "UCDN_SCRIPT_LAO"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-lao]
+  - name: UCDN_SCRIPT_LATIN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_LATIN, node: UCDN_SCRIPT_LATIN, java: UCDN_SCRIPT_LATIN, dotnet: UCDN_SCRIPT_LATIN}
+    rust: "UCDN_SCRIPT_LATIN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-latin]
+  - name: UCDN_SCRIPT_LEPCHA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_LEPCHA, node: UCDN_SCRIPT_LEPCHA, java: UCDN_SCRIPT_LEPCHA, dotnet: UCDN_SCRIPT_LEPCHA}
+    rust: "UCDN_SCRIPT_LEPCHA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-lepcha]
+  - name: UCDN_SCRIPT_LIMBU
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_LIMBU, node: UCDN_SCRIPT_LIMBU, java: UCDN_SCRIPT_LIMBU, dotnet: UCDN_SCRIPT_LIMBU}
+    rust: "UCDN_SCRIPT_LIMBU"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-limbu]
+  - name: UCDN_SCRIPT_LINEAR_A
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_LINEAR_A, node: UCDN_SCRIPT_LINEAR_A, java: UCDN_SCRIPT_LINEAR_A, dotnet: UCDN_SCRIPT_LINEAR_A}
+    rust: "UCDN_SCRIPT_LINEAR_A"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-linear-a]
+  - name: UCDN_SCRIPT_LINEAR_B
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_LINEAR_B, node: UCDN_SCRIPT_LINEAR_B, java: UCDN_SCRIPT_LINEAR_B, dotnet: UCDN_SCRIPT_LINEAR_B}
+    rust: "UCDN_SCRIPT_LINEAR_B"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-linear-b]
+  - name: UCDN_SCRIPT_LISU
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_LISU, node: UCDN_SCRIPT_LISU, java: UCDN_SCRIPT_LISU, dotnet: UCDN_SCRIPT_LISU}
+    rust: "UCDN_SCRIPT_LISU"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-lisu]
+  - name: UCDN_SCRIPT_LYCIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_LYCIAN, node: UCDN_SCRIPT_LYCIAN, java: UCDN_SCRIPT_LYCIAN, dotnet: UCDN_SCRIPT_LYCIAN}
+    rust: "UCDN_SCRIPT_LYCIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-lycian]
+  - name: UCDN_SCRIPT_LYDIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_LYDIAN, node: UCDN_SCRIPT_LYDIAN, java: UCDN_SCRIPT_LYDIAN, dotnet: UCDN_SCRIPT_LYDIAN}
+    rust: "UCDN_SCRIPT_LYDIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-lydian]
+  - name: UCDN_SCRIPT_MAHAJANI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MAHAJANI, node: UCDN_SCRIPT_MAHAJANI, java: UCDN_SCRIPT_MAHAJANI, dotnet: UCDN_SCRIPT_MAHAJANI}
+    rust: "UCDN_SCRIPT_MAHAJANI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-mahajani]
+  - name: UCDN_SCRIPT_MAKASAR
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MAKASAR, node: UCDN_SCRIPT_MAKASAR, java: UCDN_SCRIPT_MAKASAR, dotnet: UCDN_SCRIPT_MAKASAR}
+    rust: "UCDN_SCRIPT_MAKASAR"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-makasar]
+  - name: UCDN_SCRIPT_MALAYALAM
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MALAYALAM, node: UCDN_SCRIPT_MALAYALAM, java: UCDN_SCRIPT_MALAYALAM, dotnet: UCDN_SCRIPT_MALAYALAM}
+    rust: "UCDN_SCRIPT_MALAYALAM"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-malayalam]
+  - name: UCDN_SCRIPT_MANDAIC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MANDAIC, node: UCDN_SCRIPT_MANDAIC, java: UCDN_SCRIPT_MANDAIC, dotnet: UCDN_SCRIPT_MANDAIC}
+    rust: "UCDN_SCRIPT_MANDAIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-mandaic]
+  - name: UCDN_SCRIPT_MANICHAEAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MANICHAEAN, node: UCDN_SCRIPT_MANICHAEAN, java: UCDN_SCRIPT_MANICHAEAN, dotnet: UCDN_SCRIPT_MANICHAEAN}
+    rust: "UCDN_SCRIPT_MANICHAEAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-manichaean]
+  - name: UCDN_SCRIPT_MARCHEN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MARCHEN, node: UCDN_SCRIPT_MARCHEN, java: UCDN_SCRIPT_MARCHEN, dotnet: UCDN_SCRIPT_MARCHEN}
+    rust: "UCDN_SCRIPT_MARCHEN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-marchen]
+  - name: UCDN_SCRIPT_MASARAM_GONDI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MASARAM_GONDI, node: UCDN_SCRIPT_MASARAM_GONDI, java: UCDN_SCRIPT_MASARAM_GONDI, dotnet: UCDN_SCRIPT_MASARAM_GONDI}
+    rust: "UCDN_SCRIPT_MASARAM_GONDI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-masaram-gondi]
+  - name: UCDN_SCRIPT_MEDEFAIDRIN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MEDEFAIDRIN, node: UCDN_SCRIPT_MEDEFAIDRIN, java: UCDN_SCRIPT_MEDEFAIDRIN, dotnet: UCDN_SCRIPT_MEDEFAIDRIN}
+    rust: "UCDN_SCRIPT_MEDEFAIDRIN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-medefaidrin]
+  - name: UCDN_SCRIPT_MEETEI_MAYEK
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MEETEI_MAYEK, node: UCDN_SCRIPT_MEETEI_MAYEK, java: UCDN_SCRIPT_MEETEI_MAYEK, dotnet: UCDN_SCRIPT_MEETEI_MAYEK}
+    rust: "UCDN_SCRIPT_MEETEI_MAYEK"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-meetei-mayek]
+  - name: UCDN_SCRIPT_MENDE_KIKAKUI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MENDE_KIKAKUI, node: UCDN_SCRIPT_MENDE_KIKAKUI, java: UCDN_SCRIPT_MENDE_KIKAKUI, dotnet: UCDN_SCRIPT_MENDE_KIKAKUI}
+    rust: "UCDN_SCRIPT_MENDE_KIKAKUI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-mende-kikakui]
+  - name: UCDN_SCRIPT_MEROITIC_CURSIVE
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MEROITIC_CURSIVE, node: UCDN_SCRIPT_MEROITIC_CURSIVE, java: UCDN_SCRIPT_MEROITIC_CURSIVE, dotnet: UCDN_SCRIPT_MEROITIC_CURSIVE}
+    rust: "UCDN_SCRIPT_MEROITIC_CURSIVE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-meroitic-cursive]
+  - name: UCDN_SCRIPT_MEROITIC_HIEROGLYPHS
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MEROITIC_HIEROGLYPHS, node: UCDN_SCRIPT_MEROITIC_HIEROGLYPHS, java: UCDN_SCRIPT_MEROITIC_HIEROGLYPHS, dotnet: UCDN_SCRIPT_MEROITIC_HIEROGLYPHS}
+    rust: "UCDN_SCRIPT_MEROITIC_HIEROGLYPHS"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-meroitic-hieroglyphs]
+  - name: UCDN_SCRIPT_MIAO
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MIAO, node: UCDN_SCRIPT_MIAO, java: UCDN_SCRIPT_MIAO, dotnet: UCDN_SCRIPT_MIAO}
+    rust: "UCDN_SCRIPT_MIAO"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-miao]
+  - name: UCDN_SCRIPT_MODI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MODI, node: UCDN_SCRIPT_MODI, java: UCDN_SCRIPT_MODI, dotnet: UCDN_SCRIPT_MODI}
+    rust: "UCDN_SCRIPT_MODI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-modi]
+  - name: UCDN_SCRIPT_MONGOLIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MONGOLIAN, node: UCDN_SCRIPT_MONGOLIAN, java: UCDN_SCRIPT_MONGOLIAN, dotnet: UCDN_SCRIPT_MONGOLIAN}
+    rust: "UCDN_SCRIPT_MONGOLIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-mongolian]
+  - name: UCDN_SCRIPT_MRO
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MRO, node: UCDN_SCRIPT_MRO, java: UCDN_SCRIPT_MRO, dotnet: UCDN_SCRIPT_MRO}
+    rust: "UCDN_SCRIPT_MRO"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-mro]
+  - name: UCDN_SCRIPT_MULTANI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MULTANI, node: UCDN_SCRIPT_MULTANI, java: UCDN_SCRIPT_MULTANI, dotnet: UCDN_SCRIPT_MULTANI}
+    rust: "UCDN_SCRIPT_MULTANI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-multani]
+  - name: UCDN_SCRIPT_MYANMAR
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_MYANMAR, node: UCDN_SCRIPT_MYANMAR, java: UCDN_SCRIPT_MYANMAR, dotnet: UCDN_SCRIPT_MYANMAR}
+    rust: "UCDN_SCRIPT_MYANMAR"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-myanmar]
+  - name: UCDN_SCRIPT_NABATAEAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_NABATAEAN, node: UCDN_SCRIPT_NABATAEAN, java: UCDN_SCRIPT_NABATAEAN, dotnet: UCDN_SCRIPT_NABATAEAN}
+    rust: "UCDN_SCRIPT_NABATAEAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-nabataean]
+  - name: UCDN_SCRIPT_NAG_MUNDARI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_NAG_MUNDARI, node: UCDN_SCRIPT_NAG_MUNDARI, java: UCDN_SCRIPT_NAG_MUNDARI, dotnet: UCDN_SCRIPT_NAG_MUNDARI}
+    rust: "UCDN_SCRIPT_NAG_MUNDARI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-nag-mundari]
+  - name: UCDN_SCRIPT_NANDINAGARI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_NANDINAGARI, node: UCDN_SCRIPT_NANDINAGARI, java: UCDN_SCRIPT_NANDINAGARI, dotnet: UCDN_SCRIPT_NANDINAGARI}
+    rust: "UCDN_SCRIPT_NANDINAGARI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-nandinagari]
+  - name: UCDN_SCRIPT_NEWA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_NEWA, node: UCDN_SCRIPT_NEWA, java: UCDN_SCRIPT_NEWA, dotnet: UCDN_SCRIPT_NEWA}
+    rust: "UCDN_SCRIPT_NEWA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-newa]
+  - name: UCDN_SCRIPT_NEW_TAI_LUE
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_NEW_TAI_LUE, node: UCDN_SCRIPT_NEW_TAI_LUE, java: UCDN_SCRIPT_NEW_TAI_LUE, dotnet: UCDN_SCRIPT_NEW_TAI_LUE}
+    rust: "UCDN_SCRIPT_NEW_TAI_LUE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-new-tai-lue]
+  - name: UCDN_SCRIPT_NKO
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_NKO, node: UCDN_SCRIPT_NKO, java: UCDN_SCRIPT_NKO, dotnet: UCDN_SCRIPT_NKO}
+    rust: "UCDN_SCRIPT_NKO"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-nko]
+  - name: UCDN_SCRIPT_NUSHU
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_NUSHU, node: UCDN_SCRIPT_NUSHU, java: UCDN_SCRIPT_NUSHU, dotnet: UCDN_SCRIPT_NUSHU}
+    rust: "UCDN_SCRIPT_NUSHU"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-nushu]
+  - name: UCDN_SCRIPT_NYIAKENG_PUACHUE_HMONG
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_NYIAKENG_PUACHUE_HMONG, node: UCDN_SCRIPT_NYIAKENG_PUACHUE_HMONG, java: UCDN_SCRIPT_NYIAKENG_PUACHUE_HMONG, dotnet: UCDN_SCRIPT_NYIAKENG_PUACHUE_HMONG}
+    rust: "UCDN_SCRIPT_NYIAKENG_PUACHUE_HMONG"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-nyiakeng-puachue-hmong]
+  - name: UCDN_SCRIPT_OGHAM
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_OGHAM, node: UCDN_SCRIPT_OGHAM, java: UCDN_SCRIPT_OGHAM, dotnet: UCDN_SCRIPT_OGHAM}
+    rust: "UCDN_SCRIPT_OGHAM"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-ogham]
+  - name: UCDN_SCRIPT_OLD_HUNGARIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_OLD_HUNGARIAN, node: UCDN_SCRIPT_OLD_HUNGARIAN, java: UCDN_SCRIPT_OLD_HUNGARIAN, dotnet: UCDN_SCRIPT_OLD_HUNGARIAN}
+    rust: "UCDN_SCRIPT_OLD_HUNGARIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-old-hungarian]
+  - name: UCDN_SCRIPT_OLD_ITALIC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_OLD_ITALIC, node: UCDN_SCRIPT_OLD_ITALIC, java: UCDN_SCRIPT_OLD_ITALIC, dotnet: UCDN_SCRIPT_OLD_ITALIC}
+    rust: "UCDN_SCRIPT_OLD_ITALIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-old-italic]
+  - name: UCDN_SCRIPT_OLD_NORTH_ARABIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_OLD_NORTH_ARABIAN, node: UCDN_SCRIPT_OLD_NORTH_ARABIAN, java: UCDN_SCRIPT_OLD_NORTH_ARABIAN, dotnet: UCDN_SCRIPT_OLD_NORTH_ARABIAN}
+    rust: "UCDN_SCRIPT_OLD_NORTH_ARABIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-old-north-arabian]
+  - name: UCDN_SCRIPT_OLD_PERMIC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_OLD_PERMIC, node: UCDN_SCRIPT_OLD_PERMIC, java: UCDN_SCRIPT_OLD_PERMIC, dotnet: UCDN_SCRIPT_OLD_PERMIC}
+    rust: "UCDN_SCRIPT_OLD_PERMIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-old-permic]
+  - name: UCDN_SCRIPT_OLD_PERSIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_OLD_PERSIAN, node: UCDN_SCRIPT_OLD_PERSIAN, java: UCDN_SCRIPT_OLD_PERSIAN, dotnet: UCDN_SCRIPT_OLD_PERSIAN}
+    rust: "UCDN_SCRIPT_OLD_PERSIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-old-persian]
+  - name: UCDN_SCRIPT_OLD_SOGDIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_OLD_SOGDIAN, node: UCDN_SCRIPT_OLD_SOGDIAN, java: UCDN_SCRIPT_OLD_SOGDIAN, dotnet: UCDN_SCRIPT_OLD_SOGDIAN}
+    rust: "UCDN_SCRIPT_OLD_SOGDIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-old-sogdian]
+  - name: UCDN_SCRIPT_OLD_SOUTH_ARABIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_OLD_SOUTH_ARABIAN, node: UCDN_SCRIPT_OLD_SOUTH_ARABIAN, java: UCDN_SCRIPT_OLD_SOUTH_ARABIAN, dotnet: UCDN_SCRIPT_OLD_SOUTH_ARABIAN}
+    rust: "UCDN_SCRIPT_OLD_SOUTH_ARABIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-old-south-arabian]
+  - name: UCDN_SCRIPT_OLD_TURKIC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_OLD_TURKIC, node: UCDN_SCRIPT_OLD_TURKIC, java: UCDN_SCRIPT_OLD_TURKIC, dotnet: UCDN_SCRIPT_OLD_TURKIC}
+    rust: "UCDN_SCRIPT_OLD_TURKIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-old-turkic]
+  - name: UCDN_SCRIPT_OLD_UYGHUR
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_OLD_UYGHUR, node: UCDN_SCRIPT_OLD_UYGHUR, java: UCDN_SCRIPT_OLD_UYGHUR, dotnet: UCDN_SCRIPT_OLD_UYGHUR}
+    rust: "UCDN_SCRIPT_OLD_UYGHUR"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-old-uyghur]
+  - name: UCDN_SCRIPT_OL_CHIKI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_OL_CHIKI, node: UCDN_SCRIPT_OL_CHIKI, java: UCDN_SCRIPT_OL_CHIKI, dotnet: UCDN_SCRIPT_OL_CHIKI}
+    rust: "UCDN_SCRIPT_OL_CHIKI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-ol-chiki]
+  - name: UCDN_SCRIPT_OL_ONAL
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_OL_ONAL, node: UCDN_SCRIPT_OL_ONAL, java: UCDN_SCRIPT_OL_ONAL, dotnet: UCDN_SCRIPT_OL_ONAL}
+    rust: "UCDN_SCRIPT_OL_ONAL"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-ol-onal]
+  - name: UCDN_SCRIPT_ORIYA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_ORIYA, node: UCDN_SCRIPT_ORIYA, java: UCDN_SCRIPT_ORIYA, dotnet: UCDN_SCRIPT_ORIYA}
+    rust: "UCDN_SCRIPT_ORIYA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-oriya]
+  - name: UCDN_SCRIPT_OSAGE
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_OSAGE, node: UCDN_SCRIPT_OSAGE, java: UCDN_SCRIPT_OSAGE, dotnet: UCDN_SCRIPT_OSAGE}
+    rust: "UCDN_SCRIPT_OSAGE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-osage]
+  - name: UCDN_SCRIPT_OSMANYA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_OSMANYA, node: UCDN_SCRIPT_OSMANYA, java: UCDN_SCRIPT_OSMANYA, dotnet: UCDN_SCRIPT_OSMANYA}
+    rust: "UCDN_SCRIPT_OSMANYA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-osmanya]
+  - name: UCDN_SCRIPT_PAHAWH_HMONG
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_PAHAWH_HMONG, node: UCDN_SCRIPT_PAHAWH_HMONG, java: UCDN_SCRIPT_PAHAWH_HMONG, dotnet: UCDN_SCRIPT_PAHAWH_HMONG}
+    rust: "UCDN_SCRIPT_PAHAWH_HMONG"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-pahawh-hmong]
+  - name: UCDN_SCRIPT_PALMYRENE
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_PALMYRENE, node: UCDN_SCRIPT_PALMYRENE, java: UCDN_SCRIPT_PALMYRENE, dotnet: UCDN_SCRIPT_PALMYRENE}
+    rust: "UCDN_SCRIPT_PALMYRENE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-palmyrene]
+  - name: UCDN_SCRIPT_PAU_CIN_HAU
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_PAU_CIN_HAU, node: UCDN_SCRIPT_PAU_CIN_HAU, java: UCDN_SCRIPT_PAU_CIN_HAU, dotnet: UCDN_SCRIPT_PAU_CIN_HAU}
+    rust: "UCDN_SCRIPT_PAU_CIN_HAU"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-pau-cin-hau]
+  - name: UCDN_SCRIPT_PHAGS_PA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_PHAGS_PA, node: UCDN_SCRIPT_PHAGS_PA, java: UCDN_SCRIPT_PHAGS_PA, dotnet: UCDN_SCRIPT_PHAGS_PA}
+    rust: "UCDN_SCRIPT_PHAGS_PA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-phags-pa]
+  - name: UCDN_SCRIPT_PHOENICIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_PHOENICIAN, node: UCDN_SCRIPT_PHOENICIAN, java: UCDN_SCRIPT_PHOENICIAN, dotnet: UCDN_SCRIPT_PHOENICIAN}
+    rust: "UCDN_SCRIPT_PHOENICIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-phoenician]
+  - name: UCDN_SCRIPT_PSALTER_PAHLAVI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_PSALTER_PAHLAVI, node: UCDN_SCRIPT_PSALTER_PAHLAVI, java: UCDN_SCRIPT_PSALTER_PAHLAVI, dotnet: UCDN_SCRIPT_PSALTER_PAHLAVI}
+    rust: "UCDN_SCRIPT_PSALTER_PAHLAVI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-psalter-pahlavi]
+  - name: UCDN_SCRIPT_REJANG
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_REJANG, node: UCDN_SCRIPT_REJANG, java: UCDN_SCRIPT_REJANG, dotnet: UCDN_SCRIPT_REJANG}
+    rust: "UCDN_SCRIPT_REJANG"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-rejang]
+  - name: UCDN_SCRIPT_RUNIC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_RUNIC, node: UCDN_SCRIPT_RUNIC, java: UCDN_SCRIPT_RUNIC, dotnet: UCDN_SCRIPT_RUNIC}
+    rust: "UCDN_SCRIPT_RUNIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-runic]
+  - name: UCDN_SCRIPT_SAMARITAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_SAMARITAN, node: UCDN_SCRIPT_SAMARITAN, java: UCDN_SCRIPT_SAMARITAN, dotnet: UCDN_SCRIPT_SAMARITAN}
+    rust: "UCDN_SCRIPT_SAMARITAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-samaritan]
+  - name: UCDN_SCRIPT_SAURASHTRA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_SAURASHTRA, node: UCDN_SCRIPT_SAURASHTRA, java: UCDN_SCRIPT_SAURASHTRA, dotnet: UCDN_SCRIPT_SAURASHTRA}
+    rust: "UCDN_SCRIPT_SAURASHTRA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-saurashtra]
+  - name: UCDN_SCRIPT_SHARADA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_SHARADA, node: UCDN_SCRIPT_SHARADA, java: UCDN_SCRIPT_SHARADA, dotnet: UCDN_SCRIPT_SHARADA}
+    rust: "UCDN_SCRIPT_SHARADA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-sharada]
+  - name: UCDN_SCRIPT_SHAVIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_SHAVIAN, node: UCDN_SCRIPT_SHAVIAN, java: UCDN_SCRIPT_SHAVIAN, dotnet: UCDN_SCRIPT_SHAVIAN}
+    rust: "UCDN_SCRIPT_SHAVIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-shavian]
+  - name: UCDN_SCRIPT_SIDDHAM
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_SIDDHAM, node: UCDN_SCRIPT_SIDDHAM, java: UCDN_SCRIPT_SIDDHAM, dotnet: UCDN_SCRIPT_SIDDHAM}
+    rust: "UCDN_SCRIPT_SIDDHAM"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-siddham]
+  - name: UCDN_SCRIPT_SIGNWRITING
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_SIGNWRITING, node: UCDN_SCRIPT_SIGNWRITING, java: UCDN_SCRIPT_SIGNWRITING, dotnet: UCDN_SCRIPT_SIGNWRITING}
+    rust: "UCDN_SCRIPT_SIGNWRITING"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-signwriting]
+  - name: UCDN_SCRIPT_SINHALA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_SINHALA, node: UCDN_SCRIPT_SINHALA, java: UCDN_SCRIPT_SINHALA, dotnet: UCDN_SCRIPT_SINHALA}
+    rust: "UCDN_SCRIPT_SINHALA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-sinhala]
+  - name: UCDN_SCRIPT_SOGDIAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_SOGDIAN, node: UCDN_SCRIPT_SOGDIAN, java: UCDN_SCRIPT_SOGDIAN, dotnet: UCDN_SCRIPT_SOGDIAN}
+    rust: "UCDN_SCRIPT_SOGDIAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-sogdian]
+  - name: UCDN_SCRIPT_SORA_SOMPENG
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_SORA_SOMPENG, node: UCDN_SCRIPT_SORA_SOMPENG, java: UCDN_SCRIPT_SORA_SOMPENG, dotnet: UCDN_SCRIPT_SORA_SOMPENG}
+    rust: "UCDN_SCRIPT_SORA_SOMPENG"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-sora-sompeng]
+  - name: UCDN_SCRIPT_SOYOMBO
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_SOYOMBO, node: UCDN_SCRIPT_SOYOMBO, java: UCDN_SCRIPT_SOYOMBO, dotnet: UCDN_SCRIPT_SOYOMBO}
+    rust: "UCDN_SCRIPT_SOYOMBO"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-soyombo]
+  - name: UCDN_SCRIPT_SUNDANESE
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_SUNDANESE, node: UCDN_SCRIPT_SUNDANESE, java: UCDN_SCRIPT_SUNDANESE, dotnet: UCDN_SCRIPT_SUNDANESE}
+    rust: "UCDN_SCRIPT_SUNDANESE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-sundanese]
+  - name: UCDN_SCRIPT_SUNUWAR
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_SUNUWAR, node: UCDN_SCRIPT_SUNUWAR, java: UCDN_SCRIPT_SUNUWAR, dotnet: UCDN_SCRIPT_SUNUWAR}
+    rust: "UCDN_SCRIPT_SUNUWAR"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-sunuwar]
+  - name: UCDN_SCRIPT_SYLOTI_NAGRI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_SYLOTI_NAGRI, node: UCDN_SCRIPT_SYLOTI_NAGRI, java: UCDN_SCRIPT_SYLOTI_NAGRI, dotnet: UCDN_SCRIPT_SYLOTI_NAGRI}
+    rust: "UCDN_SCRIPT_SYLOTI_NAGRI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-syloti-nagri]
+  - name: UCDN_SCRIPT_SYRIAC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_SYRIAC, node: UCDN_SCRIPT_SYRIAC, java: UCDN_SCRIPT_SYRIAC, dotnet: UCDN_SCRIPT_SYRIAC}
+    rust: "UCDN_SCRIPT_SYRIAC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-syriac]
+  - name: UCDN_SCRIPT_TAGALOG
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TAGALOG, node: UCDN_SCRIPT_TAGALOG, java: UCDN_SCRIPT_TAGALOG, dotnet: UCDN_SCRIPT_TAGALOG}
+    rust: "UCDN_SCRIPT_TAGALOG"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-tagalog]
+  - name: UCDN_SCRIPT_TAGBANWA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TAGBANWA, node: UCDN_SCRIPT_TAGBANWA, java: UCDN_SCRIPT_TAGBANWA, dotnet: UCDN_SCRIPT_TAGBANWA}
+    rust: "UCDN_SCRIPT_TAGBANWA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-tagbanwa]
+  - name: UCDN_SCRIPT_TAI_LE
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TAI_LE, node: UCDN_SCRIPT_TAI_LE, java: UCDN_SCRIPT_TAI_LE, dotnet: UCDN_SCRIPT_TAI_LE}
+    rust: "UCDN_SCRIPT_TAI_LE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-tai-le]
+  - name: UCDN_SCRIPT_TAI_THAM
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TAI_THAM, node: UCDN_SCRIPT_TAI_THAM, java: UCDN_SCRIPT_TAI_THAM, dotnet: UCDN_SCRIPT_TAI_THAM}
+    rust: "UCDN_SCRIPT_TAI_THAM"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-tai-tham]
+  - name: UCDN_SCRIPT_TAI_VIET
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TAI_VIET, node: UCDN_SCRIPT_TAI_VIET, java: UCDN_SCRIPT_TAI_VIET, dotnet: UCDN_SCRIPT_TAI_VIET}
+    rust: "UCDN_SCRIPT_TAI_VIET"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-tai-viet]
+  - name: UCDN_SCRIPT_TAKRI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TAKRI, node: UCDN_SCRIPT_TAKRI, java: UCDN_SCRIPT_TAKRI, dotnet: UCDN_SCRIPT_TAKRI}
+    rust: "UCDN_SCRIPT_TAKRI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-takri]
+  - name: UCDN_SCRIPT_TAMIL
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TAMIL, node: UCDN_SCRIPT_TAMIL, java: UCDN_SCRIPT_TAMIL, dotnet: UCDN_SCRIPT_TAMIL}
+    rust: "UCDN_SCRIPT_TAMIL"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-tamil]
+  - name: UCDN_SCRIPT_TANGSA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TANGSA, node: UCDN_SCRIPT_TANGSA, java: UCDN_SCRIPT_TANGSA, dotnet: UCDN_SCRIPT_TANGSA}
+    rust: "UCDN_SCRIPT_TANGSA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-tangsa]
+  - name: UCDN_SCRIPT_TANGUT
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TANGUT, node: UCDN_SCRIPT_TANGUT, java: UCDN_SCRIPT_TANGUT, dotnet: UCDN_SCRIPT_TANGUT}
+    rust: "UCDN_SCRIPT_TANGUT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-tangut]
+  - name: UCDN_SCRIPT_TELUGU
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TELUGU, node: UCDN_SCRIPT_TELUGU, java: UCDN_SCRIPT_TELUGU, dotnet: UCDN_SCRIPT_TELUGU}
+    rust: "UCDN_SCRIPT_TELUGU"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-telugu]
+  - name: UCDN_SCRIPT_THAANA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_THAANA, node: UCDN_SCRIPT_THAANA, java: UCDN_SCRIPT_THAANA, dotnet: UCDN_SCRIPT_THAANA}
+    rust: "UCDN_SCRIPT_THAANA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-thaana]
+  - name: UCDN_SCRIPT_THAI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_THAI, node: UCDN_SCRIPT_THAI, java: UCDN_SCRIPT_THAI, dotnet: UCDN_SCRIPT_THAI}
+    rust: "UCDN_SCRIPT_THAI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-thai]
+  - name: UCDN_SCRIPT_TIBETAN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TIBETAN, node: UCDN_SCRIPT_TIBETAN, java: UCDN_SCRIPT_TIBETAN, dotnet: UCDN_SCRIPT_TIBETAN}
+    rust: "UCDN_SCRIPT_TIBETAN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-tibetan]
+  - name: UCDN_SCRIPT_TIFINAGH
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TIFINAGH, node: UCDN_SCRIPT_TIFINAGH, java: UCDN_SCRIPT_TIFINAGH, dotnet: UCDN_SCRIPT_TIFINAGH}
+    rust: "UCDN_SCRIPT_TIFINAGH"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-tifinagh]
+  - name: UCDN_SCRIPT_TIRHUTA
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TIRHUTA, node: UCDN_SCRIPT_TIRHUTA, java: UCDN_SCRIPT_TIRHUTA, dotnet: UCDN_SCRIPT_TIRHUTA}
+    rust: "UCDN_SCRIPT_TIRHUTA"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-tirhuta]
+  - name: UCDN_SCRIPT_TODHRI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TODHRI, node: UCDN_SCRIPT_TODHRI, java: UCDN_SCRIPT_TODHRI, dotnet: UCDN_SCRIPT_TODHRI}
+    rust: "UCDN_SCRIPT_TODHRI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-todhri]
+  - name: UCDN_SCRIPT_TOTO
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TOTO, node: UCDN_SCRIPT_TOTO, java: UCDN_SCRIPT_TOTO, dotnet: UCDN_SCRIPT_TOTO}
+    rust: "UCDN_SCRIPT_TOTO"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-toto]
+  - name: UCDN_SCRIPT_TULU_TIGALARI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_TULU_TIGALARI, node: UCDN_SCRIPT_TULU_TIGALARI, java: UCDN_SCRIPT_TULU_TIGALARI, dotnet: UCDN_SCRIPT_TULU_TIGALARI}
+    rust: "UCDN_SCRIPT_TULU_TIGALARI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-tulu-tigalari]
+  - name: UCDN_SCRIPT_UGARITIC
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_UGARITIC, node: UCDN_SCRIPT_UGARITIC, java: UCDN_SCRIPT_UGARITIC, dotnet: UCDN_SCRIPT_UGARITIC}
+    rust: "UCDN_SCRIPT_UGARITIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-ugaritic]
+  - name: UCDN_SCRIPT_UNKNOWN
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_UNKNOWN, node: UCDN_SCRIPT_UNKNOWN, java: UCDN_SCRIPT_UNKNOWN, dotnet: UCDN_SCRIPT_UNKNOWN}
+    rust: "UCDN_SCRIPT_UNKNOWN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-unknown]
+  - name: UCDN_SCRIPT_VAI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_VAI, node: UCDN_SCRIPT_VAI, java: UCDN_SCRIPT_VAI, dotnet: UCDN_SCRIPT_VAI}
+    rust: "UCDN_SCRIPT_VAI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-vai]
+  - name: UCDN_SCRIPT_VITHKUQI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_VITHKUQI, node: UCDN_SCRIPT_VITHKUQI, java: UCDN_SCRIPT_VITHKUQI, dotnet: UCDN_SCRIPT_VITHKUQI}
+    rust: "UCDN_SCRIPT_VITHKUQI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-vithkuqi]
+  - name: UCDN_SCRIPT_WANCHO
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_WANCHO, node: UCDN_SCRIPT_WANCHO, java: UCDN_SCRIPT_WANCHO, dotnet: UCDN_SCRIPT_WANCHO}
+    rust: "UCDN_SCRIPT_WANCHO"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-wancho]
+  - name: UCDN_SCRIPT_WARANG_CITI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_WARANG_CITI, node: UCDN_SCRIPT_WARANG_CITI, java: UCDN_SCRIPT_WARANG_CITI, dotnet: UCDN_SCRIPT_WARANG_CITI}
+    rust: "UCDN_SCRIPT_WARANG_CITI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-warang-citi]
+  - name: UCDN_SCRIPT_YEZIDI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_YEZIDI, node: UCDN_SCRIPT_YEZIDI, java: UCDN_SCRIPT_YEZIDI, dotnet: UCDN_SCRIPT_YEZIDI}
+    rust: "UCDN_SCRIPT_YEZIDI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-yezidi]
+  - name: UCDN_SCRIPT_YI
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_YI, node: UCDN_SCRIPT_YI, java: UCDN_SCRIPT_YI, dotnet: UCDN_SCRIPT_YI}
+    rust: "UCDN_SCRIPT_YI"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-yi]
+  - name: UCDN_SCRIPT_ZANABAZAR_SQUARE
+    kind: property
+    signature: "()"
+    names: {python: UCDN_SCRIPT_ZANABAZAR_SQUARE, node: UCDN_SCRIPT_ZANABAZAR_SQUARE, java: UCDN_SCRIPT_ZANABAZAR_SQUARE, dotnet: UCDN_SCRIPT_ZANABAZAR_SQUARE}
+    rust: "UCDN_SCRIPT_ZANABAZAR_SQUARE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-ucdn-script-zanabazar-square]
+  # font descriptor flags and resources (15).
+  - name: PDF_CID_FONT_RESOURCE
+    kind: property
+    signature: "()"
+    names: {python: PDF_CID_FONT_RESOURCE, node: PDF_CID_FONT_RESOURCE, java: PDF_CID_FONT_RESOURCE, dotnet: PDF_CID_FONT_RESOURCE}
+    rust: "PDF_CID_FONT_RESOURCE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-cid-font-resource]
+  - name: PDF_CJK_FONT_RESOURCE
+    kind: property
+    signature: "()"
+    names: {python: PDF_CJK_FONT_RESOURCE, node: PDF_CJK_FONT_RESOURCE, java: PDF_CJK_FONT_RESOURCE, dotnet: PDF_CJK_FONT_RESOURCE}
+    rust: "PDF_CJK_FONT_RESOURCE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-cjk-font-resource]
+  - name: PDF_FD_ALL_CAP
+    kind: property
+    signature: "()"
+    names: {python: PDF_FD_ALL_CAP, node: PDF_FD_ALL_CAP, java: PDF_FD_ALL_CAP, dotnet: PDF_FD_ALL_CAP}
+    rust: "PDF_FD_ALL_CAP"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-fd-all-cap]
+  - name: PDF_FD_FIXED_PITCH
+    kind: property
+    signature: "()"
+    names: {python: PDF_FD_FIXED_PITCH, node: PDF_FD_FIXED_PITCH, java: PDF_FD_FIXED_PITCH, dotnet: PDF_FD_FIXED_PITCH}
+    rust: "PDF_FD_FIXED_PITCH"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-fd-fixed-pitch]
+  - name: PDF_FD_FORCE_BOLD
+    kind: property
+    signature: "()"
+    names: {python: PDF_FD_FORCE_BOLD, node: PDF_FD_FORCE_BOLD, java: PDF_FD_FORCE_BOLD, dotnet: PDF_FD_FORCE_BOLD}
+    rust: "PDF_FD_FORCE_BOLD"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-fd-force-bold]
+  - name: PDF_FD_ITALIC
+    kind: property
+    signature: "()"
+    names: {python: PDF_FD_ITALIC, node: PDF_FD_ITALIC, java: PDF_FD_ITALIC, dotnet: PDF_FD_ITALIC}
+    rust: "PDF_FD_ITALIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-fd-italic]
+  - name: PDF_FD_NONSYMBOLIC
+    kind: property
+    signature: "()"
+    names: {python: PDF_FD_NONSYMBOLIC, node: PDF_FD_NONSYMBOLIC, java: PDF_FD_NONSYMBOLIC, dotnet: PDF_FD_NONSYMBOLIC}
+    rust: "PDF_FD_NONSYMBOLIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-fd-nonsymbolic]
+  - name: PDF_FD_SCRIPT
+    kind: property
+    signature: "()"
+    names: {python: PDF_FD_SCRIPT, node: PDF_FD_SCRIPT, java: PDF_FD_SCRIPT, dotnet: PDF_FD_SCRIPT}
+    rust: "PDF_FD_SCRIPT"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-fd-script]
+  - name: PDF_FD_SERIF
+    kind: property
+    signature: "()"
+    names: {python: PDF_FD_SERIF, node: PDF_FD_SERIF, java: PDF_FD_SERIF, dotnet: PDF_FD_SERIF}
+    rust: "PDF_FD_SERIF"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-fd-serif]
+  - name: PDF_FD_SMALL_CAP
+    kind: property
+    signature: "()"
+    names: {python: PDF_FD_SMALL_CAP, node: PDF_FD_SMALL_CAP, java: PDF_FD_SMALL_CAP, dotnet: PDF_FD_SMALL_CAP}
+    rust: "PDF_FD_SMALL_CAP"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-fd-small-cap]
+  - name: PDF_FD_SYMBOLIC
+    kind: property
+    signature: "()"
+    names: {python: PDF_FD_SYMBOLIC, node: PDF_FD_SYMBOLIC, java: PDF_FD_SYMBOLIC, dotnet: PDF_FD_SYMBOLIC}
+    rust: "PDF_FD_SYMBOLIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-fd-symbolic]
+  - name: PDF_SIMPLE_ENCODING_CYRILLIC
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIMPLE_ENCODING_CYRILLIC, node: PDF_SIMPLE_ENCODING_CYRILLIC, java: PDF_SIMPLE_ENCODING_CYRILLIC, dotnet: PDF_SIMPLE_ENCODING_CYRILLIC}
+    rust: "PDF_SIMPLE_ENCODING_CYRILLIC"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-simple-encoding-cyrillic]
+  - name: PDF_SIMPLE_ENCODING_GREEK
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIMPLE_ENCODING_GREEK, node: PDF_SIMPLE_ENCODING_GREEK, java: PDF_SIMPLE_ENCODING_GREEK, dotnet: PDF_SIMPLE_ENCODING_GREEK}
+    rust: "PDF_SIMPLE_ENCODING_GREEK"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-simple-encoding-greek]
+  - name: PDF_SIMPLE_ENCODING_LATIN
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIMPLE_ENCODING_LATIN, node: PDF_SIMPLE_ENCODING_LATIN, java: PDF_SIMPLE_ENCODING_LATIN, dotnet: PDF_SIMPLE_ENCODING_LATIN}
+    rust: "PDF_SIMPLE_ENCODING_LATIN"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-simple-encoding-latin]
+  - name: PDF_SIMPLE_FONT_RESOURCE
+    kind: property
+    signature: "()"
+    names: {python: PDF_SIMPLE_FONT_RESOURCE, node: PDF_SIMPLE_FONT_RESOURCE, java: PDF_SIMPLE_FONT_RESOURCE, dotnet: PDF_SIMPLE_FONT_RESOURCE}
+    rust: "PDF_SIMPLE_FONT_RESOURCE"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdf-simple-font-resource]
+  # base-14 font tables (4).
+  - name: Base14_fontdict
+    kind: property
+    signature: "()"
+    names: {python: Base14_fontdict, node: Base14_fontdict, java: Base14_fontdict, dotnet: Base14_fontdict}
+    rust: "Base14_fontdict"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-base14-fontdict]
+  - name: Base14_fontnames
+    kind: property
+    signature: "()"
+    names: {python: Base14_fontnames, node: Base14_fontnames, java: Base14_fontnames, dotnet: Base14_fontnames}
+    rust: "Base14_fontnames"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-base14-fontnames]
+  - name: symbol_glyphs
+    kind: property
+    signature: "()"
+    names: {python: symbol_glyphs, node: symbol_glyphs, java: symbol_glyphs, dotnet: symbol_glyphs}
+    rust: "symbol_glyphs"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-symbol-glyphs]
+  - name: zapf_glyphs
+    kind: property
+    signature: "()"
+    names: {python: zapf_glyphs, node: zapf_glyphs, java: zapf_glyphs, dotnet: zapf_glyphs}
+    rust: "zapf_glyphs"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-zapf-glyphs]
+  # named colour table (1).
+  - name: pdfcolor
+    kind: property
+    signature: "()"
+    names: {python: pdfcolor, node: pdfcolor, java: pdfcolor, dotnet: pdfcolor}
+    rust: "pdfcolor"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-constants-pdfcolor]
+  # document and parsing miscellany (50).
+  - name: INVALID_NAME_CHARS
+    kind: property
+    signature: "()"
+    names: {python: INVALID_NAME_CHARS, node: INVALID_NAME_CHARS, java: INVALID_NAME_CHARS, dotnet: INVALID_NAME_CHARS}
+    rust: "INVALID_NAME_CHARS"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-invalid-name-chars]
+  - name: PDF_ENUM_FALSE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ENUM_FALSE, node: PDF_ENUM_FALSE, java: PDF_ENUM_FALSE, dotnet: PDF_ENUM_FALSE}
+    rust: "PDF_ENUM_FALSE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-enum-false]
+  - name: PDF_ENUM_LIMIT
+    kind: property
+    signature: "()"
+    names: {python: PDF_ENUM_LIMIT, node: PDF_ENUM_LIMIT, java: PDF_ENUM_LIMIT, dotnet: PDF_ENUM_LIMIT}
+    rust: "PDF_ENUM_LIMIT"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-enum-limit]
+  - name: PDF_ENUM_NULL
+    kind: property
+    signature: "()"
+    names: {python: PDF_ENUM_NULL, node: PDF_ENUM_NULL, java: PDF_ENUM_NULL, dotnet: PDF_ENUM_NULL}
+    rust: "PDF_ENUM_NULL"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-enum-null]
+  - name: PDF_ENUM_TRUE
+    kind: property
+    signature: "()"
+    names: {python: PDF_ENUM_TRUE, node: PDF_ENUM_TRUE, java: PDF_ENUM_TRUE, dotnet: PDF_ENUM_TRUE}
+    rust: "PDF_ENUM_TRUE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-enum-true]
+  - name: PDF_LEXBUF_LARGE
+    kind: property
+    signature: "()"
+    names: {python: PDF_LEXBUF_LARGE, node: PDF_LEXBUF_LARGE, java: PDF_LEXBUF_LARGE, dotnet: PDF_LEXBUF_LARGE}
+    rust: "PDF_LEXBUF_LARGE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-lexbuf-large]
+  - name: PDF_LEXBUF_SMALL
+    kind: property
+    signature: "()"
+    names: {python: PDF_LEXBUF_SMALL, node: PDF_LEXBUF_SMALL, java: PDF_LEXBUF_SMALL, dotnet: PDF_LEXBUF_SMALL}
+    rust: "PDF_LEXBUF_SMALL"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-lexbuf-small]
+  - name: PDF_MAX_GEN_NUMBER
+    kind: property
+    signature: "()"
+    names: {python: PDF_MAX_GEN_NUMBER, node: PDF_MAX_GEN_NUMBER, java: PDF_MAX_GEN_NUMBER, dotnet: PDF_MAX_GEN_NUMBER}
+    rust: "PDF_MAX_GEN_NUMBER"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-max-gen-number]
+  - name: PDF_MAX_OBJECT_NUMBER
+    kind: property
+    signature: "()"
+    names: {python: PDF_MAX_OBJECT_NUMBER, node: PDF_MAX_OBJECT_NUMBER, java: PDF_MAX_OBJECT_NUMBER, dotnet: PDF_MAX_OBJECT_NUMBER}
+    rust: "PDF_MAX_OBJECT_NUMBER"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-max-object-number]
+  - name: PDF_MRANGE_CAP
+    kind: property
+    signature: "()"
+    names: {python: PDF_MRANGE_CAP, node: PDF_MRANGE_CAP, java: PDF_MRANGE_CAP, dotnet: PDF_MRANGE_CAP}
+    rust: "PDF_MRANGE_CAP"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-mrange-cap]
+  - name: PDF_NUM_TOKENS
+    kind: property
+    signature: "()"
+    names: {python: PDF_NUM_TOKENS, node: PDF_NUM_TOKENS, java: PDF_NUM_TOKENS, dotnet: PDF_NUM_TOKENS}
+    rust: "PDF_NUM_TOKENS"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-num-tokens]
+  - name: PDF_PROCESSOR_REQUIRES_DECODED_IMAGES
+    kind: property
+    signature: "()"
+    names: {python: PDF_PROCESSOR_REQUIRES_DECODED_IMAGES, node: PDF_PROCESSOR_REQUIRES_DECODED_IMAGES, java: PDF_PROCESSOR_REQUIRES_DECODED_IMAGES, dotnet: PDF_PROCESSOR_REQUIRES_DECODED_IMAGES}
+    rust: "PDF_PROCESSOR_REQUIRES_DECODED_IMAGES"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-processor-requires-decoded-images]
+  - name: PDF_TOK_CLOSE_ARRAY
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_CLOSE_ARRAY, node: PDF_TOK_CLOSE_ARRAY, java: PDF_TOK_CLOSE_ARRAY, dotnet: PDF_TOK_CLOSE_ARRAY}
+    rust: "PDF_TOK_CLOSE_ARRAY"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-close-array]
+  - name: PDF_TOK_CLOSE_BRACE
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_CLOSE_BRACE, node: PDF_TOK_CLOSE_BRACE, java: PDF_TOK_CLOSE_BRACE, dotnet: PDF_TOK_CLOSE_BRACE}
+    rust: "PDF_TOK_CLOSE_BRACE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-close-brace]
+  - name: PDF_TOK_CLOSE_DICT
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_CLOSE_DICT, node: PDF_TOK_CLOSE_DICT, java: PDF_TOK_CLOSE_DICT, dotnet: PDF_TOK_CLOSE_DICT}
+    rust: "PDF_TOK_CLOSE_DICT"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-close-dict]
+  - name: PDF_TOK_ENDOBJ
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_ENDOBJ, node: PDF_TOK_ENDOBJ, java: PDF_TOK_ENDOBJ, dotnet: PDF_TOK_ENDOBJ}
+    rust: "PDF_TOK_ENDOBJ"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-endobj]
+  - name: PDF_TOK_ENDSTREAM
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_ENDSTREAM, node: PDF_TOK_ENDSTREAM, java: PDF_TOK_ENDSTREAM, dotnet: PDF_TOK_ENDSTREAM}
+    rust: "PDF_TOK_ENDSTREAM"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-endstream]
+  - name: PDF_TOK_EOF
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_EOF, node: PDF_TOK_EOF, java: PDF_TOK_EOF, dotnet: PDF_TOK_EOF}
+    rust: "PDF_TOK_EOF"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-eof]
+  - name: PDF_TOK_ERROR
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_ERROR, node: PDF_TOK_ERROR, java: PDF_TOK_ERROR, dotnet: PDF_TOK_ERROR}
+    rust: "PDF_TOK_ERROR"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-error]
+  - name: PDF_TOK_FALSE
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_FALSE, node: PDF_TOK_FALSE, java: PDF_TOK_FALSE, dotnet: PDF_TOK_FALSE}
+    rust: "PDF_TOK_FALSE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-false]
+  - name: PDF_TOK_INT
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_INT, node: PDF_TOK_INT, java: PDF_TOK_INT, dotnet: PDF_TOK_INT}
+    rust: "PDF_TOK_INT"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-int]
+  - name: PDF_TOK_KEYWORD
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_KEYWORD, node: PDF_TOK_KEYWORD, java: PDF_TOK_KEYWORD, dotnet: PDF_TOK_KEYWORD}
+    rust: "PDF_TOK_KEYWORD"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-keyword]
+  - name: PDF_TOK_NAME
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_NAME, node: PDF_TOK_NAME, java: PDF_TOK_NAME, dotnet: PDF_TOK_NAME}
+    rust: "PDF_TOK_NAME"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-name]
+  - name: PDF_TOK_NEWOBJ
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_NEWOBJ, node: PDF_TOK_NEWOBJ, java: PDF_TOK_NEWOBJ, dotnet: PDF_TOK_NEWOBJ}
+    rust: "PDF_TOK_NEWOBJ"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-newobj]
+  - name: PDF_TOK_NULL
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_NULL, node: PDF_TOK_NULL, java: PDF_TOK_NULL, dotnet: PDF_TOK_NULL}
+    rust: "PDF_TOK_NULL"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-null]
+  - name: PDF_TOK_OBJ
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_OBJ, node: PDF_TOK_OBJ, java: PDF_TOK_OBJ, dotnet: PDF_TOK_OBJ}
+    rust: "PDF_TOK_OBJ"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-obj]
+  - name: PDF_TOK_OPEN_ARRAY
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_OPEN_ARRAY, node: PDF_TOK_OPEN_ARRAY, java: PDF_TOK_OPEN_ARRAY, dotnet: PDF_TOK_OPEN_ARRAY}
+    rust: "PDF_TOK_OPEN_ARRAY"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-open-array]
+  - name: PDF_TOK_OPEN_BRACE
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_OPEN_BRACE, node: PDF_TOK_OPEN_BRACE, java: PDF_TOK_OPEN_BRACE, dotnet: PDF_TOK_OPEN_BRACE}
+    rust: "PDF_TOK_OPEN_BRACE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-open-brace]
+  - name: PDF_TOK_OPEN_DICT
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_OPEN_DICT, node: PDF_TOK_OPEN_DICT, java: PDF_TOK_OPEN_DICT, dotnet: PDF_TOK_OPEN_DICT}
+    rust: "PDF_TOK_OPEN_DICT"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-open-dict]
+  - name: PDF_TOK_R
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_R, node: PDF_TOK_R, java: PDF_TOK_R, dotnet: PDF_TOK_R}
+    rust: "PDF_TOK_R"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-r]
+  - name: PDF_TOK_REAL
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_REAL, node: PDF_TOK_REAL, java: PDF_TOK_REAL, dotnet: PDF_TOK_REAL}
+    rust: "PDF_TOK_REAL"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-real]
+  - name: PDF_TOK_STARTXREF
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_STARTXREF, node: PDF_TOK_STARTXREF, java: PDF_TOK_STARTXREF, dotnet: PDF_TOK_STARTXREF}
+    rust: "PDF_TOK_STARTXREF"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-startxref]
+  - name: PDF_TOK_STREAM
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_STREAM, node: PDF_TOK_STREAM, java: PDF_TOK_STREAM, dotnet: PDF_TOK_STREAM}
+    rust: "PDF_TOK_STREAM"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-stream]
+  - name: PDF_TOK_STRING
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_STRING, node: PDF_TOK_STRING, java: PDF_TOK_STRING, dotnet: PDF_TOK_STRING}
+    rust: "PDF_TOK_STRING"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-string]
+  - name: PDF_TOK_TRAILER
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_TRAILER, node: PDF_TOK_TRAILER, java: PDF_TOK_TRAILER, dotnet: PDF_TOK_TRAILER}
+    rust: "PDF_TOK_TRAILER"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-trailer]
+  - name: PDF_TOK_TRUE
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_TRUE, node: PDF_TOK_TRUE, java: PDF_TOK_TRUE, dotnet: PDF_TOK_TRUE}
+    rust: "PDF_TOK_TRUE"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-true]
+  - name: PDF_TOK_XREF
+    kind: property
+    signature: "()"
+    names: {python: PDF_TOK_XREF, node: PDF_TOK_XREF, java: PDF_TOK_XREF, dotnet: PDF_TOK_XREF}
+    rust: "PDF_TOK_XREF"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-pdf-tok-xref]
+  - name: b
+    kind: property
+    signature: "()"
+    names: {python: b, node: b, java: b, dotnet: b}
+    rust: "b"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-b]
+  - name: f
+    kind: property
+    signature: "()"
+    names: {python: f, node: f, java: f, dotnet: f}
+    rust: "f"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-f]
+  - name: g
+    kind: property
+    signature: "()"
+    names: {python: g, node: g, java: g, dotnet: g}
+    rust: "g"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-g]
+  - name: matrix_like
+    kind: property
+    signature: "()"
+    names: {python: matrix_like, node: matrix_like, java: matrix_like, dotnet: matrix_like}
+    rust: "matrix_like"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-matrix-like]
+  - name: name
+    kind: property
+    signature: "()"
+    names: {python: name, node: name, java: name, dotnet: name}
+    rust: "name"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-name]
+  - name: point_like
+    kind: property
+    signature: "()"
+    names: {python: point_like, node: point_like, java: point_like, dotnet: point_like}
+    rust: "point_like"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-point-like]
+  - name: quad_like
+    kind: property
+    signature: "()"
+    names: {python: quad_like, node: quad_like, java: quad_like, dotnet: quad_like}
+    rust: "quad_like"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-quad-like]
+  - name: r
+    kind: property
+    signature: "()"
+    names: {python: r, node: r, java: r, dotnet: r}
+    rust: "r"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-r]
+  - name: rect_like
+    kind: property
+    signature: "()"
+    names: {python: rect_like, node: rect_like, java: rect_like, dotnet: rect_like}
+    rust: "rect_like"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-rect-like]
+  - name: trace_device_CLIP_PATH
+    kind: property
+    signature: "()"
+    names: {python: trace_device_CLIP_PATH, node: trace_device_CLIP_PATH, java: trace_device_CLIP_PATH, dotnet: trace_device_CLIP_PATH}
+    rust: "trace_device_CLIP_PATH"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-trace-device-clip-path]
+  - name: trace_device_CLIP_STROKE_PATH
+    kind: property
+    signature: "()"
+    names: {python: trace_device_CLIP_STROKE_PATH, node: trace_device_CLIP_STROKE_PATH, java: trace_device_CLIP_STROKE_PATH, dotnet: trace_device_CLIP_STROKE_PATH}
+    rust: "trace_device_CLIP_STROKE_PATH"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-trace-device-clip-stroke-path]
+  - name: trace_device_FILL_PATH
+    kind: property
+    signature: "()"
+    names: {python: trace_device_FILL_PATH, node: trace_device_FILL_PATH, java: trace_device_FILL_PATH, dotnet: trace_device_FILL_PATH}
+    rust: "trace_device_FILL_PATH"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-trace-device-fill-path]
+  - name: trace_device_STROKE_PATH
+    kind: property
+    signature: "()"
+    names: {python: trace_device_STROKE_PATH, node: trace_device_STROKE_PATH, java: trace_device_STROKE_PATH, dotnet: trace_device_STROKE_PATH}
+    rust: "trace_device_STROKE_PATH"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-constants-trace-device-stroke-path]
