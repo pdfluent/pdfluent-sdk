@@ -34,6 +34,8 @@ All notable changes to PDFluent are documented here.
 
 ## [1.1.0] — <RELEASE_DATE>
 
+Java: 1.1.0 on Maven Central follows shortly; 1.0.0 remains available.
+
 ### Breaking
 
 - **Public CLI exit codes are 0/1/2/3.** `pdfluent-cli` used to exit 2 on usage errors, 3 on missing files, 4 on malformed PDFs, 5 on policy opt-in, and 6/7/70 on stub, IO and unknown failures. Every failure now maps to 0 ok, 1 usage, 2 input error, 3 processing error. The error code inside the `--json` envelope names the exact failure. Scripts that matched the old numbers need updating.
@@ -142,7 +144,7 @@ All notable changes to PDFluent are documented here.
 
 - **The C ABI's `pdf_version()` reports the crate version.** It returned a hard-coded `"0.1.0"`. It now reads the `pdf-capi` package version at compile time.
 
-- **Error messages link to pdfluent.com.** `PdfError::docs_url()` and the C API's error text, which the .NET and Java packages carry, point at `https://pdfluent.com/errors/#<slug>`. CLI error lines point at `https://pdfluent.com/errors/#cli-<code>`. 1.0.0 linked to a domain PDFluent does not control [B55].
+- **Error messages link to pdfluent.com.** `PdfError::docs_url()` and the C API's error text, which the .NET package carries, point at `https://pdfluent.com/errors/#<slug>`. CLI error lines point at `https://pdfluent.com/errors/#cli-<code>`. 1.0.0 linked to a domain PDFluent does not control [B55].
 
 ## [1.0.0] — 2026-09-16
 
