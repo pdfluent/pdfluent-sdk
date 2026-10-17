@@ -32,12 +32,38 @@ npm install @pdfluent/sdk-wasm      # Browser (WebAssembly)
 dotnet add package PDFluent         # .NET
 ```
 
+Java 1.1.0 is served from the PDFluent Maven repository at
+<https://maven.pdfluent.com>, so add it next to the dependency. Maven Central
+carries 1.0.0; 1.1.x follows there later.
+
 ```xml
 <!-- Java (Maven) -->
-<dependency>
-  <groupId>com.pdfluent</groupId>
-  <artifactId>pdfluent</artifactId>
-</dependency>
+<repositories>
+  <repository>
+    <id>pdfluent</id>
+    <url>https://maven.pdfluent.com</url>
+  </repository>
+</repositories>
+
+<dependencies>
+  <dependency>
+    <groupId>com.pdfluent</groupId>
+    <artifactId>pdfluent</artifactId>
+    <version>1.1.0</version>
+  </dependency>
+</dependencies>
+```
+
+```kotlin
+// Java (Gradle, Kotlin DSL)
+repositories {
+    mavenCentral()
+    maven { url = uri("https://maven.pdfluent.com") }
+}
+
+dependencies {
+    implementation("com.pdfluent:pdfluent:1.1.0")
+}
 ```
 
 C and C++ link against `pdf-capi`; [SETUP.md](SETUP.md) has the header and the
