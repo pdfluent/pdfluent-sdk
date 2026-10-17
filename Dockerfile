@@ -17,7 +17,7 @@ FROM rust:1.94.0-bookworm AS builder
 WORKDIR /src
 COPY . .
 RUN rustup toolchain install \
-    && cargo build --release --locked -p xfa-cli --bin pdfluent \
+    && cargo build --release --locked -p pdfluent-cli --bin pdfluent \
     && install -m 0755 target/release/pdfluent /usr/local/bin/pdfluent
 
 FROM debian:bookworm-slim
