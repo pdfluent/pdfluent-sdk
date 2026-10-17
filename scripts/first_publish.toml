@@ -1,0 +1,24 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+#
+# First-publish crates for the 1.1.0 release (build 2, #636).
+#
+# New crate names are legitimately absent from crates.io before their first
+# publish; scripts/check_release_consistency.py reports a listed-but-absent
+# crate as NEW (first publish) instead of failing it. A listed crate that IS
+# on crates.io fails ("remove it from the first-publish list"), and an
+# absent crate that is NOT listed still fails. Remove each name once its
+# first version is published.
+#
+# This agrees with scripts/release/publish_ordered.sh by construction: that
+# script publishes whatever is not on the registry yet, in topological
+# order, with no list of its own — this file only tells the consistency
+# gate which absences are expected, never what to publish.
+#
+# Four names, not three: pdfluent-cli is a first publish too. The pdfluent
+# binary shipped from xfa-cli before the 30-09-2026 takeover; the
+# pdfluent-cli crate name itself never published.
+crates = ["epub-extract", "pdfluent-cli", "pptx-extract", "xlsx-extract"]

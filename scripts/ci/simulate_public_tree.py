@@ -160,8 +160,21 @@ def main() -> int:
         volgorde = ["metadata", "check", "test"]
         for stap in volgorde[: volgorde.index(a.stage) + 1]:
             print(f"[simulate] {stap} ...", flush=True)
-            r = subprocess.run(stappen[stap], cwd=tmp, env=env,
-                               capture_output=True, text=True)
+            try:
+                r = subprocess.run(stappen[stap], cwd=tmp, env=env,
+                                   capture_output=True, text=True)
+            except FileNotFoundError:
+                # A traceback for a missing PATH entry (#516). This is what
+                # publication-guards.yml printed on all 38 of its runs, and the
+                # eight lines of stack said nothing about the one fact that
+                # mattered: the runner's `run:` shell cannot see cargo. The job
+                # is not a pass either way -- it assembled a tree and judged
+                # nothing -- so the exit code does not change, only what a
+                # person reads first.
+                print(f"[simulate] SKIPPED (not a pass): `{stappen[stap][0]}` is not on "
+                      f"PATH, so the assembled tree was never checked. On a runner, put "
+                      f"it there first: scripts/ci/cargo_on_path.sh.")
+                return 1
             if r.returncode != 0:
                 print(f"[simulate] FAIL at {stap} (exit {r.returncode})")
                 for regel in (r.stderr or r.stdout).splitlines()[-25:]:

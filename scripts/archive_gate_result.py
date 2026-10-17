@@ -31,7 +31,7 @@ def main():
     p.add_argument("--gate-id", required=True, help="e.g. '57c' or '58'")
     p.add_argument("--result", required=True, help="Path to gate JSON result")
     p.add_argument("--commit", default=None, help="Git commit hash (defaults to HEAD)")
-    p.add_argument("--binary", default="pdfluent")
+    p.add_argument("--binary", default="xfa-runner")
     p.add_argument("--notes", default="", help="Optional notes")
     args = p.parse_args()
 

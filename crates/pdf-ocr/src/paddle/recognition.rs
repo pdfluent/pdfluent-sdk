@@ -84,6 +84,26 @@ pub fn preprocess_batch(
     target_height: u32,
     max_batch_size: usize,
 ) -> Vec<Array4<f32>> {
+    preprocess_batch_indexed(crops, target_height, max_batch_size)
+        .into_iter()
+        .map(|(tensor, _)| tensor)
+        .collect()
+}
+
+/// Preprocess multiple crops into batched tensors, keeping each row's source.
+///
+/// Same batching as [`preprocess_batch`] (width-descending sort, pad to the
+/// widest row, split into chunks of `max_batch_size`), but each batch also
+/// carries the original crop index of every row, so decoded results can be
+/// scattered back into crop order.
+///
+/// Hidden: an internal batching helper, not API.
+#[doc(hidden)]
+pub fn preprocess_batch_indexed(
+    crops: &[(Vec<u8>, u32, u32)],
+    target_height: u32,
+    max_batch_size: usize,
+) -> Vec<(Array4<f32>, Vec<usize>)> {
     if crops.is_empty() {
         return Vec::new();
     }
@@ -107,7 +127,9 @@ pub fn preprocess_batch(
         let batch_size = chunk.len();
 
         let mut batch = Array4::<f32>::zeros((batch_size, 3, target_height as usize, max_w));
-        for (b_idx, (_, tensor)) in chunk.iter().enumerate() {
+        let mut indices = Vec::with_capacity(chunk.len());
+        for (b_idx, (crop_idx, tensor)) in chunk.iter().enumerate() {
+            indices.push(*crop_idx);
             let w = tensor.shape()[3];
             for c in 0..3 {
                 for y in 0..target_height as usize {
@@ -117,9 +139,22 @@ pub fn preprocess_batch(
                 }
             }
         }
-        batches.push(batch);
+        batches.push((batch, indices));
     }
     batches
+}
+
+/// Place per-row decode results back into original crop order.
+///
+/// `decoded[row]` came from batch row `row`, which holds crop `indices[row]`.
+fn scatter_results(
+    results: &mut [RecognizedText],
+    indices: &[usize],
+    decoded: Vec<RecognizedText>,
+) {
+    for (row, result) in decoded.into_iter().enumerate() {
+        results[indices[row]] = result;
+    }
 }
 
 /// Run SVTR recognition inference on a preprocessed batch tensor.
@@ -270,7 +305,8 @@ pub fn recognize_batch(
         return Ok(Vec::new());
     }
 
-    // Preprocess each crop individually to preserve original order
+    // Preprocessing sorts each chunk by width; the indexed variant keeps the
+    // source crop of every row so results below land back in crop order.
     let mut results = vec![
         RecognizedText {
             text: String::new(),
@@ -284,13 +320,13 @@ pub fn recognize_batch(
         let chunk_end = (chunk_start + batch_size).min(crops.len());
         let chunk = &crops[chunk_start..chunk_end];
 
-        let batches = preprocess_batch(chunk, 48, chunk.len());
-        if let Some(batch_tensor) = batches.into_iter().next() {
+        let batches = preprocess_batch_indexed(chunk, 48, chunk.len());
+        if let Some((batch_tensor, indices)) = batches.into_iter().next() {
             let logits = recognize_inference(session, &batch_tensor)?;
             let decoded = ctc_decode_batch(&logits, dictionary);
-            for (i, result) in decoded.into_iter().enumerate() {
-                results[chunk_start + i] = result;
-            }
+            // Indices are relative to the chunk; shift them to crop positions.
+            let shifted: Vec<usize> = indices.iter().map(|i| chunk_start + i).collect();
+            scatter_results(&mut results, &shifted, decoded);
         }
     }
 
@@ -336,7 +372,7 @@ mod tests {
     fn ctc_decode_simple() {
         let dict = Dictionary::from_bytes(b"H\ne\nl\no\n").unwrap();
         // Pattern: blank, H, H, blank, e, l, l, o
-        let mut logits = Array2::<f32>::from_elem((8, 5), -10.0);
+        let mut logits = Array2::<f32>::from_elem((8, 6), -10.0);
         logits[[0, 0]] = 10.0; // blank
         logits[[1, 1]] = 10.0; // H
         logits[[2, 1]] = 10.0; // H (duplicate)
@@ -356,7 +392,7 @@ mod tests {
         let dict = Dictionary::from_bytes(b"H\ne\nl\no\n").unwrap();
         // "Hello" requires blank between the two l's
         // Pattern: H, blank, e, l, blank, l, o
-        let mut logits = Array2::<f32>::from_elem((7, 5), -10.0);
+        let mut logits = Array2::<f32>::from_elem((7, 6), -10.0);
         logits[[0, 1]] = 10.0; // H
         logits[[1, 0]] = 10.0; // blank
         logits[[2, 2]] = 10.0; // e
@@ -372,7 +408,7 @@ mod tests {
     #[test]
     fn ctc_decode_empty_logits() {
         let dict = Dictionary::from_bytes(b"a\n").unwrap();
-        let logits = Array2::<f32>::zeros((0, 2));
+        let logits = Array2::<f32>::zeros((0, 3));
         let result = ctc_greedy_decode(&logits, &dict);
         assert!(result.text.is_empty());
         assert_eq!(result.confidence, 0.0);
@@ -381,7 +417,7 @@ mod tests {
     #[test]
     fn ctc_decode_all_blanks() {
         let dict = Dictionary::from_bytes(b"a\nb\n").unwrap();
-        let mut logits = Array2::<f32>::from_elem((5, 3), -10.0);
+        let mut logits = Array2::<f32>::from_elem((5, 4), -10.0);
         for t in 0..5 {
             logits[[t, 0]] = 10.0; // all blank
         }
@@ -421,7 +457,7 @@ mod tests {
     #[test]
     fn ctc_decode_batch_multiple() {
         let dict = Dictionary::from_bytes(b"a\nb\n").unwrap();
-        let mut logits = ndarray::Array3::<f32>::from_elem((2, 3, 3), -10.0);
+        let mut logits = ndarray::Array3::<f32>::from_elem((2, 3, 4), -10.0);
         // Sample 0: "a"
         logits[[0, 0, 1]] = 10.0;
         logits[[0, 1, 0]] = 10.0;
@@ -441,5 +477,64 @@ mod tests {
     fn preprocess_batch_empty() {
         let batches = preprocess_batch(&[], 48, 8);
         assert!(batches.is_empty());
+    }
+
+    #[test]
+    fn ctc_decode_emits_spaces() {
+        // Indices: 0 = blank, 1 = a, 2 = b, 3 = space.
+        let dict = Dictionary::from_bytes(b"a\nb\n").unwrap();
+        assert_eq!(dict.len(), 4);
+        // Pattern: a, space, space, blank, b -> "a b" (duplicate space collapses).
+        let mut logits = Array2::<f32>::from_elem((5, 4), -10.0);
+        logits[[0, 1]] = 10.0; // a
+        logits[[1, 3]] = 10.0; // space
+        logits[[2, 3]] = 10.0; // space (duplicate)
+        logits[[3, 0]] = 10.0; // blank
+        logits[[4, 2]] = 10.0; // b
+
+        let result = ctc_greedy_decode(&logits, &dict);
+        assert_eq!(result.text, "a b");
+        assert!(result.confidence > 0.9);
+    }
+
+    #[test]
+    fn batch_results_map_back_to_crop_order_under_width_sort() {
+        // Mixed widths, already at target height: narrow, wide, medium.
+        let crops = vec![
+            (vec![10u8; 50 * 48 * 3], 50u32, 48u32),   // crop 0
+            (vec![20u8; 200 * 48 * 3], 200u32, 48u32), // crop 1
+            (vec![30u8; 100 * 48 * 3], 100u32, 48u32), // crop 2
+        ];
+        let batches = preprocess_batch_indexed(&crops, 48, 8);
+        assert_eq!(batches.len(), 1);
+        let (tensor, indices) = &batches[0];
+        assert_eq!(tensor.shape()[0], 3);
+        assert_eq!(*indices, vec![1, 2, 0]); // width-descending sort
+
+        // Canned logits: one distinct character per batch row, in batch order.
+        // Indices: 0 = blank, 1 = a, 2 = b, 3 = c, 4 = space.
+        let dict = Dictionary::from_bytes(b"a\nb\nc\n").unwrap();
+        let mut logits = ndarray::Array3::<f32>::from_elem((3, 3, 5), -10.0);
+        for (row, class) in [(0usize, 2usize), (1, 3), (2, 1)] {
+            logits[[row, 0, class]] = 10.0;
+            logits[[row, 1, 0]] = 10.0;
+            logits[[row, 2, 0]] = 10.0;
+        }
+        let decoded = ctc_decode_batch(&logits, &dict);
+        assert_eq!(decoded[0].text, "b");
+        assert_eq!(decoded[1].text, "c");
+        assert_eq!(decoded[2].text, "a");
+
+        // Scatter back through the same helper recognize_batch uses.
+        let mut results = vec![
+            RecognizedText {
+                text: String::new(),
+                confidence: 0.0,
+            };
+            crops.len()
+        ];
+        scatter_results(&mut results, indices, decoded);
+        let texts: Vec<&str> = results.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(texts, vec!["a", "b", "c"]);
     }
 }

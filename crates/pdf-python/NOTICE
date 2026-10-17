@@ -1,0 +1,150 @@
+PDFluent — Notice on License Composition
+
+PDFluent is distributed across multiple Rust crates. Different crates within
+the project carry different licenses depending on their origin and role.
+Read this file together with the LICENSE file in the repository root.
+
+============================================================================
+OPEN-SOURCE FOUNDATION (permissive upstream licences)
+============================================================================
+
+The following crates are forks of upstream open-source libraries and remain
+distributed under their original permissive licenses. They may be used
+without a commercial license from PDFluent, subject only to the terms of
+their respective open-source licenses:
+
+  pdfluent-lopdf       MIT
+                       (forked from lopdf, https://crates.io/crates/lopdf)
+
+  pdfluent-cff         MIT OR Apache-2.0
+                       (forked from cff-parser)
+
+  pdfluent-ccitt       Apache-2.0 OR MIT
+                       (forked from hayro-ccitt by Laurenz Stampfl,
+                        https://github.com/LaurenzV/hayro)
+
+  pdfluent-jbig2       Apache-2.0 OR MIT
+                       (forked from hayro-jbig2)
+
+  pdfluent-jpeg2000    Apache-2.0 OR MIT
+                       (forked from hayro-jpeg2000)
+
+  pdf-syntax           Apache-2.0 OR MIT
+                       (forked from hayro-syntax)
+
+  pdf-interpret        Apache-2.0 OR MIT
+                       (forked from hayro-interpret)
+
+  pdf-render           Apache-2.0 OR MIT
+                       (substantially extended fork of hayro, co-authored by
+                        Laurenz Stampfl)
+
+  pdf-font             Apache-2.0 OR MIT
+                       (substantially extended fork merging hayro-font,
+                        hayro-cmap and hayro-postscript, co-authored by
+                        Laurenz Stampfl; carries Adobe's CMap resources as
+                        crates/pdf-font/assets/cmaps.brotli, © 1990-2023 Adobe,
+                        BSD-3-Clause, with the licence text beside it as
+                        crates/pdf-font/assets/LICENSE.txt)
+
+pdf-render and pdf-font carry substantial PDFluent work on top of the upstream
+code. That does not move them across the line: they are derivative works of an
+Apache-2.0 OR MIT original whose relicensing is prohibited, so they stay
+Apache-2.0 OR MIT here, however far they are extended.
+
+The original copyright notices for these upstream projects are preserved
+in their respective source files and in the THIRD_PARTY_LICENSES.txt file.
+
+============================================================================
+DUAL-LICENSED COMPONENTS (AGPL-3.0-only OR PDFluent Commercial Licence)
+============================================================================
+
+The following crates are PDFluent's own work and are available under two
+licences, at your option: the GNU AGPLv3, or the PDFluent Commercial Licence.
+See the LICENSE file in this repository.
+
+The AGPL is the complete product; no feature is withheld and nothing expires.
+It asks that you offer your users the corresponding source under the same
+licence if you convey the software or let them use a modified version over a
+network. The commercial licence is the alternative for anyone who cannot do
+that. See https://pdfluent.com/sdk/pricing.
+
+  pdfluent             — the unified facade SDK
+  pdf-engine           — orchestration and document model
+                         (the TATR post-processing behind `ort-tables` is a port of
+                          Microsoft's table-transformer, © Microsoft Corporation,
+                          MIT; that notice ships inside the crate as THIRD_PARTY.md)
+  pdf-manip            — page-level manipulation (merge, split, rotate, etc.)
+                         (six unmodified Adobe CMap resources, compiled in
+                          to read the character codes of a predefined CMap;
+                          © 1990-2023 Adobe, BSD-3-Clause; that licence
+                          ships inside the crate as
+                          resources/cid-tables/LICENSE-Adobe-CMap.txt)
+  pdf-redact           — content redaction
+  pdfluent-sign        — digital signatures (PAdES, S/MIME)
+  pdf-compliance       — PDF/A, PDF/UA, PDF/X validation and conversion
+  pdfluent-extract     — text and image extraction
+  epub-extract         — EPUB content extraction
+  pdfluent-forms       — AcroForm support
+  pdf-annot            — annotations
+  pdf-docx             — DOCX export
+  pdf-xlsx             — XLSX export and table extraction
+  xlsx-extract         — XLSX workbook extraction to engine blocks
+  pdf-pptx             — PowerPoint PPTX export
+  pptx-extract         — PowerPoint PPTX extraction to blocks
+  pdf-invoice          — FDF/XFDF form data exchange and ZUGFeRD/Factur-X
+  pdf-text-format      — text run formatting
+  pdf-standard-fonts   — the Standard 14 font programs, compiled in
+                         (the font programs themselves come from PDFium,
+                          © 2014 Foxit Software Inc., BSD-3-Clause; that
+                          notice ships inside the crate)
+  pdf-substitute-fonts — the substitute font programs, compiled in
+                         (twelve unmodified Liberation 2.1.5 faces and two
+                          unmodified Noto Naskh Arabic v2.021 faces, both SIL
+                          Open Font License 1.1; those licences ship inside the
+                          crate as LICENSE-Liberation.txt and
+                          LICENSE-NotoNaskhArabic.txt. "Noto" is a trademark of
+                          Google LLC, named as a fact about the bytes and not
+                          as an endorsement)
+  pdf-ocr              — OCR integration
+  pdf-xfa              — XFA processing engine
+  xfa-dom-resolver     — XFA DOM
+  xfa-layout-engine    — XFA layout engine
+  xfa-js-sandboxed     — sandboxed JavaScript runtime for XFA scripts
+  formcalc-interpreter — FormCalc evaluation
+  xfa-json             — XFA JSON conversion
+  pdfluent-cli         — command-line interface over the facade
+
+The Software produces the same output whether or not a commercial licence is
+held: there is no licence key, nothing is withheld and no marker is added
+(#226). Documents carry "PDFluent" in the PDF Producer entry and in XMP
+metadata, which either licence lets you replace or remove in your own build.
+See LICENSE-COMMERCIAL §4.
+
+============================================================================
+EVALUATION
+============================================================================
+
+Every crate above may be evaluated with nothing asked in return: no key, no
+sign-up, no time limit. There is no separate evaluation build -- what you
+install is the whole product, under the AGPLv3.
+
+What an evaluation ends with is a choice of licence rather than an expiry:
+the AGPL and its obligation to offer your users the corresponding source, or
+the commercial licence, which removes that obligation. The commercial route
+is self-service and yearly -- Commercial EUR 999 per organisation, OEM Startup
+EUR 2,499 and OEM EUR 9,999 per product (LICENSE-COMMERCIAL §2a). Nothing is
+delivered but an order confirmation and a licence document; there is no key.
+Questions before buying: sales@pdfluent.com.
+
+  Licensing: https://pdfluent.com/docs/licensing
+  Pricing:   https://pdfluent.com/sdk/pricing
+  Terms:     https://pdfluent.com/terms
+
+============================================================================
+CONTACT
+============================================================================
+
+  Innovation Trigger B.V. (operating as PDFluent)
+  hello@pdfluent.com
+  https://pdfluent.com

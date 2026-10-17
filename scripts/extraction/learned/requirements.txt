@@ -1,0 +1,7 @@
+# Offline training for the learned decisions (#598). On the Mac, never on a
+# rented machine. Pinned so a retrain reproduces the checked-in model.
+# Install ONLY through setup_venv.sh: a clean venv, never the anaconda base,
+# whose MKL numpy loads a second OpenMP runtime beside LightGBM's (see README).
+lightgbm==4.3.0
+numpy==1.26.4
+scipy==1.17.1

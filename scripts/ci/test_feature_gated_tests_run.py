@@ -55,11 +55,36 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 # So the sources are the workflows a change actually passes through.
 WORKFLOWS = REPO / ".github" / "workflows"
 
-# The events a change cannot avoid. `schedule` is deliberately absent: a nightly
-# runs after the fact, on master, and tells a pull request nothing. `workflow_
-# dispatch` is absent for the reason above.
+# The events a change cannot avoid. `workflow_dispatch` is absent for the reason
+# above: it runs when somebody types it.
 BLOKKERENDE_GEBEURTENISSEN = {"push", "pull_request", "pull_request_target",
                               "merge_group"}
+
+# A SCHEDULE COUNTS WHEN IT COMES ROUND OFTEN ENOUGH, and this line is where a
+# rule was narrowed rather than dropped (#350).
+#
+# `schedule` used to be absent outright, on the argument that a nightly runs
+# after the fact and tells a pull request nothing. That argument survives for a
+# nightly and it stopped covering the case it was actually deciding: on
+# 06-09-2026 the workspace build, the four feature-gated suites and four heavy
+# suites moved into a two-hourly wave of ci-ephemeral.yml, on an instance bought
+# per wave, because the one self-hosted runner had twenty-nine runs queued on
+# four cores.
+#
+# What makes that wave coverage rather than a nightly's after-the-fact report is
+# cadence and target together: it runs against master's head every two hours, so
+# a landed change reaches it within one wave, unconditionally and without
+# anybody typing anything. A daily cron cannot say that -- a day of landings sit
+# behind it -- so twelve fires a day is the line, and this is the number to
+# argue with rather than the rule.
+#
+# The state this replaces was worse than either reading. ci-ephemeral.yml was
+# `disabled_manually` on GitHub from 02-09 and had run nothing since, and it
+# carried a `push` trigger -- so this guard counted it as blocking and reported
+# nine feature-gated suites as covered by a workflow that could not start. A
+# guard that reads the trigger and not the cadence was already the failure here;
+# it just pointed the other way.
+SCHEDULE_PER_DAG_MINIMUM = 12
 
 # ONDERGRENS: workflows read >= 10. This repository has thirty-odd; finding a
 # handful means the glob broke, and a coverage set assembled from a broken glob
@@ -336,17 +361,93 @@ def triggers(doc) -> set[str]:
     return {str(on)}
 
 
+def fires_per_dag(doc) -> int:
+    """How often this workflow's crons come round in a day, at most.
+
+    Deliberately crude, and crude in the safe direction: only the minute and
+    hour fields are expanded, and any restriction on day-of-month, month or
+    day-of-week makes the answer zero. `0 */2 * * *` is twelve; `17 4 * * *` is
+    one; `0 4 * * 1` is none of this guard's business.
+
+    Not a cron library: the question is "several times a day or not", and a
+    dependency that answers it exactly would be a dependency for one boolean.
+    """
+    on = doc.get(True) if True in doc else doc.get("on")
+    if not isinstance(on, dict):
+        return 0
+    totaal = 0
+    for item in on.get("schedule") or []:
+        if not isinstance(item, dict) or not item.get("cron"):
+            continue
+        velden = str(item["cron"]).split()
+        if len(velden) != 5:
+            continue
+        minuut, uur, dag, maand, weekdag = velden
+        if (dag, maand, weekdag) != ("*", "*", "*"):
+            continue
+
+        def aantal(veld: str, bereik: int) -> int:
+            if veld == "*":
+                return bereik
+            if veld.startswith("*/") and veld[2:].isdigit() and int(veld[2:]) > 0:
+                return bereik // int(veld[2:])
+            return len([x for x in veld.split(",") if x])
+
+        totaal += aantal(minuut, 60) * aantal(uur, 24)
+    return totaal
+
+
+# The cron reader, checked where it is used rather than in a file of its own.
+#
+# It is six lines of string handling deciding whether nine feature-gated suites
+# count as covered, and a mistake in it is silent in both directions: read
+# `0 */2 * * *` as one fire a day and nine real gaps appear out of nowhere; read
+# `0 4 * * 1` as many and a weekly cron starts excusing them. Both look like an
+# ordinary verdict from outside. Microseconds, so it runs every time rather than
+# in a place somebody has to remember to call.
+CRON_GEVALLEN = [
+    ("0 */2 * * *", 12),   # the wave of ci-ephemeral.yml
+    ("*/30 * * * *", 48),
+    ("0 * * * *", 24),
+    ("17 4 * * *", 1),     # desktop-maintenance
+    ("0 4 * * 1", 0),      # weekly: a day-of-week restriction is not this rule
+    ("0 2 1 * *", 0),      # monthly, same
+    ("0 1,13 * * *", 2),
+    ("wat dan ook", 0),    # not five fields
+]
+
+
+def cron_lezer_klopt() -> str | None:
+    for cron, verwacht in CRON_GEVALLEN:
+        gekregen = fires_per_dag({"on": {"schedule": [{"cron": cron}]}})
+        if gekregen != verwacht:
+            return (f"the cron reader says {cron!r} fires {gekregen} time(s) a "
+                    f"day; it is {verwacht}. Every verdict below about a "
+                    "scheduled workflow rests on this.")
+    return None
+
+
 def blokkeert_een_wijziging(doc) -> bool:
     """Does a change have to pass this workflow?
 
     A dispatch-only workflow runs when somebody types it and not otherwise, so a
     test named in one is a test that has never been run against the change in
     front of it. That is the mirror's defect with a different address (#276).
+
+    A schedule counts when it comes round at least SCHEDULE_PER_DAG_MINIMUM
+    times a day: nobody has to do anything for it to reach a landed change, and
+    it reaches it within one interval. See the comment on that constant.
     """
-    return bool(triggers(doc) & BLOKKERENDE_GEBEURTENISSEN)
+    if triggers(doc) & BLOKKERENDE_GEBEURTENISSEN:
+        return True
+    return fires_per_dag(doc) >= SCHEDULE_PER_DAG_MINIMUM
 
 
 def main() -> int:
+    stuk = cron_lezer_klopt()
+    if stuk:
+        print(f"[featgate] FATAL: {stuk}", file=sys.stderr)
+        return 2
     if not WORKFLOWS.is_dir():
         print(f"[featgate] FATAL: {WORKFLOWS} ontbreekt, so no job can be read at "
               "all. That is not a pass.", file=sys.stderr)
@@ -461,7 +562,7 @@ def main() -> int:
 
     print(f"OK: {len(crates)} crates gescand tegen "
           f"{len(alle) - len(overgeslagen)} blokkerende workflow(s); elke "
-          f"feature-gated test heeft een job. ({len(overgeslagen)} workflow(s) "
+          f"feature-gated test heeft een job of een verklaard gat ({len(TOEGESTAAN)}). ({len(overgeslagen)} workflow(s) "
           "run only on request and count for nothing.)")
     return 0
 

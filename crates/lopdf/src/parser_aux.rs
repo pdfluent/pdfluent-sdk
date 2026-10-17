@@ -617,9 +617,17 @@ pub fn decode_xref_stream_with_limit(
             }
         }
     }
+    // The stream dictionary carries the trailer (ISO 32000-1 section 7.5.8,
+    // table 15), so only trailer keys survive decoding: the stream machinery
+    // would otherwise leak into `Document::trailer`, where no classic trailer
+    // ever has it. (`Filter` is usually already gone, removed when the stream
+    // was decompressed above; dropping it again is harmless.)
     dict.remove(b"Length");
     dict.remove(b"W");
     dict.remove(b"Index");
+    dict.remove(b"Type");
+    dict.remove(b"Filter");
+    dict.remove(b"DecodeParms");
     Ok((xref, dict))
 }
 
@@ -870,6 +878,44 @@ mod tests {
         let stream = Stream::new(dict, vec![]);
         let result = decode_xref_stream(stream);
         assert!(result.is_err(), "negative W field must be rejected");
+    }
+
+    #[test]
+    fn xref_stream_decode_returns_trailer_keys_only() {
+        // ISO 32000-1 section 7.5.8, table 15 (#643): the stream dictionary
+        // carries the trailer, so decoding strips the stream machinery and
+        // keeps the trailer keys, exactly like a classic trailer.
+        use super::decode_xref_stream;
+        use crate::{Dictionary, Object, Stream};
+
+        // One entry: object 1, uncompressed, at offset 15.
+        let content = vec![1u8, 0, 0, 0, 15, 0, 0];
+        let mut dict = Dictionary::new();
+        dict.set("Type", Object::Name(b"XRef".to_vec()));
+        dict.set("Size", Object::Integer(2));
+        dict.set(
+            "W",
+            Object::Array(vec![Object::Integer(1), Object::Integer(4), Object::Integer(2)]),
+        );
+        dict.set("Index", Object::Array(vec![Object::Integer(1), Object::Integer(1)]));
+        dict.set("Length", Object::Integer(content.len() as i64));
+        dict.set("DecodeParms", Object::Dictionary(Dictionary::new()));
+        dict.set("Root", Object::Reference((1, 0)));
+        let stream = Stream::new(dict, content);
+        let (xref, trailer) = decode_xref_stream(stream).expect("decode works");
+        assert!(matches!(
+            xref.get(1),
+            Some(crate::xref::XrefEntry::Normal { offset: 15, .. })
+        ));
+        assert_eq!(trailer.get(b"Root").and_then(Object::as_reference).unwrap(), (1, 0));
+        assert!(trailer.get(b"Size").is_ok(), "trailer keeps /Size");
+        for key in [b"Type".as_slice(), b"W", b"Index", b"Length", b"DecodeParms"] {
+            assert!(
+                trailer.get(key).is_err(),
+                "decode must strip /{}",
+                String::from_utf8_lossy(key)
+            );
+        }
     }
 
     #[test]

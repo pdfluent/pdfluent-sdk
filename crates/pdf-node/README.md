@@ -1,6 +1,8 @@
 # @pdfluent/node
 
-Enterprise PDF SDK for Node.js, powered by a native Rust engine via [napi-rs](https://napi.rs).
+[Source on GitHub](https://github.com/pdfluent/pdfluent-sdk) · [Documentation](https://pdfluent.com/docs) · [Report an issue](https://github.com/pdfluent/pdfluent-sdk/issues)
+
+PDFluent for Node.js: a pure-Rust PDF engine bound through [napi-rs](https://napi.rs).
 Supports rendering, text extraction, forms, annotations, redaction, encryption, digital signatures,
 and PDF/A compliance validation.
 
@@ -20,30 +22,6 @@ Pre-built binaries are provided for:
 | Windows | x64 |
 
 ## Quick start
-
-Full TypeScript definitions (`index.d.ts`) ship in the package — no `@types/`
-install, nothing hand-written to fall out of sync with the native binding.
-The `exports` map resolves the same typings for both module systems:
-`import` gets the ESM build, `require` gets CommonJS.
-
-```ts
-import { PdfDocument } from '@pdfluent/node';
-import { readFileSync } from 'node:fs';
-
-const doc: PdfDocument = PdfDocument.open(readFileSync('document.pdf'));
-
-console.log(`Pages: ${doc.pageCount}`);
-console.log(`Title: ${doc.info().title}`);
-
-// Extract text from page 0
-const text: string = doc.extractText(0);
-console.log(text);
-
-// Save after mutations
-doc.save('output.pdf');
-```
-
-### JavaScript (CommonJS)
 
 ```js
 const { PdfDocument } = require('@pdfluent/node');
@@ -92,7 +70,7 @@ const doc = openPdf('/path/to/document.pdf');
 - **Encryption** — encrypt with AES-256, decrypt password-protected PDFs
 - **Digital signatures** — validate existing signatures
 - **Bookmarks** — read the document outline
-- **PDF/A compliance** — validate against levels 1a/1b through 3a/3b/3u
+- **PDF/A compliance** — validate against levels 1a/1b through 3a/3b/3u. This binding validates; it does not convert. PDF/A conversion is delivered at 1B, 2B and 3B, through the Rust facade, the WASM package and the C ABI
 - **Async API** — Promise-based worker-thread execution; no event-loop blocking
 - **TypeScript** — full `.d.ts` declarations with JSDoc included
 
@@ -143,6 +121,11 @@ const text = doc.extractText(0); // plain string
 const blocks = doc.extractTextBlocks(0); // TextBlockInfo[] with x/y/fontSize
 const hits = doc.searchText('invoice'); // number[] of page indices
 ```
+
+`extractMarkdown` runs in the `fast` tier by default and takes
+`quality: "balanced"` for the preview model tier, with `modelDir` and
+`tableModelDir` pointing it at directories outside the default. See
+[Quality tiers](../../docs/STRUCTURED_EXTRACTION.md#quality-tiers).
 
 #### Forms (AcroForm)
 
@@ -256,6 +239,30 @@ const report = validatePdfa('document.pdf', '2b');
 console.log(report.compliant, report.errorCount);
 ```
 
+### Errors
+
+Every failing call throws a `PdfluentError` (a rejected promise for the async
+ones). Branch on `.code`, never on `.message`: the codes are stable, the
+wording is not.
+
+```js
+const { PdfDocument, PdfluentError } = require('@pdfluent/node');
+
+try {
+  PdfDocument.openWithPassword(bytes, password);
+} catch (e) {
+  if (e instanceof PdfluentError && e.code === 'E-SECURITY-DECRYPTION-FAILED') {
+    // ask for the password again
+  } else {
+    throw e;
+  }
+}
+```
+
+`.operation` names the call that failed (`"openWithPassword"`), `.cause` is
+`null` or a detail string. The codes are listed at
+<https://pdfluent.com/errors>.
+
 ### Integration with Sharp
 
 ```js
@@ -268,18 +275,18 @@ await sharp(result.data, {
 
 ## Licence
 
-PDFluent is published under the **GNU AGPLv3**, with the **PDFluent Commercial
-Licence** as the alternative for anyone who cannot accept the copyleft
-obligation. There is no licence key, no activation call and no tier: every
-feature works in every build and output is never marked.
-
-The commercial route is a signed order form, not a checkout. Write to
-sales@pdfluent.com; the terms are in `LICENSE-COMMERCIAL` and the form template
-in `docs/licensing/order-form.md`.
+AGPL-3.0 or a commercial licence, at your option. The AGPL is the default and
+the complete product: there is no licence key, no activation call and no tier,
+and every feature works in every build. If you cannot accept the copyleft
+obligation, the commercial licence is sold yearly and self-service at
+[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing), in four options: Commercial (per
+organisation), OEM Startup and OEM (per product), and Priority support (an
+add-on). The two texts are `LICENSE` and `LICENSE-COMMERCIAL` in this package.
 
 ## Links
 
 - **Documentation:** <https://pdfluent.com/docs>
-- **Issues:** <https://pdfluent.com/support>
+- **Pricing:** <https://pdfluent.com/sdk/pricing>
+- **Support:** <https://pdfluent.com/support>
 - **PDFluent editor** (source-available): <https://github.com/pdfluent/pdfluent>. The free desktop app this SDK powers.
 - Built by [Innovation Trigger BV](https://pdfluent.com)

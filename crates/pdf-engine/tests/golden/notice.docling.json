@@ -1,0 +1,160 @@
+{
+  "schema_name": "DoclingDocument",
+  "version": "1.10.0",
+  "name": "notice",
+  "origin": null,
+  "furniture": {
+    "self_ref": "#/furniture",
+    "parent": null,
+    "children": [],
+    "content_layer": "furniture",
+    "meta": null,
+    "name": "_root_",
+    "label": "unspecified"
+  },
+  "body": {
+    "self_ref": "#/body",
+    "parent": null,
+    "children": [
+      {
+        "cref": "#/texts/0"
+      },
+      {
+        "cref": "#/texts/1"
+      },
+      {
+        "cref": "#/groups/0"
+      }
+    ],
+    "content_layer": "body",
+    "meta": null,
+    "name": "_root_",
+    "label": "unspecified"
+  },
+  "groups": [
+    {
+      "self_ref": "#/groups/0",
+      "parent": {
+        "cref": "#/body"
+      },
+      "children": [
+        {
+          "cref": "#/texts/2"
+        }
+      ],
+      "content_layer": "body",
+      "meta": null,
+      "name": "list",
+      "label": "list"
+    }
+  ],
+  "texts": [
+    {
+      "self_ref": "#/texts/0",
+      "parent": {
+        "cref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "meta": null,
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 72,
+            "t": 696,
+            "r": 220.47999963378908,
+            "b": 680,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            19
+          ]
+        }
+      ],
+      "orig": "Notice to occupiers",
+      "text": "Notice to occupiers",
+      "formatting": null,
+      "hyperlink": null,
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/1",
+      "parent": {
+        "cref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "meta": null,
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 72,
+            "t": 660,
+            "r": 215.9599993801117,
+            "b": 614,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            129
+          ]
+        }
+      ],
+      "orig": "# 14 and # 16 are served by the rear staircase while the lift is out of use. The work is expected to run to the end of the month.",
+      "text": "# 14 and # 16 are served by the rear staircase while the lift is out of use. The work is expected to run to the end of the month.",
+      "formatting": null,
+      "hyperlink": null
+    },
+    {
+      "self_ref": "#/texts/2",
+      "parent": {
+        "cref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "meta": null,
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 360,
+            "t": 660,
+            "r": 496.1899991607666,
+            "b": 614,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            117
+          ]
+        }
+      ],
+      "orig": "deliveries are taken at the front desk until six o'clock, and 1998 was the last year the yard gate was in use at all.",
+      "text": "deliveries are taken at the front desk until six o'clock, and 1998 was the last year the yard gate was in use at all.",
+      "formatting": null,
+      "hyperlink": null,
+      "enumerated": false,
+      "marker": "-"
+    }
+  ],
+  "pictures": [],
+  "tables": [],
+  "key_value_items": [],
+  "form_items": [],
+  "pages": {
+    "1": {
+      "size": {
+        "width": 612,
+        "height": 792
+      },
+      "image": null,
+      "page_no": 1
+    }
+  }
+}

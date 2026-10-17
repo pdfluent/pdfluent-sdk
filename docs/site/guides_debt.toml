@@ -1,0 +1,223 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+#
+# Rust programs on published copy-from pages of pdfluent.com that do not
+# compile -- the how-to guides, the how-tos, and the error pages.
+#
+# WHY THIS FILE IS NOT THE OTHER REGISTER
+#
+# `blocks_exceptions.toml` names blocks that cannot compile in this harness for
+# a reason outside the documentation -- a cloud crate nobody here links. Those
+# are excused. Nothing in this file is excused. Every entry is a page a reader
+# can open today, showing Rust that does not build, and every entry is work.
+#
+# WHY IT EXISTS AT ALL
+#
+# `docs/SITE_BLOCKS.md` holds a ceiling over the whole site: so many programs
+# fail, and that number may not rise. A ceiling cannot see who carries the
+# damage. `how-to-guides/pdfa.json` described `fix_pdf_a_errors` and
+# `PdfAFixOptions` -- neither exists in any crate -- for months on a page in the
+# sitemap, and the number never moved, because repairing something elsewhere had
+# paid for it. That is what a count buys you (#499).
+#
+# So the three trees a reader is sent to in order to copy code --
+# `public/content/en/how-to-guides/`, `public/content/en/how-to/` and
+# `public/content/en/errors/` -- are judged by name. A program on a published
+# page there compiles, or it is written down here.
+#
+# The error pages joined on 10-09-2026 (#476). They are the pages read under the
+# most pressure -- a reader arrives with a stack trace and pastes the fix -- and
+# two of them handed out a `?` on a `Page`, which is not a `Result`. Both sat
+# inside the ceiling from the day it was drawn.
+#
+# Making that tree strict named seven more of them on the spot, and they are the
+# first seven entries below. That is the whole point of the mechanism: they were
+# not new, they were invisible, and now they cannot get worse and no eighth can
+# join them quietly. What each of them asks for is on #535.
+#
+# CHECKED IN BOTH DIRECTIONS, AND IT MAY ONLY SHRINK
+#
+# `site_blocks_compile.py` fails on all four of:
+#
+#   * a published guide program that does not compile and is not named here --
+#     the point of the file;
+#   * an entry naming a program that compiles now;
+#   * an entry naming a program the page no longer publishes (hidden or moved);
+#   * an entry naming a program the export no longer carries.
+#
+# There is no way to add an entry that makes the gate quieter about anything
+# other than the exact program it names, and taking a page out of the sitemap is
+# a repair the gate accepts -- it costs the page.
+#
+# `error` is the first thing rustc said when the entry was made. It is there so
+# the list can be read, not asserted on: the wording of a compiler message is
+# not a contract.
+
+[[program]]
+file  = "public/content/en/errors/corrupt-pdf.json"
+path  = "(page) (3 blokken)"
+error = "cannot find type `Document` in this scope: not found in this scope"
+
+[[program]]
+file  = "public/content/en/errors/invalid-pdf-error.json"
+path  = "(page) (3 blokken)"
+error = "failed to resolve: use of undeclared type `Document`: use of undeclared type `Document`"
+
+[[program]]
+file  = "public/content/en/errors/large-pdf-crash.json"
+path  = "(page) (3 blokken)"
+error = "unresolved import `pdfluent::DocumentWriter`: no `DocumentWriter` in the root"
+
+[[program]]
+file  = "public/content/en/errors/out-of-memory-error.json"
+path  = "(page) (3 blokken)"
+error = "unresolved import `pdfluent::ImageResampleOptions`: no `ImageResampleOptions` in the root"
+
+[[program]]
+file  = "public/content/en/errors/pdf-encrypted-error.json"
+path  = "(page) (3 blokken)"
+error = "failed to resolve: use of undeclared type `Document`: use of undeclared type `Document`"
+
+[[program]]
+file  = "public/content/en/errors/pdf-signature-invalid.json"
+path  = "(page) (3 blokken)"
+error = "failed to resolve: use of undeclared type `SignatureStatus`: use of undeclared type `SignatureStatus`"
+
+[[program]]
+file  = "public/content/en/errors/pdfa-validation-error.json"
+path  = "(page) (3 blokken)"
+error = "unresolved imports `pdfluent::PdfaConvertOptions`, `pdfluent::EmbedFonts`: no `PdfaConvertOptions` in the root"
+
+[[program]]
+file  = "public/content/en/how-to-guides/deploy.json"
+path  = ".sections[0] (2 blokken)"
+error = "expected `;`, found keyword `async`: help: add `;` here"
+
+[[program]]
+file  = "public/content/en/how-to-guides/deploy.json"
+path  = ".sections[2] (2 blokken)"
+error = "failed to resolve: use of unresolved module or unlinked crate `wasm_bindgen`: use of unresolved module or unli"
+
+[[program]]
+file  = "public/content/en/how-to-guides/einvoice.json"
+path  = ".sections[0] (4 blokken)"
+error = "unresolved import `pdfluent::ZugferdProfile`: no `ZugferdProfile` in the root"
+
+[[program]]
+file  = "public/content/en/how-to-guides/einvoice.json"
+path  = ".sections[1] (2 blokken)"
+error = "no method named `zugferd_xml` found for struct `PdfDocument` in the current scope: method not found in `PdfDoc"
+
+[[program]]
+file  = "public/content/en/how-to-guides/files.json"
+path  = ".sections[0].steps[1].code"
+error = "failed to resolve: use of undeclared type `PdfDocument`: use of undeclared type `PdfDocument`"
+
+[[program]]
+file  = "public/content/en/how-to-guides/files.json"
+path  = ".sections[3] (4 blokken)"
+error = "unresolved import `pdfluent::Attachment`: no `Attachment` in the root"
+
+[[program]]
+file  = "public/content/en/how-to-guides/files.json"
+path  = ".sections[4] (5 blokken)"
+error = "no method named `filename` found for struct `Vec<Attachment>` in the current scope: method not found in `Vec<A"
+
+[[program]]
+file  = "public/content/en/how-to-guides/fonts.json"
+path  = ".sections[1] (2 blokken)"
+error = "no method named `fonts` found for struct `PdfDocument` in the current scope: method not found in `PdfDocument`"
+
+[[program]]
+file  = "public/content/en/how-to-guides/forms.json"
+path  = ".sections[2] (3 blokken)"
+error = "no method named `flatten_form` found for struct `PdfDocument` in the current scope"
+
+[[program]]
+file  = "public/content/en/how-to-guides/forms.json"
+path  = ".sections[4] (5 blokken)"
+error = "failed to resolve: could not find `FieldType` in `xfa`: could not find `FieldType` in `xfa`"
+
+[[program]]
+file  = "public/content/en/how-to-guides/metadata.json"
+path  = ".sections[2] (4 blokken)"
+error = "no function or associated item named `new` found for struct `pdfluent::Metadata` in the current scope: functio"
+
+[[program]]
+file  = "public/content/en/how-to-guides/pages.json"
+path  = ".sections[3] (5 blokken)"
+error = "unresolved import `pdfluent::SplitDepth`: no `SplitDepth` in the root"
+
+[[program]]
+file  = "public/content/en/how-to-guides/pages.json"
+path  = ".sections[6] (4 blokken)"
+error = "unresolved import `pdfluent::PageSize`: no `PageSize` in the root"
+
+[[program]]
+file  = "public/content/en/how-to-guides/pages.json"
+path  = ".sections[9] (5 blokken)"
+error = "cannot find function `fetch_pdf_from_database` in this scope: not found in this scope"
+
+[[program]]
+file  = "public/content/en/how-to-guides/security.json"
+path  = ".sections[4] (5 blokken)"
+error = "cannot find function `fetch_from_backend` in this scope: not found in this scope"
+
+[[program]]
+file  = "public/content/en/how-to-guides/signing.json"
+path  = ".sections[2] (3 blokken)"
+error = "cannot find value `sig` in this scope: not found in this scope"
+
+[[program]]
+file  = "public/content/en/how-to-guides/text.json"
+path  = ".sections[3] (5 blokken)"
+error = "expected `,`, found `{`: expected `,`"
+
+[[program]]
+file  = "public/content/en/how-to-guides/text.json"
+path  = ".sections[4] (4 blokken)"
+error = "`?` couldn't convert the error to `pdfluent::Error`: the trait `From<TextEditError>` is not implemented for `p"
+
+[[program]]
+file  = "public/content/en/how-to-guides/text.json"
+path  = ".sections[5] (5 blokken)"
+error = "unresolved imports `pdfluent::ReplaceOptions`, `pdfluent::TextQuery`: no `ReplaceOptions` in the root, no `Tex"
+
+[[program]]
+file  = "public/content/en/how-to/add-xmp-metadata-pdf-rust.json"
+path  = "(page) (4 blokken)"
+error = "no function or associated item named `new` found for struct `pdfluent::Metadata` in the current scope: functio"
+
+[[program]]
+file  = "public/content/en/how-to/check-missing-fonts-pdf-rust.json"
+path  = "(page) (2 blokken)"
+error = "no method named `fonts` found for struct `PdfDocument` in the current scope: method not found in `PdfDocument`"
+
+[[program]]
+file  = "public/content/en/how-to/flatten-pdf-form-rust.json"
+path  = "(page) (3 blokken)"
+error = "no method named `flatten_form` found for struct `PdfDocument` in the current scope"
+
+[[program]]
+file  = "public/content/en/how-to/get-pdf-page-count-rust.json"
+path  = "(page) (5 blokken)"
+error = "cannot find function `fetch_pdf_from_database` in this scope: not found in this scope"
+
+[[program]]
+file  = "public/content/en/how-to/open-pdf-with-password-rust.json"
+path  = "(page) (5 blokken)"
+error = "cannot find function `fetch_from_backend` in this scope: not found in this scope"
+
+[[program]]
+file  = "public/content/en/how-to/read-pdf-signature-info-rust.json"
+path  = "(page) (3 blokken)"
+error = "cannot find value `sig` in this scope: not found in this scope"
+
+[[program]]
+file  = "public/content/en/how-to/replace-text-in-pdf-rust.json"
+path  = "(page) (5 blokken)"
+error = "unresolved imports `pdfluent::ReplaceOptions`, `pdfluent::TextQuery`: no `ReplaceOptions` in the root, no `Tex"
+

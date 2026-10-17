@@ -115,8 +115,99 @@ impl Bookmark {
     }
 }
 
+/// One entry of the document outline, as read by [`read_outline`] and
+/// written by [`write_outline`].
+///
+/// The same tree as [`Bookmark`], except that the action is optional: an
+/// outline item may carry no destination at all (neither `/Dest` nor `/A`),
+/// for instance after its target page was deleted. [`Bookmark`] cannot say
+/// that, so [`read_bookmarks`] substitutes a page-1 `GoTo` for it; this type
+/// keeps the difference.
+///
+/// Build one with [`OutlineEntry::new`]; the fields stay public for reading
+/// and changing.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct OutlineEntry {
+    /// Display title.
+    pub title: String,
+    /// Action when clicked; `None` when the entry has no destination.
+    pub action: Option<BookmarkAction>,
+    /// Text style.
+    pub style: BookmarkStyle,
+    /// Whether the entry is initially open (showing children).
+    pub open: bool,
+    /// Child entries.
+    pub children: Vec<OutlineEntry>,
+}
+
+impl OutlineEntry {
+    /// Create a closed entry without children, in the default style.
+    ///
+    /// `action` is `None` for an entry without a destination.
+    pub fn new(title: impl Into<String>, action: Option<BookmarkAction>) -> Self {
+        Self {
+            title: title.into(),
+            action,
+            style: BookmarkStyle::default(),
+            open: false,
+            children: Vec::new(),
+        }
+    }
+
+    /// Convert to a [`Bookmark`] tree.
+    ///
+    /// An entry without a destination becomes a `GoTo` to page 1 with
+    /// [`FitType::Fit`], the value [`read_bookmarks`] has always returned
+    /// for such an entry.
+    pub fn to_bookmark(&self) -> Bookmark {
+        Bookmark {
+            title: self.title.clone(),
+            action: self.action.clone().unwrap_or(BookmarkAction::GoTo {
+                page: 1,
+                fit: FitType::Fit,
+            }),
+            style: self.style,
+            open: self.open,
+            children: self
+                .children
+                .iter()
+                .map(OutlineEntry::to_bookmark)
+                .collect(),
+        }
+    }
+}
+
+impl From<&Bookmark> for OutlineEntry {
+    /// Every [`Bookmark`] has a destination, so the action is always `Some`.
+    fn from(bm: &Bookmark) -> Self {
+        Self {
+            title: bm.title.clone(),
+            action: Some(bm.action.clone()),
+            style: bm.style,
+            open: bm.open,
+            children: bm.children.iter().map(OutlineEntry::from).collect(),
+        }
+    }
+}
+
 /// Read all bookmarks from a document.
+///
+/// An entry without a destination reads as a `GoTo` to page 1; use
+/// [`read_outline`] to tell those apart.
 pub fn read_bookmarks(doc: &Document) -> Result<Vec<Bookmark>> {
+    Ok(read_outline(doc)?
+        .iter()
+        .map(OutlineEntry::to_bookmark)
+        .collect())
+}
+
+/// Read the document outline, keeping entries without a destination.
+///
+/// Returns an empty `Vec` for a document without an outline. An entry's
+/// `action` is `None` when it has neither `/Dest` nor a readable `/A`
+/// action dictionary.
+pub fn read_outline(doc: &Document) -> Result<Vec<OutlineEntry>> {
     let catalog_ref = doc
         .trailer
         .get(b"Root")
@@ -159,7 +250,7 @@ fn read_siblings(
     doc: &Document,
     first_ref: ObjectId,
     page_map: &std::collections::HashMap<ObjectId, u32>,
-) -> Result<Vec<Bookmark>> {
+) -> Result<Vec<OutlineEntry>> {
     let mut bookmarks = Vec::new();
     let mut current_ref = Some(first_ref);
     let mut visited = std::collections::HashSet::new();
@@ -205,7 +296,7 @@ fn read_siblings(
             .map(|c| c > 0)
             .unwrap_or(false);
 
-        bookmarks.push(Bookmark {
+        bookmarks.push(OutlineEntry {
             title,
             action,
             style,
@@ -220,16 +311,19 @@ fn read_siblings(
     Ok(bookmarks)
 }
 
-/// Parse a bookmark's destination/action.
+/// Parse a bookmark's destination/action; `None` when it has none.
 fn parse_bookmark_action(
     doc: &Document,
     dict: &lopdf::Dictionary,
     page_map: &std::collections::HashMap<ObjectId, u32>,
-) -> BookmarkAction {
+) -> Option<BookmarkAction> {
     // Check for /Dest (direct destination).
-    if let Ok(dest) = dict.get(b"Dest") {
-        if let Some(action) = parse_dest(dest, page_map) {
-            return action;
+    let has_dest = dict.get(b"Dest").is_ok();
+    if has_dest {
+        if let Ok(dest) = dict.get(b"Dest") {
+            if let Some(action) = parse_dest(dest, page_map) {
+                return Some(action);
+            }
         }
     }
 
@@ -237,19 +331,26 @@ fn parse_bookmark_action(
     if let Ok(action_obj) = dict.get(b"A") {
         if let Ok(action_ref) = action_obj.as_reference() {
             if let Ok(action_dict) = doc.get_dictionary(action_ref) {
-                return parse_action_dict(action_dict, page_map);
+                return Some(parse_action_dict(action_dict, page_map));
             }
         }
         if let Object::Dictionary(ref action_dict) = action_obj {
-            return parse_action_dict(action_dict, page_map);
+            return Some(parse_action_dict(action_dict, page_map));
         }
     }
 
-    // Default fallback.
-    BookmarkAction::GoTo {
-        page: 1,
-        fit: FitType::Fit,
+    if has_dest {
+        // A destination key is present but not an explicit array (a name or
+        // string): named-destination resolution owns these; until then keep
+        // the legacy page-1 fallback.
+        return Some(BookmarkAction::GoTo {
+            page: 1,
+            fit: FitType::Fit,
+        });
     }
+
+    // Neither /Dest nor /A: the entry has no destination.
+    None
 }
 
 fn parse_dest(
@@ -398,6 +499,15 @@ fn obj_to_f32(obj: &Object) -> Option<f32> {
 
 /// Write bookmarks into a document, replacing any existing outlines.
 pub fn write_bookmarks(doc: &mut Document, bookmarks: &[Bookmark]) -> Result<()> {
+    let entries: Vec<OutlineEntry> = bookmarks.iter().map(OutlineEntry::from).collect();
+    write_outline(doc, &entries)
+}
+
+/// Write an outline into a document, replacing any existing outlines.
+///
+/// An empty slice removes the outline. An entry whose `action` is `None` is
+/// written without `/Dest` and without `/A`.
+pub fn write_outline(doc: &mut Document, bookmarks: &[OutlineEntry]) -> Result<()> {
     if bookmarks.is_empty() {
         // Remove outlines.
         let catalog_ref = doc
@@ -445,7 +555,7 @@ pub fn write_bookmarks(doc: &mut Document, bookmarks: &[Bookmark]) -> Result<()>
 /// Write a list of sibling bookmarks and return (first_id, last_id).
 fn write_bookmark_siblings(
     doc: &mut Document,
-    bookmarks: &[Bookmark],
+    bookmarks: &[OutlineEntry],
     parent_id: ObjectId,
     pages: &std::collections::BTreeMap<u32, ObjectId>,
 ) -> Result<(ObjectId, ObjectId)> {
@@ -464,20 +574,23 @@ fn write_bookmark_siblings(
 
         // Set destination.
         match &bm.action {
-            BookmarkAction::GoTo { page, fit } => {
+            None => {
+                // No destination keys are written.
+            }
+            Some(BookmarkAction::GoTo { page, fit }) => {
                 if let Some(&page_id) = pages.get(page) {
                     let dest = build_dest_array(page_id, fit);
                     dict.set("Dest", Object::Array(dest));
                 }
             }
-            BookmarkAction::Uri(uri) => {
+            Some(BookmarkAction::Uri(uri)) => {
                 let action = dictionary! {
                     "S" => "URI",
                     "URI" => Object::String(uri.as_bytes().to_vec(), lopdf::StringFormat::Literal),
                 };
                 dict.set("A", Object::Dictionary(action));
             }
-            BookmarkAction::GoToR { file, page } => {
+            Some(BookmarkAction::GoToR { file, page }) => {
                 let action = dictionary! {
                     "S" => "GoToR",
                     "F" => Object::String(file.as_bytes().to_vec(), lopdf::StringFormat::Literal),
@@ -485,7 +598,7 @@ fn write_bookmark_siblings(
                 };
                 dict.set("A", Object::Dictionary(action));
             }
-            BookmarkAction::Named(name) => {
+            Some(BookmarkAction::Named(name)) => {
                 let action = dictionary! {
                     "S" => "Named",
                     "N" => Object::Name(name.as_bytes().to_vec()),
@@ -569,7 +682,7 @@ fn build_dest_array(page_id: ObjectId, fit: &FitType) -> Vec<Object> {
     arr
 }
 
-fn count_bookmarks(bookmarks: &[Bookmark]) -> usize {
+fn count_bookmarks(bookmarks: &[OutlineEntry]) -> usize {
     let mut count = bookmarks.len();
     for bm in bookmarks {
         count += count_bookmarks(&bm.children);
@@ -694,7 +807,7 @@ mod tests {
 
     #[test]
     fn test_count_bookmarks() {
-        let bookmarks = vec![
+        let bookmarks = [
             Bookmark::new("A", 1),
             Bookmark::with_children(
                 "B",
@@ -702,7 +815,8 @@ mod tests {
                 vec![Bookmark::new("B.1", 3), Bookmark::new("B.2", 4)],
             ),
         ];
-        assert_eq!(count_bookmarks(&bookmarks), 4);
+        let entries: Vec<OutlineEntry> = bookmarks.iter().map(OutlineEntry::from).collect();
+        assert_eq!(count_bookmarks(&entries), 4);
     }
 
     #[test]

@@ -33,14 +33,15 @@ use std::sync::{Arc, Mutex};
 
 use crate::decoration::PageDecoration;
 use crate::encrypt::EncryptOptions;
-use crate::error::{internal_error, Error, Result};
+use crate::error::{internal_error, DecryptionFailureReason, Error, Result};
 use crate::form::{FormField, PdfFormMut};
 use crate::metadata::{Metadata, MetadataMut};
 use crate::parity::{
     CompressOptions, CompressReport, FontSubsetReport, ImageFormat, ImageInsert, ImageInsertReport,
-    InsertImageFormat, ToImagesOptions, ToImagesReport,
+    InsertImageFormat, RenderPageOptions, ToImagesOptions, ToImagesReport,
 };
 use crate::watermark::{Rotation, WatermarkOptions};
+use pdf_engine::{Block, ExtractOptions, Word};
 
 // ---------------------------------------------------------------------------
 // Options
@@ -272,6 +273,15 @@ pub struct PdfDocument {
     /// initialised on the first text-edit call; advanced by every applied
     /// text-edit commit.
     text_edit_revision: Option<pdf_manip::text_edit::DocumentRevision>,
+    /// The caller's answer to [`Self::keep_ligatures`], held here as well as on
+    /// the engine because `refresh_from_lopdf` replaces the engine wholesale.
+    keep_ligatures: bool,
+    /// Undo journal for the compatible API (`Document.journal_*`): owned
+    /// here so persistent-handle bindings (node, C-ABI) keep one log per
+    /// open document. Doors that rebuild the facade from bytes on every
+    /// call (Python) own a second [`crate::compat::edit::Journal`] instead;
+    /// see its memory note.
+    journal: crate::compat::edit::Journal,
 }
 
 /// Build a diagnostics collector, install a warning sink on `engine` that
@@ -356,6 +366,25 @@ fn open_engine_from_shared_bytes(
         (None, None) => pdf_engine::PdfDocument::open(shared),
     }
     .map_err(Into::into)
+}
+
+/// Say which of the two password failures this is.
+///
+/// The engine reports one condition for both: "password-protected, and no
+/// password or a wrong one was given". Only the caller's own options separate
+/// them, and they ask different things of that caller -- one has a password to
+/// correct, the other has none to offer yet. Telling somebody who supplied no
+/// password that theirs is wrong sends them hunting a typo they never made
+/// (#450).
+fn name_the_password_failure(e: Error, opts: &OpenOptions) -> Error {
+    match e {
+        Error::DecryptionFailed {
+            reason: DecryptionFailureReason::WrongPassword,
+        } if opts.password.is_none() => Error::DecryptionFailed {
+            reason: DecryptionFailureReason::PasswordRequired,
+        },
+        other => other,
+    }
 }
 
 fn load_lopdf_from_shared_bytes(
@@ -547,7 +576,7 @@ impl PdfDocument {
         // Drain load-time events before checking the result so the collector is
         // never leaked when open_engine_from_shared_bytes returns an error.
         let load_events = pdf_syntax::leniency::drain();
-        let mut engine = engine_result?;
+        let mut engine = engine_result.map_err(|e| name_the_password_failure(e, &opts))?;
         let diagnostics = install_diagnostics_sink(&mut engine);
         {
             let mut guard = diagnostics.lock().unwrap_or_else(|e| e.into_inner());
@@ -565,6 +594,8 @@ impl PdfDocument {
             diagnostics,
             xfa_session: None,
             text_edit_revision: None,
+            keep_ligatures: false,
+            journal: crate::compat::edit::Journal::default(),
         })
     }
 
@@ -633,6 +664,13 @@ impl PdfDocument {
         self.engine.page_count()
     }
 
+    /// Crate-private read access to the engine. Used by the compatible
+    /// rendering lane, which needs raw pixels and render knobs the public
+    /// encoded-bytes rendering does not expose.
+    pub(crate) fn engine(&self) -> &pdf_engine::PdfDocument {
+        &self.engine
+    }
+
     // ---------- Diagnostics ----------
 
     /// Diagnostics collected so far from render and text-extraction operations.
@@ -681,11 +719,38 @@ impl PdfDocument {
         PdfVersion::parse(s).unwrap_or(PdfVersion { major: 1, minor: 7 })
     }
 
+    /// Hand back the ligature code points a font declared -- `ﬃ` rather than
+    /// `ffi` -- from every plain-text extraction on this document, page text
+    /// and AcroForm field values alike. The setting survives the operations
+    /// that re-parse the document, such as redaction or a watermark.
+    ///
+    /// Off by default. A typographic ligature is one glyph for several
+    /// letters, and a font that declares U+FB03 for it hands back a word no
+    /// search box, index or `grep` will match against the letters somebody
+    /// types (#437). Turn it on when the caller wants the file's own
+    /// characters back rather than the readable ones. Structured output --
+    /// [`text_with_layout`](Self::text_with_layout) and the spans under it --
+    /// carries the glyphs' characters either way.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::prelude::*;
+    ///
+    /// let mut doc = PdfDocument::open("report.pdf").unwrap();
+    /// doc.keep_ligatures(true);
+    /// assert!(doc.extract_text().unwrap().contains('\u{FB03}'));
+    /// ```
+    pub fn keep_ligatures(&mut self, keep: bool) {
+        self.keep_ligatures = keep;
+        self.engine.set_keep_ligatures(keep);
+    }
+
     /// Extract all plain text from the document.
     ///
-    /// Uses the underlying engine's `extract_all_text`, which concatenates
-    /// per-page content streams with `\f` page separators (pdftotext
-    /// convention) and appends any AcroForm field values.
+    /// Uses the underlying engine's `extract_all_text`, which terminates every
+    /// page's content with a `\f` (the pdftotext convention: `n` pages, `n`
+    /// form feeds) and appends any AcroForm field values to the last page.
     ///
     /// For per-page text with a double-newline separator see
     /// [`extract_text`](Self::extract_text).
@@ -712,7 +777,8 @@ impl PdfDocument {
     /// empty string (no extra blank lines are inserted for them).
     ///
     /// For structured output with bounding boxes, use
-    /// [`text_with_layout`](Self::text_with_layout) instead.
+    /// [`text_with_layout`](Self::text_with_layout) instead; for the pages
+    /// themselves, [`extract_text_pages`](Self::extract_text_pages).
     ///
     /// # Example
     ///
@@ -731,6 +797,159 @@ impl PdfDocument {
                 parts.push(self.engine.extract_text(idx)?);
             }
             Ok(parts.join("\n\n"))
+        })
+    }
+
+    /// Extract the text of every page separately, in page order.
+    ///
+    /// One entry per page, including pages that carry no text (an empty
+    /// string). This is what a consumer needs to chunk or cite by page —
+    /// "see page 7" — without parsing the document a second time with another
+    /// library.
+    ///
+    /// [`extract_text`](Self::extract_text) joins the same pages with `"\n\n"`
+    /// and [`text`](Self::text) with the form-feed convention; both hand back
+    /// one string, this one hands back the pages themselves.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::prelude::*;
+    ///
+    /// let doc = PdfDocument::open("report.pdf").unwrap();
+    /// for (index, text) in doc.extract_text_pages().unwrap().iter().enumerate() {
+    ///     println!("page {}: {} chars", index + 1, text.chars().count());
+    /// }
+    /// ```
+    pub fn extract_text_pages(&self) -> Result<Vec<String>> {
+        let count = self.engine.page_count();
+        with_leniency(&self.diagnostics, || -> Result<Vec<String>> {
+            let mut pages: Vec<String> = Vec::with_capacity(count);
+            for idx in 0..count {
+                pages.push(self.engine.extract_text(idx)?);
+            }
+            Ok(pages)
+        })
+    }
+
+    /// The document's structure: every block in reading order (#573).
+    ///
+    /// Preview: output quality is still improving and the API may change in a minor release.
+    ///
+    /// Where [`extract_text`](Self::extract_text) hands back a wall of
+    /// characters and [`text_with_layout`](Self::text_with_layout) the lines a
+    /// page drew, this hands back what a caller chunks, cites or embeds: the
+    /// paragraph, the heading and its level, the list item and its number, the
+    /// table cell and its place in the grid, and the running head the document
+    /// repeats -- each with the page and the box it was drawn in.
+    ///
+    /// `options` chooses the pages. The document is read whole whatever it
+    /// asks for, because what a block IS is decided against the rest of the
+    /// document; see [`ExtractOptions`].
+    ///
+    /// [`pdf_engine::to_json`] writes the result for a caller that chunks it
+    /// itself, and [`extract_markdown`](Self::extract_markdown) writes it for
+    /// one that reads it. `docs/STRUCTURED_EXTRACTION.md` is the account of
+    /// both forms.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::prelude::*;
+    /// use pdfluent::{BlockKind, ExtractOptions};
+    ///
+    /// let doc = PdfDocument::open("report.pdf").unwrap();
+    /// for block in doc.extract_blocks(&ExtractOptions::default()).unwrap() {
+    ///     if let BlockKind::Heading { level } = block.kind {
+    ///         println!("{} {}", "#".repeat(level as usize), block.text);
+    ///     }
+    /// }
+    /// ```
+    pub fn extract_blocks(&self, options: &ExtractOptions) -> Result<Vec<Block>> {
+        with_leniency(&self.diagnostics, || -> Result<Vec<Block>> {
+            Ok(self.engine.extract_blocks(options)?)
+        })
+    }
+
+    /// Run `f` with the leniency collector attached, as [`Self::extract_blocks`]
+    /// does. The word pass beside it (W1, #663) runs through here so its
+    /// diagnostics land where that one's do.
+    pub(crate) fn with_leniency<T>(&self, f: impl FnOnce() -> T) -> T {
+        with_leniency(&self.diagnostics, f)
+    }
+
+    /// The engine's word pass under the leniency collector, as
+    /// [`Self::extract_blocks`] runs the block pass (W1, #663).
+    pub(crate) fn engine_words(&self, options: &ExtractOptions) -> Result<Vec<Word>> {
+        self.with_leniency(|| Ok(self.engine.extract_words(options)?))
+    }
+
+    /// The document as markdown, in reading order (#573).
+    ///
+    /// Preview: output quality is still improving and the API may change in a minor release.
+    ///
+    /// [`extract_blocks`](Self::extract_blocks) written out: headings become
+    /// `#` to `###`, list items `-` and `1.`, a table a pipe table or an HTML
+    /// one where markdown cannot hold its shape, and a change of page an HTML
+    /// comment. The running heads are not in it -- a line repeated between two
+    /// paragraphs is the defect that chunking a document exists to avoid --
+    /// and they are still in the blocks.
+    ///
+    /// This is the form a RAG pipeline reads, and it is deterministic: the
+    /// same document produces the same bytes, so a caller can hash it and mean
+    /// something by the hash.
+    ///
+    /// # Balanced quality
+    ///
+    /// With [`Quality::Balanced`](crate::Quality) this runs the balanced tier
+    /// instead of the above: the layout model (Heron-ft ep03) regions each
+    /// page and the engine's own text fills the regions. It needs the
+    /// `ort-layout` cargo feature and the weights from an explicit `pdfluent
+    /// models install layout` -- nothing is downloaded by default, ever. The
+    /// tier runs ONNX Runtime 1.23.2 under `ort` =2.0.0-rc.13, loaded
+    /// dynamically and never linked. Without the feature the call fails with
+    /// `MODEL_NOT_AVAILABLE` naming the feature and the install command, and
+    /// with the feature but without the files, with `MODEL_NOT_AVAILABLE`
+    /// naming the path looked at and the install command.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::prelude::*;
+    /// use pdfluent::ExtractOptions;
+    ///
+    /// let doc = PdfDocument::open("report.pdf").unwrap();
+    /// std::fs::write("report.md", doc.extract_markdown(&ExtractOptions::default()).unwrap()).unwrap();
+    /// ```
+    pub fn extract_markdown(&self, options: &ExtractOptions) -> Result<String> {
+        with_leniency(&self.diagnostics, || -> Result<String> {
+            Ok(self.engine.extract_markdown(options)?)
+        })
+    }
+
+    /// The document as a Docling `DoclingDocument`, as JSON (#629).
+    ///
+    /// Preview: output quality is still improving and the API may change in a minor release.
+    ///
+    /// [`extract_blocks`](Self::extract_blocks) written in the schema
+    /// docling-core pins in [`pdf_engine::docling`], so a pipeline built on
+    /// Docling loads it with `DoclingDocument.model_validate_json` and reads it
+    /// unchanged. `name` is `DoclingDocument.name`, which Docling fills with
+    /// the file's stem.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::prelude::*;
+    /// use pdfluent::ExtractOptions;
+    ///
+    /// let doc = PdfDocument::open("report.pdf").unwrap();
+    /// let json = doc.extract_docling("report", &ExtractOptions::default()).unwrap();
+    /// std::fs::write("report.docling.json", json).unwrap();
+    /// ```
+    pub fn extract_docling(&self, name: &str, options: &ExtractOptions) -> Result<String> {
+        with_leniency(&self.diagnostics, || -> Result<String> {
+            Ok(self.engine.extract_docling(name, options)?)
         })
     }
 
@@ -756,9 +975,10 @@ impl PdfDocument {
     pub fn page(&self, page_number: usize) -> Result<Page<'_>> {
         let total = self.engine.page_count();
         if page_number == 0 || page_number > total {
-            return Err(internal_error(format!(
-                "page index {page_number} out of range (document has {total} pages)",
-            )));
+            return Err(Error::PageOutOfRange {
+                requested: page_number,
+                page_count: total,
+            });
         }
         Ok(Page {
             doc: self,
@@ -895,6 +1115,26 @@ impl PdfDocument {
     /// `MetadataMut::commit` and future mutating facade methods.
     pub(crate) fn lopdf_mut(&mut self) -> &mut lopdf::Document {
         &mut self.lopdf
+    }
+
+    /// Crate-private read access to the compatible undo journal.
+    pub(crate) fn journal(&self) -> &crate::compat::edit::Journal {
+        &self.journal
+    }
+
+    /// Crate-private mutable access to the compatible undo journal.
+    pub(crate) fn journal_mut(&mut self) -> &mut crate::compat::edit::Journal {
+        &mut self.journal
+    }
+
+    /// Replace the document state with a reparse of `bytes`, keeping the
+    /// compatible undo journal (with its already-moved position) intact.
+    /// The receiver is untouched when the bytes do not parse.
+    pub(crate) fn restore_bytes_keep_journal(&mut self, bytes: &[u8]) -> Result<()> {
+        let mut fresh = Self::from_bytes(bytes)?;
+        std::mem::swap(&mut fresh.journal, &mut self.journal);
+        *self = fresh;
+        Ok(())
     }
 
     /// Crate-private constructor from a freshly-built lopdf document.
@@ -1446,9 +1686,13 @@ impl PdfDocument {
         let (from, to) = match opts.pages {
             Some((f, t)) => {
                 if f == 0 || t < f || t > total {
-                    return Err(internal_error(format!(
-                        "invalid page range {f}..={t} (document has {total} pages)",
-                    )));
+                    // Same call-site mistake as `extract_pages`, reported the
+                    // same way since #453.
+                    return Err(Error::PageRangeInvalid {
+                        start: f,
+                        end: t,
+                        page_count: total,
+                    });
                 }
                 (f, t)
             }
@@ -1457,6 +1701,7 @@ impl PdfDocument {
 
         let render_opts = RenderOptions {
             dpi: opts.dpi as f64,
+            quality: opts.quality,
             ..Default::default()
         };
 
@@ -1509,8 +1754,10 @@ impl PdfDocument {
     ///
     /// # Errors
     ///
-    /// - [`Error::Internal`] if `page` is 0, exceeds [`page_count`](Self::page_count),
-    ///   or the render / encode step fails.
+    /// - [`Error::PageOutOfRange`] if `page` is 0 or exceeds
+    ///   [`page_count`](Self::page_count). Pages are numbered from 1, so 0
+    ///   is never valid (#414).
+    /// - [`Error::Internal`] if the render or encode step fails.
     ///
     /// # Example
     ///
@@ -1523,17 +1770,53 @@ impl PdfDocument {
     /// ```
     #[cfg(not(target_arch = "wasm32"))]
     pub fn render_page(&self, page: usize, dpi: u32, format: ImageFormat) -> Result<Vec<u8>> {
+        let opts = RenderPageOptions::new().with_dpi(dpi).with_format(format);
+        self.render_page_with_options(page, opts)
+    }
+
+    /// Render a single page to image bytes, with raster-quality control.
+    ///
+    /// Same as [`render_page`](Self::render_page) but takes
+    /// [`RenderPageOptions`], which additionally carries
+    /// [`RasterQuality`](pdf_engine::render::RasterQuality): `Quality`
+    /// (default, byte-identical to historical output) or `Speed` (~1.4–1.6×
+    /// faster on content-heavy pages, sub-perceptual rounding where
+    /// blending/AA/images compose).
+    ///
+    /// `page` is 1-based. See [`render_page`](Self::render_page) for errors.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::{PdfDocument, RenderPageOptions, RasterQuality};
+    ///
+    /// let doc = PdfDocument::open("report.pdf").unwrap();
+    /// let opts = RenderPageOptions::new()
+    ///     .with_dpi(150)
+    ///     .with_quality(RasterQuality::Speed);
+    /// let png_bytes = doc.render_page_with_options(1, opts).unwrap();
+    /// assert!(!png_bytes.is_empty());
+    /// ```
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn render_page_with_options(
+        &self,
+        page: usize,
+        opts: RenderPageOptions,
+    ) -> Result<Vec<u8>> {
         use pdf_engine::render::{PixelFormat, RenderOptions};
 
         let total = self.engine.page_count();
         if page == 0 || page > total {
-            return Err(internal_error(format!(
-                "page index {page} out of range (document has {total} pages)",
-            )));
+            return Err(Error::PageOutOfRange {
+                requested: page,
+                page_count: total,
+            });
         }
 
+        let format = opts.format;
         let render_opts = RenderOptions {
-            dpi: dpi as f64,
+            dpi: opts.dpi as f64,
+            quality: opts.quality,
             ..Default::default()
         };
 
@@ -1596,6 +1879,18 @@ impl PdfDocument {
     /// Render a single page to image bytes in memory — wasm stub.
     #[cfg(target_arch = "wasm32")]
     pub fn render_page(&self, _page: usize, _dpi: u32, _format: ImageFormat) -> Result<Vec<u8>> {
+        Err(Error::UnsupportedOnWasm {
+            operation: "render_page",
+        })
+    }
+
+    /// Render a single page with options — wasm stub.
+    #[cfg(target_arch = "wasm32")]
+    pub fn render_page_with_options(
+        &self,
+        _page: usize,
+        _opts: RenderPageOptions,
+    ) -> Result<Vec<u8>> {
         Err(Error::UnsupportedOnWasm {
             operation: "render_page",
         })
@@ -1716,10 +2011,10 @@ impl PdfDocument {
     pub fn insert_image(&mut self, img: ImageInsert) -> Result<ImageInsertReport> {
         let total = self.engine.page_count();
         if img.page == 0 || img.page > total {
-            return Err(internal_error(format!(
-                "page index {} out of range (document has {} pages)",
-                img.page, total,
-            )));
+            return Err(Error::PageOutOfRange {
+                requested: img.page,
+                page_count: total,
+            });
         }
 
         let format = match img.format {
@@ -1757,14 +2052,15 @@ impl PdfDocument {
     ///
     /// # Errors
     ///
-    /// - [`Error::Internal`] wrapping "page out of range" if `page` is 0 or
-    ///   exceeds [`page_count`](Self::page_count).
+    /// - [`Error::PageOutOfRange`] if `page` is 0 or exceeds
+    ///   [`page_count`](Self::page_count).
     pub fn rotate_page(&mut self, page: usize, rotation: Rotation) -> Result<()> {
         let total = self.engine.page_count();
         if page == 0 || page > total {
-            return Err(internal_error(format!(
-                "page index {page} out of range (document has {total} pages)",
-            )));
+            return Err(Error::PageOutOfRange {
+                requested: page,
+                page_count: total,
+            });
         }
         let degrees: i64 = match rotation {
             Rotation::Clockwise90 => 90,
@@ -1781,10 +2077,10 @@ impl PdfDocument {
     ///
     /// Routes to `pdf_manip::encrypt::encrypt_and_save`, which encrypts
     /// every object in the internal lopdf representation in place. The
-    /// engine-side representation is **not** refreshed — re-parsing an
-    /// encrypted document from our own serialised output through
-    /// `pdf-engine` + `pdf-syntax` is currently unreliable for PDF 2.0
-    /// AES-256 output (tracked as a post-1.0 improvement).
+    /// engine-side representation is **not** refreshed, so keep reading from
+    /// this handle or re-open the serialised bytes with the user password —
+    /// that round trip is exercised for AES-128 and AES-256 in
+    /// `tests/password_failures_are_named.rs`.
     ///
     /// # Usage contract
     ///
@@ -1852,10 +2148,25 @@ impl PdfDocument {
 
     /// Sign the document using the given signer.
     ///
-    /// Routes to `pdf_sign::sign_pdf`. The current state is serialised,
-    /// signed, and re-parsed. Supports PAdES B-LT by default (via the
-    /// signer's SubFilter), matching `pdfluent::SignOptions::new()`'s
-    /// default.
+    /// The current state is serialised, signed, and re-parsed.
+    ///
+    /// Which PAdES profile comes out is decided by
+    /// [`SignOptions::profile`](crate::signer::SignOptions::profile), and the
+    /// default is B-B:
+    ///
+    /// - `BasicSignature` (B-B) signs and stops.
+    /// - `Timestamped` (B-T) embeds the token from
+    ///   [`SignOptions::timestamp_token`](crate::signer::SignOptions::timestamp_token).
+    /// - `LongTerm` (B-LT) does the same and appends a DSS with the signer's
+    ///   certificate chain.
+    /// - `LongTermArchive` (B-LTA) is not implemented and returns an error.
+    ///
+    /// B-T and B-LT without a timestamp token are an error, not a quiet
+    /// downgrade to B-B (#176, #362). A token that stamps bytes other than
+    /// this document's signature is an error too (#515) — which a token
+    /// fetched before signing always is. To fetch one in the ordinary way, use
+    /// [`sign_timestamped`](Self::sign_timestamped), which sequences the two
+    /// steps correctly.
     #[cfg_attr(
         feature = "tracing",
         tracing::instrument(target = "pdfluent", skip_all)
@@ -1865,13 +2176,137 @@ impl PdfDocument {
         signer: &dyn crate::signer::PdfSigner,
         opts: crate::signer::SignOptions,
     ) -> Result<()> {
-        profile_is_reachable(opts.profile)?;
+        use crate::signer::PadesProfile::*;
+
         let pdf_bytes = self.to_bytes()?;
         let inner_opts = map_sign_options(&opts);
         // Wrap our trait-object signer in an adapter that implements the
         // pdf_sign::PdfSigner trait by delegation.
         let adapter = PdfSignerAdapter { inner: signer };
-        let signed = pdf_sign::sign_pdf(&pdf_bytes, &adapter, &inner_opts)?;
+
+        let signed = match opts.profile {
+            BasicSignature => pdf_sign::sign_pdf(&pdf_bytes, &adapter, &inner_opts)?,
+            Timestamped => {
+                let token = timestamp_token_for(&opts, "B-T", "a trusted timestamp")?;
+                pdf_sign::sign_pdf_timestamped(&pdf_bytes, &adapter, &inner_opts, token)
+                    .map_err(name_the_route_that_works)?
+            }
+            LongTerm => {
+                // After the token, not before: a caller who gave neither is
+                // missing the timestamp first, and being sent to fetch
+                // revocation evidence for a signature that will be refused
+                // anyway is one refusal pointing at the next.
+                let token = timestamp_token_for(
+                    &opts,
+                    "B-LT",
+                    "a trusted timestamp before it can carry validation data",
+                )?;
+                long_term_can_be_supported(&opts)?;
+                pdf_sign::sign_pdf_ltv_with_token(
+                    &pdf_bytes,
+                    &adapter,
+                    &inner_opts,
+                    token,
+                    opts.ocsp_responses.clone(),
+                    opts.crls.clone(),
+                )
+                .map_err(name_the_route_that_works)?
+            }
+            LongTermArchive => return Err(archive_timestamp_is_not_implemented()),
+        };
+
+        *self = Self::from_bytes(&signed)?;
+        Ok(())
+    }
+
+    /// Sign to PAdES B-T or B-LT, fetching the timestamp over the signature.
+    ///
+    /// A timestamp authority stamps a *signature*, so the signature has to
+    /// exist before the token can be asked for. `fetch` is called once, between
+    /// those two steps, with the bytes the authority must stamp: the CMS
+    /// `SignerInfo` signature value, which is what a CAdES signature timestamp
+    /// covers (RFC 5126 §6.1.1). Return the DER-encoded RFC 3161
+    /// `TimeStampToken` your authority sends back and it is embedded in the
+    /// signature it belongs to.
+    ///
+    /// This exists because the older shape -- hand the token in as an option --
+    /// asks for it a step too early. The token could then only be about
+    /// something else, and it was carried into the CMS unread, so the file
+    /// advertised B-T and failed the first verifier that recomputed the imprint
+    /// (#515). That token is now refused; this is the route that works.
+    ///
+    /// The engine makes no network call of its own here: `fetch` is your code,
+    /// and what crosses the wire is a hash of a signature, never the document.
+    ///
+    /// [`PadesProfile::BasicSignature`](crate::signer::PadesProfile::BasicSignature)
+    /// has no timestamp to fetch and is an error here — use [`sign`](Self::sign).
+    /// [`LongTermArchive`](crate::signer::PadesProfile::LongTermArchive) is not
+    /// implemented, as in [`sign`](Self::sign).
+    ///
+    /// ```no_run
+    /// # use pdfluent::{PdfDocument, Result};
+    /// # use pdfluent::signer::{PadesProfile, Pkcs12Signer, SignOptions};
+    /// # fn my_tsa_client(_imprint_over: &[u8]) -> Result<Vec<u8>> { unimplemented!() }
+    /// # fn go(doc: &mut PdfDocument, signer: &Pkcs12Signer) -> Result<()> {
+    /// doc.sign_timestamped(
+    ///     signer,
+    ///     SignOptions::new().profile(PadesProfile::Timestamped),
+    ///     |signature| my_tsa_client(signature),
+    /// )
+    /// # }
+    /// ```
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(target = "pdfluent", skip_all)
+    )]
+    pub fn sign_timestamped<F>(
+        &mut self,
+        signer: &dyn crate::signer::PdfSigner,
+        opts: crate::signer::SignOptions,
+        fetch: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(&[u8]) -> Result<Vec<u8>>,
+    {
+        use crate::signer::PadesProfile::*;
+
+        // Two sources for one token is one too many: whichever we picked, the
+        // other would be silently dropped, and a quietly ignored timestamp is
+        // the family of defect this method exists to close.
+        if opts.timestamp_token.is_some() {
+            return Err(crate::Error::Unsupported(
+                "sign_timestamped fetches the token itself, so SignOptions::timestamp_token                  would be ignored. Drop it, or use sign() if you already hold a token over                  this document's signature."
+                    .into(),
+            ));
+        }
+        if matches!(opts.profile, BasicSignature) {
+            return Err(crate::Error::Unsupported(
+                "PAdES B-B carries no timestamp, so there is nothing to fetch. Use sign()                  for B-B, or select PadesProfile::Timestamped or LongTerm."
+                    .into(),
+            ));
+        }
+        if matches!(opts.profile, LongTermArchive) {
+            return Err(archive_timestamp_is_not_implemented());
+        }
+        long_term_can_be_supported(&opts)?;
+
+        let pdf_bytes = self.to_bytes()?;
+        let inner_opts = map_sign_options(&opts);
+        let adapter = PdfSignerAdapter { inner: signer };
+
+        let pending = pdf_sign::sign_pdf_pending_timestamp(&pdf_bytes, &adapter, &inner_opts)?;
+        let token = fetch(pending.signature_value())?;
+        if token.is_empty() {
+            return Err(crate::Error::Unsupported(
+                "the timestamp authority returned no token. A B-T or B-LT signature without                  a timestamp is a B-B signature under another name, so nothing is written."
+                    .into(),
+            ));
+        }
+        let signed = match opts.profile {
+            LongTerm => pending.long_term(&token, opts.ocsp_responses, opts.crls)?,
+            _ => pending.timestamped(&token)?,
+        };
+
         *self = Self::from_bytes(&signed)?;
         Ok(())
     }
@@ -2199,6 +2634,13 @@ impl PdfDocument {
         let mut new_doc = Self::from_bytes_with(&buf, opts)?;
         new_doc.original_bytes = original_bytes;
         new_doc.text_edit_revision = self.text_edit_revision;
+        // The compatible undo journal is per-open-document state too: a
+        // rotation or bake inside an open op must not drop the log.
+        new_doc.journal = std::mem::take(&mut self.journal);
+        // A refresh rebuilds the engine, and a rebuilt engine folds again. So
+        // a redaction, a rotation or a watermark would silently undo
+        // `keep_ligatures(true)` for every extraction after it (codex, #437).
+        new_doc.keep_ligatures(self.keep_ligatures);
 
         *self = new_doc;
         Ok(())
@@ -2332,8 +2774,8 @@ impl PdfDocument {
     ///
     /// # Errors
     ///
-    /// - [`Error::Internal`] if the normalised range is empty or points
-    ///   past the end of the document.
+    /// - [`Error::PageRangeInvalid`] if the normalised range is empty or
+    ///   points past the end of the document.
     pub fn extract_pages<R: std::ops::RangeBounds<usize>>(&self, range: R) -> Result<PdfDocument> {
         let total = self.engine.page_count();
         let (start, end) = normalise_page_range(&range, total)?;
@@ -2351,10 +2793,10 @@ impl PdfDocument {
     /// the 0-based target page for in-document GoTo actions, `None` for
     /// URI / named / external destinations.
     pub fn outlines(&self) -> Result<Vec<crate::structure::Outline>> {
-        let bookmarks = pdf_manip::bookmarks::read_bookmarks(&self.lopdf)?;
-        Ok(bookmarks
+        let entries = pdf_manip::bookmarks::read_outline(&self.lopdf)?;
+        Ok(entries
             .iter()
-            .map(crate::structure::from_bookmark)
+            .map(crate::structure::from_outline_entry)
             .collect())
     }
 
@@ -2835,6 +3277,16 @@ impl Page<'_> {
     pub fn number(&self) -> usize {
         self.index + 1
     }
+
+    /// The document this page is borrowed from, for the word pass (W1, #663).
+    pub(crate) fn document(&self) -> &PdfDocument {
+        self.doc
+    }
+
+    /// 0-based index into the document's page list, for the word pass (W1, #663).
+    pub(crate) fn page_index(&self) -> usize {
+        self.index
+    }
 }
 
 /// Iterator over all pages.
@@ -2894,49 +3346,108 @@ fn map_permissions(perms: crate::encrypt::Permissions) -> pdf_manip::encrypt::Pe
     }
 }
 
-/// Refuse the profiles we cannot actually produce.
+/// The timestamp token a profile needs, or an error naming what is missing.
 ///
-/// B-T, B-LT and B-LTA all need a timestamp authority, and SignOptions carries
-/// no TSA configuration, so `sign_pdf_ltv` is unreachable from here. Until it
-/// is wired, asking for one of those returned a plain B-B signature with no
-/// indication that the request had been downgraded (#176).
+/// A B-T or B-LT signature without a timestamp is a B-B signature under
+/// another name. Refusing is the smaller harm: a signature that claims
+/// long-term validity and carries no validation material is a false compliance
+/// claim, and it fails silently years later when someone tries to verify it
+/// (#176).
 ///
-/// A signature that claims long-term validity and carries no validation data
-/// is a false compliance claim. Failing is the smaller harm.
-fn profile_is_reachable(profile: crate::signer::PadesProfile) -> Result<()> {
-    use crate::signer::PadesProfile::*;
-    let (naam, wat) = match profile {
-        BasicSignature => return Ok(()),
-        Timestamped => ("B-T", "a trusted timestamp"),
-        LongTerm => ("B-LT", "long-term validation data (DSS)"),
-        LongTermArchive => ("B-LTA", "an archive timestamp"),
-    };
-    Err(crate::Error::Unsupported(format!(
-        "PAdES {naam} needs {wat}, which requires a timestamp authority. \
-         SignOptions carries no TSA configuration yet, so this profile cannot \
-         be produced. Use PadesProfile::BasicSignature, or follow #176."
-    )))
+/// What the error tells them to do next matters as much as the refusal. It
+/// used to say "fetch a token and pass it to SignOptions::timestamp_token",
+/// which is advice that cannot be followed: a token fetched before signing
+/// stamps bytes that are not this signature, and since #515 that token is
+/// refused in turn. Following the old text led from one refusal to another.
+/// Refuse PAdES B-LT when nothing in the DSS could support it.
+///
+/// B-LT is B-T plus the material to check the signature offline later. Without
+/// any revocation evidence the store holds certificates and nothing that says
+/// they were good, which is a B-T document filed under a longer name -- the
+/// same fault as a timestamp that does not cover the signature it travels with.
+/// Both signing routes go through here, because a profile that means one thing
+/// on one entry point and another on the next is worse than either.
+fn long_term_can_be_supported(opts: &crate::signer::SignOptions) -> Result<()> {
+    if !matches!(opts.profile, crate::signer::PadesProfile::LongTerm) {
+        return Ok(());
+    }
+    if !opts.ocsp_responses.is_empty() || !opts.crls.is_empty() {
+        return Ok(());
+    }
+    Err(crate::Error::Unsupported(
+        "PAdES B-LT needs revocation evidence in the DSS, and none was given. Pass it with \
+         SignOptions::revocation_data(ocsp_responses, crls) -- what covers the signer's \
+         chain, and the timestamp authority's if you have it. Without it a verifier offline \
+         later has certificates and no proof they were good, which is \
+         PadesProfile::Timestamped under a longer name."
+            .into(),
+    ))
+}
+
+fn timestamp_token_for<'a>(
+    opts: &'a crate::signer::SignOptions,
+    profile_name: &str,
+    what_is_missing: &str,
+) -> Result<&'a [u8]> {
+    match opts.timestamp_token.as_deref() {
+        Some(token) if !token.is_empty() => Ok(token),
+        _ => Err(crate::Error::Unsupported(format!(
+            "PAdES {profile_name} needs {what_is_missing}. Sign with \
+             PdfDocument::sign_timestamped(signer, opts, fetch): it signs first and hands \
+             your fetch the signature to have stamped, which is the order a timestamp \
+             authority needs. The engine has no HTTP client of its own -- the fetch is \
+             yours -- which is what keeps document content off the network. \
+             SignOptions::timestamp_token is for a token you already hold that covers this \
+             document's signature."
+        ))),
+    }
+}
+
+/// Add the façade's own way out to a refused timestamp.
+///
+/// The engine says why the token does not fit and names its own two-phase
+/// entry point, which a caller of this crate does not have. Without this they
+/// would be told, correctly, that they are stuck.
+fn name_the_route_that_works(e: pdf_sign::SignError) -> crate::Error {
+    match e {
+        pdf_sign::SignError::TimestampMismatch(reason) => crate::Error::InvalidSignature {
+            field: "<signing>".into(),
+            reason: format!(
+                "{reason}. From this API: PdfDocument::sign_timestamped(signer, opts, fetch) \
+                 signs first and hands your fetch the signature to have stamped."
+            ),
+        },
+        other => other.into(),
+    }
+}
+
+/// B-LTA has no implementation to reach.
+///
+/// It needs a document timestamp signature (`/Type /DocTimeStamp`, SubFilter
+/// `ETSI.RFC3161`) covering the whole file after the DSS, and nothing writes
+/// one. The variant exists so the error can say that out loud (#362).
+fn archive_timestamp_is_not_implemented() -> crate::Error {
+    crate::Error::Unsupported(
+        "PAdES B-LTA needs an archive timestamp: a document timestamp signature \
+         (/Type /DocTimeStamp, SubFilter ETSI.RFC3161) written over the whole file after \
+         the DSS. That is not implemented. Use PadesProfile::LongTerm for B-LT, which is."
+            .into(),
+    )
 }
 
 fn map_sign_options(opts: &crate::signer::SignOptions) -> pdf_sign::SignOptions {
-    // Every profile maps to the same SubFilter, which is correct: PAdES uses
-    // ETSI.CAdES.detached throughout. What distinguishes B-T, B-LT and B-LTA is
-    // the timestamp and validation data, and those come from sign_pdf_ltv with
-    // a TSA -- not from this field. Refusing the unreachable profiles happens
-    // in sign(); see profile_is_reachable.
-    let sub_filter = match opts.profile {
-        crate::signer::PadesProfile::BasicSignature => pdf_sign::SubFilter::EtsiCadesDetached,
-        crate::signer::PadesProfile::Timestamped => pdf_sign::SubFilter::EtsiCadesDetached,
-        crate::signer::PadesProfile::LongTerm => pdf_sign::SubFilter::EtsiCadesDetached,
-        crate::signer::PadesProfile::LongTermArchive => pdf_sign::SubFilter::EtsiCadesDetached,
-    };
+    // One SubFilter for every profile, and that is correct rather than lazy:
+    // PAdES uses ETSI.CAdES.detached for B-B, B-T and B-LT alike. Only a
+    // document timestamp uses ETSI.RFC3161, and we do not write one. What
+    // separates the profiles is the timestamp attribute and the DSS, which
+    // sign() adds by calling a different pdf_sign entry point.
     pdf_sign::SignOptions {
         reason: opts.reason.clone(),
         location: opts.location.clone(),
         contact: opts.contact_info.clone(),
         field_name: opts.field_name.clone(),
         visible_rect: opts.visible_rect.map(|(page, rect)| (page as u32, rect)),
-        sub_filter,
+        sub_filter: pdf_sign::SubFilter::EtsiCadesDetached,
         certification: None,
         placeholder_size: 8192,
     }
@@ -2990,9 +3501,14 @@ fn normalise_page_range<R: std::ops::RangeBounds<usize>>(
         Bound::Unbounded => total_pages,
     };
     if start == 0 || start > total_pages || end < start || end > total_pages {
-        return Err(internal_error(format!(
-            "page range {start}..={end} is out of bounds (document has {total_pages} pages)",
-        )));
+        // A caller's mistake, not the engine's: #453. `Error::Internal` asks
+        // the reader to file a bug report, and `extract_pages(0..=5)` is not
+        // a bug in this library.
+        return Err(Error::PageRangeInvalid {
+            start,
+            end,
+            page_count: total_pages,
+        });
     }
     Ok((start, end))
 }

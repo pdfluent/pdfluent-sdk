@@ -21,12 +21,16 @@ let PdfDocument;
 try {
   ({ PdfDocument } = require('../index'));
 } catch (e) {
-  describe.skip('office export without a licence (native module not built)', () => {
-    test('placeholder', () => {});
-  });
+  PdfDocument = null;
 }
 
-describe('office export without a licence', () => {
+// See office_export.test.js: the placeholder-suite form did not skip (#585).
+if (!PdfDocument) {
+  process.stderr.write('SKIPPED (not a pass): native addon not built — unlicensed office export not checked\n');
+}
+const d = PdfDocument ? describe : describe.skip;
+
+d('office export without a licence', () => {
   test('produces a package, with and without a key in the environment', () => {
     const bytes = fs.readFileSync(SAMPLE_PDF);
 

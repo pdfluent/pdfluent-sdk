@@ -1,0 +1,72 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH PDFLUENT-PROTECT 1  "pdfluent 1.1.0" PDFluent
+.SH NAME
+pdfluent\-protect \- Set a password and restrict permissions
+.SH SYNOPSIS
+\fBpdfluent protect\fR [\fB\-\-json\fR] <\fB\-o\fR|\fB\-\-out\fR> [\fB\-\-password\-file\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-owner\-password\-file\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-\-algorithm\fR] [\fB\-\-permissions\fR] [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIINPUT\fR> 
+.SH DESCRIPTION
+Set a password and restrict permissions
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Machine\-readable JSON envelope on stdout
+.TP
+\fB\-o\fR, \fB\-\-out\fR \fI<OUT>\fR
+Output PDF, or `\-` for stdout
+.TP
+\fB\-\-password\-file\fR \fI<FILE>\fR
+Password file: line 1 is the user password, line 2 (if present) the owner password. Without it, PDFLUENT_PASSWORD and PDFLUENT_OWNER_PASSWORD, then an interactive prompt
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Quiet: human mode prints data only (no warnings or progress notes)
+.TP
+\fB\-\-owner\-password\-file\fR \fI<FILE>\fR
+Owner\-password file (line 1). Overrides line 2 of \-\-password\-file
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose stderr diagnostics (repeat for more)
+.TP
+\fB\-\-algorithm\fR \fI<ALGORITHM>\fR [default: aes256]
+Encryption algorithm
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+aes256: AES\-256 (default)
+.IP \(bu 2
+aes128: AES\-128, for readers older than PDF 1.7 ext
+.RE
+.TP
+\fB\-\-permissions\fR \fI<PERMISSIONS>\fR [default: full]
+Reader permissions
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+full: Authorised readers may do anything
+.IP \(bu 2
+print\-only: Printing only
+.IP \(bu 2
+read\-only: Reading only
+.IP \(bu 2
+annotate: Reading plus annotation
+.RE
+.TP
+\fB\-\-force\fR
+Overwrite the existing output file
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+<\fIINPUT\fR>
+Input PDF, or `\-` for stdin
+.SH VERSION
+v1.1.0

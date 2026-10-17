@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Verify that the error catalogue document is up to date with Rust source.
-# Exit non-zero if any code in error.rs is missing from docs/error_catalogue.md.
+# Exit non-zero if any code in error.rs is missing from docs/error_catalogue.md,
+# or if the catalogue's Node column names an error class the Node package does
+# not export.
 #
 # Usage:
 #   bash scripts/release/error_catalogue_sync.sh
 #
 # Exit codes:
 #   0 — all codes present, no duplicates
-#   1 — one or more codes missing from the catalogue, or duplicate codes found
+#   1 — one or more codes missing from the catalogue, duplicate codes found,
+#       or a Node-column class the package does not export
 #
 # CI integration: add a lane that runs this script on every MR.
 # See benchmarks/runs/ga_hardening_plan/c/CI_NOTE.md for the suggested config.
@@ -19,6 +22,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ERROR_RS="${REPO_ROOT}/crates/pdfluent/src/error.rs"
 CATALOGUE="${REPO_ROOT}/docs/error_catalogue.md"
+NODE_DTS="${REPO_ROOT}/crates/pdf-node/index.d.ts"
+NODE_LAYER="${REPO_ROOT}/crates/pdf-node/scripts/build/typed-error-layer.js"
 
 # ---------------------------------------------------------------------------
 # 1. Verify required files exist
@@ -94,9 +99,14 @@ echo
 # ---------------------------------------------------------------------------
 # 4. Verify every Rust code appears in the catalogue
 # ---------------------------------------------------------------------------
+# The code must have a TABLE ROW of its own, not merely occur somewhere in the
+# file. A bare substring match passed `E-UNSUPPORTED` for years because
+# `E-PARSE-UNSUPPORTED-VERSION` contains it, so a code with no row read as
+# present; matching a backtick-quoted code anywhere would have passed it too,
+# on its mention in the per-binding gap summary (#426).
 MISSING_LIST=""
 while IFS= read -r code; do
-    if ! grep -qF "${code}" "${CATALOGUE}"; then
+    if ! grep -qE "^\| \`${code}\` \|" "${CATALOGUE}"; then
         MISSING_LIST="${MISSING_LIST}  ${code}"$'\n'
     fi
 done <<< "${RS_CODES_SORTED}"
@@ -110,3 +120,58 @@ if [[ -n "${MISSING_LIST}" ]]; then
 fi
 
 echo "Catalogue sync OK — all ${RS_CODE_COUNT} code(s) present in ${CATALOGUE}."
+
+# ---------------------------------------------------------------------------
+# 5. Every class the Node column names must be one the package exports
+# ---------------------------------------------------------------------------
+# The Node column used to name PdfluentIoError, PdfluentParseError,
+# PdfluentPasswordError, PdfluentValueError and PdfluentOperationError. None of
+# them ever existed; the strict-ts example imported six phantom names off this
+# table (#587). The column is prose, so nothing checked it. Now every
+# `Pdfluent*` name in it has to be declared in index.d.ts and exported by the
+# typed-error layer that postbuild appends to index.js.
+for f in "${NODE_DTS}" "${NODE_LAYER}"; do
+    if [[ ! -f "${f}" ]]; then
+        echo "SYNC FAILED: ${f} not found" >&2
+        exit 1
+    fi
+done
+
+NODE_CLASSES="$(python3 - "${CATALOGUE}" <<'PYEOF'
+import re, sys
+
+header = None
+for line in open(sys.argv[1], encoding="utf-8"):
+    if not line.startswith("|"):
+        continue
+    cells = [c.strip() for c in line.strip().strip("|").split(" | ")]
+    if header is None:
+        if "Node" in cells:
+            header = cells
+        continue
+    if not cells[0].startswith("`E-"):
+        continue
+    node = cells[header.index("Node")]
+    for name in re.findall(r"\bPdfluent[A-Za-z]*\b", node):
+        print(cells[0].strip("`") + " " + name)
+PYEOF
+)"
+
+PHANTOM_LIST=""
+while IFS=' ' read -r code name; do
+    [[ -z "${name}" ]] && continue
+    if ! grep -qE "^export declare class ${name}( |\{|$)" "${NODE_DTS}" \
+        || ! grep -qE "^module\.exports\.${name} = " "${NODE_LAYER}"; then
+        PHANTOM_LIST="${PHANTOM_LIST}  ${code}: ${name}"$'\n'
+    fi
+done <<< "${NODE_CLASSES}"
+
+if [[ -n "${PHANTOM_LIST}" ]]; then
+    echo "SYNC FAILED: the Node column of ${CATALOGUE} names classes the Node package does not export:" >&2
+    echo "${PHANTOM_LIST}" >&2
+    echo "Fix BINDING_STATUS in scripts/docs/generate_error_catalogue.py, or export the class" >&2
+    echo "from crates/pdf-node/scripts/build/typed-error-layer.js and its .d.ts." >&2
+    exit 1
+fi
+
+echo "Node column OK — every class it names is exported by @pdfluent/node."

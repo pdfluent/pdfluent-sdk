@@ -63,7 +63,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Verify workspace version matches input
         env:
@@ -103,7 +106,7 @@ jobs:
         run: python3 scripts/check_release_consistency.py
 
       - name: Dry-run all publishable crates
-        run: ./scripts/publish_ordered.sh
+        run: scripts/release/publish_ordered.sh
         # publish_ordered.sh is dry-run by default
 
   publish:
@@ -115,26 +118,98 @@ jobs:
     environment: crates-io-publish
 
     steps:
+      # Full history with tags: the semver gate compares against v1.0.0,
+      # and the default shallow fetch carries no tags, so without this
+      # every release fails the gate before it starts.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+
+      # The persistent runner hands every job the state the last one left.
+      # Clear debris from an aborted build, and fail in seconds if the
+      # directory has stopped answering, rather than forty minutes in:
+      # this job compiles since the semver gate (#574) spelled out a
+      # `cargo install`, so it checks like the other six. (#264)
+      - name: A mount, a dead disk and a rights problem are told apart
+        run: bash scripts/ci/shared_build_dir_is_there.sh
+      - name: The shared build directory is there and undamaged
+        run: bash scripts/ci/cargo_target_health.sh
+
+      # THE RUNNER SERVICE'S PATH DOES NOT CARRY ~/.cargo/bin. Every job on this
+      # runner that compiles carries this step -- `guards` and `workspace` in
+      # ci.yml, java-bindings.yml, visual-regression.yml -- and a job written
+      # without it dies on `cargo: command not found`, exit 127, seconds in, with
+      # a log that says nothing about the toolchain. (#292, #343)
+      #
+      # `$HOME` for the runner service is not necessarily where cargo was
+      # installed, so adding the directory is not the same as making cargo
+      # runnable. Source the env file when it is there, and then CHECK.
+      - name: Cargo on PATH
+        run: |
+          set -euo pipefail
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
+          export PATH="$HOME/.cargo/bin:$PATH"
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "::error::cargo is not runnable on this runner. \$HOME is $HOME; \$HOME/.cargo/bin is $([ -d "$HOME/.cargo/bin" ] && echo present || echo absent). Every step below that builds would fail with exit 127 and say nothing about this." >&2
+            exit 1
+          fi
+          # Status-checked, not `echo $(...)`: a rustup shim with no toolchain
+          # installed resolves and does not run, and the substitution failing
+          # inside an echo leaves `set -e` nothing to see.
+          cargo --version || {
+            echo "::error::cargo is on PATH but does not run. A rustup shim without an installed toolchain does this: command -v cargo succeeds and every build fails." >&2
+            exit 1
+          }
+
+      # The rustdoc JSON toolchain, pinned in ONE place
+      # (scripts/ci/NIGHTLY_RUSTDOC_JSON): the new-public-enums half of
+      # the semver gate builds rustdoc JSON with it, and the format
+      # version changes between nightlies, so the workflow installs the
+      # exact dated toolchain rather than floating `nightly`.
+      - name: Install pinned nightly for rustdoc JSON
+        run: rustup toolchain install "$(cat scripts/ci/NIGHTLY_RUSTDOC_JSON)" --profile minimal --component rustdoc
+
+      - name: Install cargo-semver-checks
+        run: cargo install --locked cargo-semver-checks --version 0.50.0
+
+      # The semver gate runs BEFORE any publish step: a 1.x tree that breaks
+      # semver against v1.0.0 must not reach crates.io (#574). ANY non-zero
+      # exit fails the job — including 2 (SKIPPED: tool missing, no baseline
+      # tag, or nothing selected), because a skipped gate is not a passed
+      # gate. No `||`, no continue-on-error, on purpose.
+      - name: Semver gate against v1.0.0
+        run: bash scripts/ci/semver_gate.sh
 
       - name: Configure crates.io token
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo login "$CARGO_REGISTRY_TOKEN"
 
+      # The log is written here rather than picked up from /tmp afterwards. The
+      # script that wrote /tmp/publish_ordered_*.log is gone, and on a
+      # persistent runner a glob over /tmp would have uploaded whatever that
+      # script left behind on an earlier run, under this release's name
+      # (codex, #1917). One file, named for this run, inside the workspace.
       - name: Publish crates (ordered)
         env:
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          PUBLISH_LOG: publish-log/publish_ordered-${{ github.run_id }}-${{ github.run_attempt }}.log
         run: |
+          set -o pipefail
+          mkdir -p publish-log
           if [[ "$INPUT_DRY_RUN" == "true" ]]; then
-            echo "DRY RUN — not publishing to crates.io"
-            ./scripts/publish_ordered.sh
+            echo "DRY RUN — not publishing to crates.io" | tee "$PUBLISH_LOG"
+            scripts/release/publish_ordered.sh 2>&1 | tee -a "$PUBLISH_LOG"
           else
-            ./scripts/publish_ordered.sh --live
+            scripts/release/publish_ordered.sh --live 2>&1 | tee -a "$PUBLISH_LOG"
           fi
 
       - name: Upload publish log
@@ -142,6 +217,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: publish-log-${{ inputs.version }}
-          path: /tmp/publish_ordered_*.log
-          retention-days: 30
+          path: publish-log/
+          retention-days: 1
           if-no-files-found: warn

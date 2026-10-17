@@ -9,17 +9,9 @@ use pdf_invoice::zugferd::ZugferdInvoice;
 use std::fs;
 use std::path::PathBuf;
 
-fn default_paths() -> Vec<PathBuf> {
-    [
-        "/tmp/xrechnung-examples/xrechnung-testsuite-master/src/test/business-cases/standard/01.01a-INVOICE_uncefact.xml",
-        "/tmp/xrechnung-examples/xrechnung-testsuite-master/src/test/business-cases/standard/02.01a-INVOICE_uncefact.xml",
-        "/tmp/xrechnung-examples/xrechnung-testsuite-master/src/test/business-cases/standard/03.01a-INVOICE_uncefact.xml",
-    ]
-    .into_iter()
-    .map(PathBuf::from)
-    .filter(|path| path.exists())
-    .collect()
-}
+const USAGE: &str = "usage: validate_xrechnung <file-or-directory>...\n\n\
+Validates XRechnung UN/CEFACT CII XML files against EN 16931. A directory is\n\
+searched recursively for files ending in _uncefact.xml.";
 
 fn collect_uncefact_xml(path: &PathBuf, output: &mut Vec<PathBuf>) -> Result<(), std::io::Error> {
     if path.is_file() {
@@ -51,22 +43,22 @@ fn collect_uncefact_xml(path: &PathBuf, output: &mut Vec<PathBuf>) -> Result<(),
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    if args.is_empty() {
+        eprintln!("{USAGE}");
+        std::process::exit(2);
+    }
     let paths: Vec<PathBuf> = {
-        let args: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
-        if args.is_empty() {
-            default_paths()
-        } else {
-            let mut expanded = Vec::new();
-            for path in args {
-                collect_uncefact_xml(&path, &mut expanded)?;
-            }
-            expanded.sort();
-            expanded
+        let mut expanded = Vec::new();
+        for path in args {
+            collect_uncefact_xml(&path, &mut expanded)?;
         }
+        expanded.sort();
+        expanded
     };
 
     if paths.is_empty() {
-        eprintln!("No XRechnung XML files provided and no default sample paths exist.");
+        eprintln!("No XRechnung XML files found under the given paths.");
         std::process::exit(1);
     }
 

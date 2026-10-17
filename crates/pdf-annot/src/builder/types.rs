@@ -71,7 +71,7 @@ impl AnnotRect {
 /// of constructing this enum directly when possible — they wire up the
 /// per-subtype defaults that are required for a valid annotation.
 #[cfg(feature = "write")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnotSubtype {
     /// Filled or stroked rectangle (`/Square`). Used for emphasis or
     /// region marking. Pair with [`super::AnnotationBuilder::interior_color`]
@@ -128,6 +128,28 @@ pub enum AnnotSubtype {
 
 #[cfg(feature = "write")]
 impl AnnotSubtype {
+    /// Parse a `/Subtype` name. `None` for subtypes the builder cannot draw
+    /// (widget, caret, sound, movie, …).
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "Square" => Some(Self::Square),
+            "Circle" => Some(Self::Circle),
+            "Line" => Some(Self::Line),
+            "Highlight" => Some(Self::Highlight),
+            "Underline" => Some(Self::Underline),
+            "StrikeOut" => Some(Self::StrikeOut),
+            "Squiggly" => Some(Self::Squiggly),
+            "FreeText" => Some(Self::FreeText),
+            "Text" => Some(Self::Text),
+            "Stamp" => Some(Self::Stamp),
+            "Ink" => Some(Self::Ink),
+            "Polygon" => Some(Self::Polygon),
+            "PolyLine" => Some(Self::PolyLine),
+            "Link" => Some(Self::Link),
+            _ => None,
+        }
+    }
+
     pub(super) fn as_str(&self) -> &'static str {
         match self {
             Self::Square => "Square",

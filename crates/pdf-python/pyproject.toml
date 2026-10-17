@@ -4,21 +4,27 @@ build-backend = "maturin"
 
 [project]
 name = "pdfluent"
-version = "1.0.0"
-description = "Enterprise PDF SDK — find and replace PDF text while preserving fonts and layout, plus render, extract, annotate, sign, and validate PDFs. Pure Rust, zero system dependencies."
+version = "1.1.0"
+description = "PDF SDK for Python — find and replace PDF text while preserving fonts and layout, plus render, extract, annotate, sign, and validate PDFs. Pure Rust, zero system dependencies."
 readme = "README.md"
-license = { text = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial" }
-license-files = ["LICENSE", "LICENSE-COMMERCIAL"]
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+# THE THIRD-PARTY NOTICES TRAVEL WITH THE BINARY (#541). `_native.abi3.so`
+# contains the Foxit Standard 14 faces, the Liberation and Noto substitutes and
+# Adobe's CMap resources; BSD-3-Clause and OFL 1.1 both ask for their notice with
+# a redistribution in binary form, and a wheel carrying only our two licence
+# texts provides our terms and none of theirs. The two files are copies of the
+# ones at the repository root -- maturin refuses `..` in an include pattern --
+# written by scripts/ci/regenerate_registers.sh and held byte-identical by
+# scripts/ci/notice_names_what_exists.py.
+license-files = ["LICENSE", "LICENSE-COMMERCIAL", "NOTICE", "THIRD_PARTY_LICENSES.txt"]
 authors = [
     { name = "Innovation Trigger BV", email = "team@pdfluent.com" },
 ]
 requires-python = ">=3.8"
 keywords = ["pdf-text-replace", "find-and-replace", "edit-pdf-text", "pdf", "xfa", "acroform", "render", "text-extraction", "forms", "pdf-a", "annotations", "redaction", "rust", "pdfluent"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
-    "License :: Other/Proprietary License",
     "Operating System :: OS Independent",
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -42,14 +48,17 @@ Documentation = "https://pdfluent.com/docs"
 Repository = "https://github.com/pdfluent/pdfluent-sdk"
 
 [project.optional-dependencies]
-pillow = ["Pillow"]
+pillow = ["Pillow>=11.2.1,<13"]
 numpy = ["numpy"]
-test = ["pytest>=7.0"]
+test = ["pytest>=7.0", "pypng"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.maturin]
-features = ["pyo3/extension-module"]
 python-source = "python"
 module-name = "pdfluent._native"
+exclude = ["**/__pycache__/**"]
+# The balanced extraction tier ships in every wheel: the layout model
+# (`quality="balanced"`) and TATR table structure (`table_model_dir`).
+features = ["ort-layout", "ort-tables"]

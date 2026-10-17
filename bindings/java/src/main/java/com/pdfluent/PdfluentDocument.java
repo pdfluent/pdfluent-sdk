@@ -2,6 +2,7 @@ package com.pdfluent;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -254,6 +255,303 @@ public class PdfluentDocument implements AutoCloseable {
             result.add(new TextBlock(x, y, w, h, text));
         }
         return java.util.Collections.unmodifiableList(result);
+    }
+
+    // =========================================================================
+    // Embedded images
+    // =========================================================================
+
+    /**
+     * Lists the images stored on one page.
+     *
+     * <p>One {@link ImageInfo} per image XObject in the page's resources, in
+     * resource order.
+     *
+     * @param pageIndex zero-based page index; must be in {@code [0, getPageCount())}
+     * @return an ordered list (may be empty) of {@link ImageInfo}
+     * @throws IllegalStateException      if the document has been closed
+     * @throws PdfluentPageRangeException if {@code pageIndex} is out of range
+     * @throws PdfluentException          for engine extraction failures
+     */
+    public java.util.List<ImageInfo> pageImages(int pageIndex) {
+        ensureOpen();
+        checkPageIndex(pageIndex);
+        String[] flat = nativePageImages(handle, pageIndex);
+        if (flat == null || flat.length == 0) {
+            return java.util.Collections.emptyList();
+        }
+        java.util.List<ImageInfo> result = new java.util.ArrayList<>(flat.length / 10);
+        for (int i = 0; i + 9 < flat.length; i += 10) {
+            result.add(
+                new ImageInfo(
+                    Integer.parseInt(flat[i]),
+                    Integer.parseInt(flat[i + 1]),
+                    Integer.parseInt(flat[i + 2]),
+                    Integer.parseInt(flat[i + 3]),
+                    Integer.parseInt(flat[i + 4]),
+                    flat[i + 5],
+                    flat[i + 6],
+                    flat[i + 7],
+                    flat[i + 8],
+                    Boolean.parseBoolean(flat[i + 9])));
+        }
+        return java.util.Collections.unmodifiableList(result);
+    }
+
+    /**
+     * Extracts one stored image: header facts plus encoded bytes.
+     *
+     * <p>JPEG payloads pass through untouched; everything else arrives decoded
+     * and re-encoded as PNG.
+     *
+     * @param imageId the {@link ImageInfo#getId() id} a {@link #pageImages(int)}
+     *                entry reported
+     * @return the extracted image
+     * @throws IllegalStateException if the document has been closed
+     * @throws PdfluentException     for unknown ids and engine extraction failures
+     */
+    public ExtractedImage extractImageData(int imageId) {
+        ensureOpen();
+        byte[] raw = nativeExtractImageData(handle, imageId);
+        if (raw == null) {
+            throw new PdfluentException("failed to extract image " + imageId);
+        }
+        return decodeExtractedImage(raw);
+    }
+
+    /**
+     * Decodes one stored image to raw samples, top row first.
+     *
+     * <p>Palettes and stencils are expanded.
+     *
+     * @param imageId the {@link ImageInfo#getId() id} a {@link #pageImages(int)}
+     *                entry reported
+     * @return the decoded image
+     * @throws IllegalStateException if the document has been closed
+     * @throws PdfluentException     for unknown ids and engine extraction failures
+     */
+    public DecodedImage decodeImagePixels(int imageId) {
+        ensureOpen();
+        byte[] raw = nativeDecodeImagePixels(handle, imageId);
+        if (raw == null) {
+            throw new PdfluentException("failed to decode image " + imageId);
+        }
+        return decodeDecodedImage(raw);
+    }
+
+    /**
+     * The document as markdown, in reading order (#573).
+     *
+     * <p><b>Preview: output quality is still improving and the API may change in a minor release.</b>
+     *
+     * <p>Headings become {@code #} to {@code ###}, list items {@code -} and
+     * {@code 1.}, a table a pipe table or an HTML one where markdown cannot
+     * hold its shape, and a change of page an HTML comment. The running heads
+     * a document repeats are not in it; they are in {@link #extractBlocks()}.
+     *
+     * @return the whole document as markdown
+     * @throws IllegalStateException if the document has been closed
+     * @throws PdfluentException     for engine extraction failures
+     */
+    public String extractMarkdown() {
+        return extractMarkdown(0, -1);
+    }
+
+    /**
+     * The document as markdown, for a window of pages (#573).
+     *
+     * <p><b>Preview: output quality is still improving and the API may change in a minor release.</b>
+     *
+     * <p>The document is read whole whatever the window is, because what a
+     * block IS is decided against the rest of the document: a size is a
+     * heading against what the body is set in, and a line is a running head
+     * because three pages repeat it.
+     *
+     * @param firstPage zero-based first page of the window
+     * @param pageCount pages from {@code firstPage}; negative for the rest of
+     *                  the document. A window past the last page is an empty
+     *                  string, not an error.
+     * @return the window as markdown
+     * @throws IllegalStateException if the document has been closed
+     * @throws PdfluentException     for engine extraction failures
+     */
+    public String extractMarkdown(int firstPage, int pageCount) {
+        ensureOpen();
+        String markdown = nativeExtractMarkdown(handle, Math.max(firstPage, 0), pageCount);
+        return markdown == null ? "" : markdown;
+    }
+
+    /**
+     * The document as a Docling {@code DoclingDocument}, as JSON (#629).
+     *
+     * <p><b>Preview: output quality is still improving and the API may change in a minor release.</b>
+     *
+     * <p>The schema version the engine pins, which docling-core's
+     * {@code DoclingDocument.model_validate_json} loads as it is, so a pipeline
+     * built on Docling reads this document unchanged. What has no mapping is
+     * listed in {@code docs/STRUCTURED_EXTRACTION.md}.
+     *
+     * @return the whole document as {@code DoclingDocument} JSON, named
+     *         {@code "document"}
+     * @throws IllegalStateException if the document has been closed
+     * @throws PdfluentException     for engine extraction failures
+     */
+    public String extractDocling() {
+        return extractDocling(0, -1, "document");
+    }
+
+    /**
+     * The document as a Docling {@code DoclingDocument}, for a window of pages
+     * (#629).
+     *
+     * <p><b>Preview: output quality is still improving and the API may change in a minor release.</b>
+     *
+     * @param firstPage zero-based first page of the window
+     * @param pageCount pages from {@code firstPage}; negative for the rest of
+     *                  the document
+     * @param name      {@code DoclingDocument.name}, which Docling fills with
+     *                  the file's stem; {@code null} means {@code "document"}
+     * @return the window as {@code DoclingDocument} JSON
+     * @throws IllegalStateException if the document has been closed
+     * @throws PdfluentException     for engine extraction failures
+     */
+    public String extractDocling(int firstPage, int pageCount, String name) {
+        ensureOpen();
+        return nativeExtractDocling(
+            handle, Math.max(firstPage, 0), pageCount, name == null ? "document" : name);
+    }
+
+    /**
+     * The document's blocks, in reading order (#573).
+     *
+     * <p><b>Preview: output quality is still improving and the API may change in a minor release.</b>
+     *
+     * <p>One {@link Block} per paragraph, heading, list item, table cell and
+     * running head, each with the page and the box it was drawn in — the unit
+     * a caller chunks, cites or embeds.
+     *
+     * @return an ordered list (may be empty) of {@link Block}
+     * @throws IllegalStateException if the document has been closed
+     * @throws PdfluentException     for engine extraction failures
+     */
+    public java.util.List<Block> extractBlocks() {
+        return extractBlocks(0, -1);
+    }
+
+    /**
+     * The document's blocks, for a window of pages (#573).
+     *
+     * <p><b>Preview: output quality is still improving and the API may change in a minor release.</b>
+     *
+     * @param firstPage zero-based first page of the window
+     * @param pageCount pages from {@code firstPage}; negative for the rest of
+     *                  the document. A window past the last page is an empty
+     *                  list, not an error.
+     * @return an ordered list (may be empty) of {@link Block}
+     * @throws IllegalStateException if the document has been closed
+     * @throws PdfluentException     for engine extraction failures
+     */
+    public java.util.List<Block> extractBlocks(int firstPage, int pageCount) {
+        ensureOpen();
+        String[] flat =
+            nativeExtractBlocksWithConfidence(handle, Math.max(firstPage, 0), pageCount);
+        if (flat == null || flat.length == 0) {
+            return java.util.Collections.emptyList();
+        }
+        java.util.List<Block> result = new java.util.ArrayList<>(flat.length / BLOCK_STRIDE);
+        for (int i = 0; i + BLOCK_STRIDE - 1 < flat.length; i += BLOCK_STRIDE) {
+            double[] bbox = new double[] {
+                parseDouble(flat[i + 3]), parseDouble(flat[i + 4]),
+                parseDouble(flat[i + 5]), parseDouble(flat[i + 6]),
+            };
+            result.add(new Block(
+                Block.Kind.of(flat[i]),
+                flat[i + 1],
+                (int) parseDouble(flat[i + 2]),
+                bbox,
+                (int) parseDouble(flat[i + 7]),
+                Boolean.parseBoolean(flat[i + 8]),
+                parseInteger(flat[i + 9]),
+                parseInteger(flat[i + 10]),
+                parseInteger(flat[i + 11]),
+                parseInteger(flat[i + 12]),
+                parseInteger(flat[i + 13]),
+                parseInteger(flat[i + 14]),
+                parseBoolean(flat[i + 15]),
+                parseDoubleOrNull(flat[i + 16]),
+                gridOf(flat, i)));
+        }
+        return java.util.Collections.unmodifiableList(result);
+    }
+
+    /**
+     * How many strings the native layer writes per block. The order is
+     * {@code [kind, text, page, x0, y0, x1, y1, index, continuesPrevious,
+     * level, ordinal, row, column, rowSpan, columnSpan, header, confidence,
+     * gridThinRows, gridFill, gridRetriedFrom, gridFullRows, gridColumns]}, with
+     * an empty string where the field does not belong to the block's kind.
+     *
+     * <p>This is the stride of {@code nativeExtractBlocksWithConfidence}, which is
+     * a method of its own rather than a wider {@code nativeExtractBlocks}. The
+     * library is loaded at run time, so an older jar can be paired with a newer
+     * one: that jar decodes by the stride it was compiled with, and widening the
+     * old method's record would shift every field it reads. A jar that calls this
+     * name is one that knows the record is seventeen long.
+     */
+    private static final int BLOCK_STRIDE = 22;
+
+    /** A number the native layer wrote, or zero where it wrote nothing. */
+    private static double parseDouble(String value) {
+        if (value == null || value.isEmpty()) return 0.0;
+        try {
+            return Double.parseDouble(value);
+        } catch (NumberFormatException e) {
+            return 0.0;
+        }
+    }
+
+    /** A number the native layer wrote, or {@code null} for a field this kind has not got. */
+    private static Integer parseInteger(String value) {
+        if (value == null || value.isEmpty()) return null;
+        try {
+            return Integer.valueOf(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * The builder's grid evidence for one record, or {@code null} where the block
+     * is not a table cell (#574).
+     */
+    private static Block.GridDoubt gridOf(String[] flat, int i) {
+        Integer thinRows = parseInteger(flat[i + 17]);
+        if (thinRows == null) return null;
+        return new Block.GridDoubt(
+            thinRows,
+            parseDouble(flat[i + 18]),
+            parseInteger(flat[i + 19]),
+            parseInteger(flat[i + 20]),
+            parseInteger(flat[i + 21]));
+    }
+
+    /**
+     * A number the native layer wrote, or {@code null} where it wrote nothing --
+     * which for a confidence means no model spoke, not a confidence of zero.
+     */
+    private static Double parseDoubleOrNull(String value) {
+        if (value == null || value.isEmpty()) return null;
+        try {
+            return Double.valueOf(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** A flag the native layer wrote, or {@code null} for a field this kind has not got. */
+    private static Boolean parseBoolean(String value) {
+        if (value == null || value.isEmpty()) return null;
+        return Boolean.valueOf(value);
     }
 
     // =========================================================================
@@ -536,6 +834,68 @@ public class PdfluentDocument implements AutoCloseable {
         return new RenderedImage(width, height, pixels);
     }
 
+    private static byte[] readLengthPrefixedBytes(ByteBuffer bb) {
+        if (bb.remaining() < 4) {
+            throw new PdfluentException(
+                "native image result is malformed: truncated length prefix");
+        }
+        int len = bb.getInt();
+        if (len < 0 || len > bb.remaining()) {
+            throw new PdfluentException(
+                "native image result is malformed: bad length " + len);
+        }
+        byte[] bytes = new byte[len];
+        bb.get(bytes);
+        return bytes;
+    }
+
+    private static ExtractedImage decodeExtractedImage(byte[] raw) {
+        if (raw.length < 28) {
+            throw new PdfluentException(
+                "native image result is malformed: expected at least 28 header bytes, got "
+                    + raw.length);
+        }
+        ByteBuffer bb = ByteBuffer.wrap(raw);
+        int width = bb.getInt();
+        int height = bb.getInt();
+        int bitsPerComponent = bb.getInt();
+        int components = bb.getInt();
+        boolean masked = bb.getInt() != 0;
+        int xres = bb.getInt();
+        int yres = bb.getInt();
+        String colorSpace = new String(readLengthPrefixedBytes(bb), StandardCharsets.UTF_8);
+        String colorSpaceName = new String(readLengthPrefixedBytes(bb), StandardCharsets.UTF_8);
+        String encoding = new String(readLengthPrefixedBytes(bb), StandardCharsets.UTF_8);
+        byte[] data = readLengthPrefixedBytes(bb);
+        return new ExtractedImage(
+            width,
+            height,
+            bitsPerComponent,
+            components,
+            colorSpace,
+            colorSpaceName,
+            encoding,
+            data,
+            masked,
+            xres,
+            yres);
+    }
+
+    private static DecodedImage decodeDecodedImage(byte[] raw) {
+        if (raw.length < 12) {
+            throw new PdfluentException(
+                "native image result is malformed: expected at least 12 header bytes, got "
+                    + raw.length);
+        }
+        ByteBuffer bb = ByteBuffer.wrap(raw);
+        int width = bb.getInt();
+        int height = bb.getInt();
+        int components = bb.getInt();
+        String colorSpace = new String(readLengthPrefixedBytes(bb), StandardCharsets.UTF_8);
+        byte[] pixels = readLengthPrefixedBytes(bb);
+        return new DecodedImage(width, height, components, colorSpace, pixels);
+    }
+
     // =========================================================================
     // Native method declarations
     // =========================================================================
@@ -563,6 +923,21 @@ public class PdfluentDocument implements AutoCloseable {
     private static native int nativePageRotation(long handle, int pageIndex);
     private static native String nativeExtractText(long handle, int pageIndex);
     private static native String[] nativeExtractTextBlocks(long handle, int pageIndex);
+    private static native String[] nativePageImages(long handle, int pageIndex);
+    private static native byte[] nativeExtractImageData(long handle, int imageId);
+    private static native byte[] nativeDecodeImagePixels(long handle, int imageId);
+    private static native String nativeExtractMarkdown(long handle, int firstPage, int pageCount);
+    private static native String[] nativeExtractBlocks(long handle, int firstPage, int pageCount);
+    private static native String nativeExtractDocling(
+        long handle, int firstPage, int pageCount, String name);
+
+    /**
+     * The same records with the learned model's confidence appended (#624), so
+     * stride 17. Declared beside the sixteen-field method rather than replacing
+     * it: see {@link #BLOCK_STRIDE}.
+     */
+    private static native String[] nativeExtractBlocksWithConfidence(
+        long handle, int firstPage, int pageCount);
     private static native byte[] nativeRenderPage(long handle, int pageIndex, double dpi);
     private static native byte[] nativeRenderThumbnail(long handle, int pageIndex, int maxDimension);
     private static native String nativeGetMetadata(long handle, String key);

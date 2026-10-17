@@ -275,6 +275,23 @@ impl<'a> ReaderContext<'a> {
             ReaderContextInner::Dummy { .. } => {}
         }
     }
+
+    /// Clone with an empty resolution-ancestry chain.
+    ///
+    /// A nested interpretation restarts resolution ancestry: the depth bound
+    /// governs interpret nesting, so a construct legitimately re-resolving
+    /// an ancestor's object (pattern -> mask -> group -> pattern, #318)
+    /// must not trip the resolution-cycle guard.
+    pub(crate) fn without_parent_chain(&self) -> Self {
+        match &self.0 {
+            ReaderContextInner::Shared(inner) => {
+                let mut data = (**inner).clone();
+                data.parent_chain.clear();
+                Self(ReaderContextInner::Shared(Arc::new(data)))
+            }
+            ReaderContextInner::Dummy { .. } => self.clone(),
+        }
+    }
 }
 
 pub trait Readable<'a>: Sized {

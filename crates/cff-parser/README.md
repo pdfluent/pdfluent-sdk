@@ -10,7 +10,7 @@ A CFF (Compact Font Format) parser in pure Rust, with extensions for
 parsing CFF data embedded in PDF documents.
 
 `pdfluent-cff` is one of the open-source foundation crates used by the
-[PDFluent](https://pdfluent.com) commercial Rust PDF SDK. It is published as
+[PDFluent](https://pdfluent.com) Rust PDF SDK. It is published as
 **MIT OR Apache-2.0** so it can also be used standalone.
 
 This crate is a **fork of the CFF1 parsing code from

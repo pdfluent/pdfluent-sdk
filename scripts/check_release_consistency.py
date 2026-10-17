@@ -65,6 +65,33 @@ INTERNAL_CRATES = {
     "xfa-api-server",
 }
 
+# First-publish crates for the release, checked in beside this script.
+# New names are legitimately absent from crates.io before their first
+# publish: a listed-but-absent crate reports NEW (first publish), an
+# absent crate that is NOT listed still fails, and a listed crate that IS
+# on crates.io fails stale. This only tells the gate which absences are
+# expected; publish_ordered.sh (no list of its own) publishes whatever is
+# not on the registry yet, so the two agree by construction.
+FIRST_PUBLISH_TOML = Path(__file__).resolve().parent / "first_publish.toml"
+
+
+def load_first_publish(path: str | Path = FIRST_PUBLISH_TOML) -> set[str]:
+    """Crate names in the checked-in first-publish list.
+
+    A tiny reader (the gate runs on Python 3.9, which has no tomllib):
+    the quoted strings inside the file's `crates = [...]`. A missing
+    file or a missing list reads as empty, which degrades to the old
+    verdict — every absent name fails.
+    """
+    try:
+        text = Path(path).read_text()
+    except OSError:
+        return set()
+    m = re.search(r"crates\s*=\s*\[(.*?)\]", text, re.DOTALL)
+    if not m:
+        return set()
+    return set(re.findall(r'"([^"]+)"', m.group(1)))
+
 
 def _parse_section(content: str, section_header: str) -> dict:
     """Extract key=value pairs from a named TOML section."""
@@ -176,6 +203,7 @@ def main() -> int:
 
     failures = []
     warnings = []
+    first_publish = load_first_publish(FIRST_PUBLISH_TOML)
 
     for toml_path in tomls:
         pkg = parse_cargo_toml(toml_path, workspace_pkg=ws_pkg)
@@ -227,9 +255,19 @@ def main() -> int:
             elif name in UNRELEASED_CRATES:
                 print("NOT_PUBLISHED (planned, not yet in release train)")
                 warnings.append(f"WARN  {name}: not yet published — add to publish_ordered.sh when ready")
+            elif name in first_publish:
+                print("NEW (first publish)")
             else:
                 print("NOT_PUBLISHED ⚠️")
                 failures.append(f"FAIL  {name}: not found on crates.io but publish=true")
+            continue
+
+        if name in first_publish:
+            print(f"crates.io={data['crate']['newest_version']}  STALE first-publish entry ⚠️")
+            failures.append(
+                f"FAIL  {name}: already on crates.io — "
+                "remove it from the first-publish list"
+            )
             continue
 
         published_ver = data["crate"]["newest_version"]

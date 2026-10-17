@@ -1,0 +1,25 @@
+[package]
+name = "pdf-learned"
+version.workspace = true
+edition.workspace = true
+# Internal tooling, never published: the workspace licence, like pdf-bench.
+# The models it produces are generated into the crates that use them.
+license.workspace = true
+repository.workspace = true
+description = "Offline tooling for learned extraction decisions: the feature dump the models are trained on (#598). Not published."
+publish = false
+
+[dependencies]
+pdf-engine = { path = "../pdf-engine", version = "=1.1.0" }
+rayon = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+
+[build-dependencies]
+# THE TREE is a sha256 (see build.rs); already a dependency, so no new crate.
+sha2 = "0.10"
+
+[dev-dependencies]
+# To draw a ruled page in a test (tests/the_dump_carries_the_rules.rs).
+lopdf = { workspace = true }

@@ -278,10 +278,22 @@ pub fn embed_dss_incremental(
     catalog.set("DSS", Object::Reference(dss_id));
     doc.set_object(catalog_id, Object::Dictionary(catalog));
 
-    // Save the incremental portion and prepend the original bytes.
+    // Write the increment with a classic cross-reference table even when the
+    // base revision uses a stream. A stream keeps its offsets in packed binary
+    // behind a filter, so correcting them means decode, rewrite, re-encode and
+    // then a fixpoint because the re-encoded length moves the stream's own
+    // entry. A table is text of fixed-width fields, and every reader parses one.
+    doc.reference_table.cross_reference_type = lopdf::xref::XrefType::CrossReferenceTable;
+
+    // Save the incremental portion, correct its offsets for the position it
+    // will occupy, and prepend the original bytes. Without the correction the
+    // appended revision describes itself as if it started at byte zero, and a
+    // reader following startxref lands inside the first revision (#362).
     let mut incremental = Vec::new();
     doc.save_to(&mut incremental)
         .map_err(|e| format!("save DSS increment: {e}"))?;
+    let incremental = crate::increment::rebase(&incremental, pdf_bytes.len())
+        .map_err(|e| format!("rebase DSS increment: {e}"))?;
 
     let mut result = pdf_bytes.to_vec();
     result.extend_from_slice(&incremental);

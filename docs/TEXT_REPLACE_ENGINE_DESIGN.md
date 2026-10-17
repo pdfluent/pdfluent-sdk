@@ -801,7 +801,7 @@ defects that predate this work. None of the blockers is in the engine code.
 Dependents cannot be audited before their dependencies are live — exact pins
 mean `cargo package` resolves against the registry — so the remaining audits
 interleave with the publish, one crate at a time, in the order in
-`scripts/publish_ordered.sh`.
+`scripts/release/publish_ordered.sh`.
 
 ### Blockers, none of them in this work
 
@@ -817,7 +817,7 @@ interleave with the publish, one crate at a time, in the order in
    `pdfluent`, repository `engine`, workflow `build-wheels.yml`,
    environment `pypi`. Then `gh workflow run build-wheels.yml -f publish=true`.
 2. **crates.io** — either refresh the local token (`cargo login`) and run
-   `scripts/publish_ordered.sh --live`, or bring the self-hosted runner back
+   `scripts/release/publish_ordered.sh --live`, or bring the self-hosted runner back
    and dispatch `publish-crates.yml`; switching that workflow to
    `ubuntu-latest` would remove the runner dependency entirely.
 3. **npm node** — fix the Windows "document is not writable" smoke failures,

@@ -5,7 +5,7 @@ bitmap images, used to decode CCITT-compressed images embedded in PDF
 documents.
 
 `pdfluent-ccitt` is one of the open-source foundation crates used by the
-[PDFluent](https://pdfluent.com) commercial Rust PDF SDK. It is published as
+[PDFluent](https://pdfluent.com) Rust PDF SDK. It is published as
 **MIT OR Apache-2.0** so it can also be used standalone.
 
 This crate is a **fork of [`hayro-ccitt`](https://github.com/LaurenzV/hayro)**

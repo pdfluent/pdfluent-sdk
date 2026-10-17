@@ -12,10 +12,17 @@ use std::sync::{Arc, Mutex};
 
 use super::{PdfTest, TestResult, TestStatus};
 
-/// PDF/A conversion roundtrip: convert to PDF/A-2b, validate with our checker
-/// and optionally with veraPDF oracle.
+/// PDF/A conversion roundtrip: convert to the requested PDF/A flavour, validate
+/// with our checker and optionally with the veraPDF oracle.
+///
+/// The flavour is a parameter and not a constant because the product claims
+/// more than one of them. Until #443 this test converted to PDF/A-2b and
+/// nothing else, so the only conformance number anyone could quote was 2b's,
+/// while the C header advertised conversion to 1b and 3b as well. A claim no
+/// gate measures is a claim nobody can defend.
 pub struct PdfAConvertTest {
     verapdf: Option<Arc<crate::oracles::verapdf::VeraPdfOracle>>,
+    conformance: pdf_manip::pdfa_xmp::PdfAConformance,
     progress: Arc<Mutex<String>>,
 }
 
@@ -29,6 +36,7 @@ impl PdfAConvertTest {
     pub fn new() -> Self {
         Self {
             verapdf: None,
+            conformance: pdf_manip::pdfa_xmp::PdfAConformance::A2b,
             progress: Arc::new(Mutex::new(String::new())),
         }
     }
@@ -37,6 +45,34 @@ impl PdfAConvertTest {
         self.verapdf = Some(oracle);
         self
     }
+
+    /// Convert to, and grade against, this flavour instead of PDF/A-2b.
+    pub fn with_conformance(mut self, conformance: pdf_manip::pdfa_xmp::PdfAConformance) -> Self {
+        self.conformance = conformance;
+        self
+    }
+}
+
+/// The veraPDF flavour string for a conversion target, e.g. `2b`.
+///
+/// veraPDF names a flavour by part and letter with no separator; the letter is
+/// lower case there and upper case in the ISO wording, which is why this is a
+/// mapping and not a `format!`.
+pub fn verapdf_flavour(conformance: pdf_manip::pdfa_xmp::PdfAConformance) -> String {
+    format!(
+        "{}{}",
+        conformance.part(),
+        conformance.conformance().to_ascii_lowercase()
+    )
+}
+
+/// The level our own compliance checker validates against, for a conversion
+/// target. Two enums exist because conversion targets and validation targets
+/// are not the same set: `pdf-compliance` also knows PDF/A-4, which
+/// `pdf-manip` cannot produce.
+pub fn own_level(conformance: pdf_manip::pdfa_xmp::PdfAConformance) -> pdf_compliance::PdfALevel {
+    pdf_compliance::PdfALevel::from_parts(conformance.part() as u8, conformance.conformance())
+        .unwrap_or(pdf_compliance::PdfALevel::A2b)
 }
 
 impl PdfTest for PdfAConvertTest {
@@ -66,23 +102,61 @@ impl PdfTest for PdfAConvertTest {
             return skip(elapsed(), "not a PDF file (missing %PDF header)");
         }
 
-        // Already conformant — nothing to convert, and no need to spend a
-        // veraPDF run proving it.
+        // ALREADY CONFORMANT IS A VERDICT, NOT A CLAIM (codex, #443).
+        //
+        // This used to pass any input whose XMP said "PDF/A", without
+        // converting and without validating. But `detect_pdfa_level` reads the
+        // declaration and nothing else -- it parses `pdfaid:part` and
+        // `pdfaid:conformance` -- so a malformed file that merely *says* 2b was
+        // recorded as conforming, and a baseline built from that is inflated by
+        // exactly the documents nobody checked.
+        //
+        // So the claim only earns a pass when the oracle agrees with it. The
+        // equality matters too: a document that says PDF/A-1b is not a
+        // PDF/A-3u, and answering "pass" to a 3u run because the file claims
+        // some other part would grade a flavour we never produced.
+        //
+        // When the claim is not confirmed -- veraPDF disagrees, veraPDF is not
+        // there, or the file will not reparse -- this falls through and the
+        // document is converted and graded like any other, which is also what a
+        // caller of `convert_bytes` would get.
         if let Ok(pdf) = pdf_syntax::Pdf::new(pdf_data.to_vec()) {
-            if pdf_compliance::detect_pdfa_level(&pdf).is_some() {
-                return TestResult {
-                    status: TestStatus::Pass,
-                    error_message: Some("already PDF/A".into()),
-                    duration_ms: elapsed(),
-                    oracle_score: None,
-                    metadata: HashMap::new(),
-                };
+            if pdf_compliance::detect_pdfa_level(&pdf) == Some(own_level(self.conformance)) {
+                if let Some(verapdf) = &self.verapdf {
+                    set_progress("validate_verapdf_declared");
+                    if let Some(tmp) = write_temp_pdf(pdf_data, path) {
+                        let hash = sha256_hex(pdf_data);
+                        let verdict = verapdf.validate_pdfa_flavour(
+                            &tmp,
+                            &hash,
+                            &verapdf_flavour(self.conformance),
+                        );
+                        let _ = std::fs::remove_file(&tmp);
+                        if let Ok(report) = verdict {
+                            if report.failed_rules == 0 {
+                                let mut metadata = HashMap::new();
+                                metadata.insert("already_pdfa".into(), "confirmed".into());
+                                metadata.insert(
+                                    "pdfa_flavour".into(),
+                                    verapdf_flavour(self.conformance),
+                                );
+                                return TestResult {
+                                    status: TestStatus::Pass,
+                                    error_message: Some("already PDF/A, confirmed".into()),
+                                    duration_ms: elapsed(),
+                                    oracle_score: Some(1.0),
+                                    metadata,
+                                };
+                            }
+                        }
+                    }
+                }
             }
         }
 
         let qpdf = |data: &[u8]| qpdf_repair_bytes(data, path);
         let opts = pdf_manip::pdfa::PdfAConvertOptions {
-            conformance: pdf_manip::pdfa_xmp::PdfAConformance::A2b,
+            conformance: self.conformance,
             // Set PDFA_NO_EXTERNAL_REPAIR=1 to measure the shipped path: the
             // WASM build, the C ABI and the `pdfluent` facade have no qpdf to
             // shell out to, so a run with the hook enabled reports a pass-rate
@@ -122,12 +196,12 @@ impl PdfTest for PdfAConvertTest {
         let mut metadata = HashMap::new();
         let run_own_validation = |metadata: &mut HashMap<String, String>| {
             let report = match pdf_syntax::Pdf::new(saved.clone()) {
-                Ok(pdf2) => pdf_compliance::validate_pdfa(&pdf2, pdf_compliance::PdfALevel::A2b),
+                Ok(pdf2) => pdf_compliance::validate_pdfa(&pdf2, own_level(self.conformance)),
                 Err(e) => {
                     metadata.insert("own_reparse_error".into(), format!("{e:?}"));
                     pdf_compliance::ComplianceReport {
                         compliant: false,
-                        pdfa_level: Some(pdf_compliance::PdfALevel::A2b),
+                        pdfa_level: Some(own_level(self.conformance)),
                         issues: vec![pdf_compliance::ComplianceIssue {
                             rule: "parser".to_string(),
                             severity: pdf_compliance::Severity::Error,
@@ -199,14 +273,10 @@ impl PdfTest for PdfAConvertTest {
                 }
             };
 
-            // Compute a hash for cache key.
-            let hash = {
-                use sha2::{Digest, Sha256};
-                let mut hasher = Sha256::new();
-                hasher.update(&saved);
-                format!("{:x}", hasher.finalize())
-            };
-            let oracle_result = verapdf.validate(&tmp, &hash);
+            let hash = sha256_hex(&saved);
+            let flavour = verapdf_flavour(self.conformance);
+            metadata.insert("pdfa_flavour".into(), flavour.clone());
+            let oracle_result = verapdf.validate_pdfa_flavour(&tmp, &hash, &flavour);
 
             match oracle_result {
                 Ok(verapdf_report) => {
@@ -312,8 +382,15 @@ impl PdfTest for PdfAConvertTest {
 /// Convert a PDF to PDF/A-2b and return the converted bytes.
 ///
 /// Used by `oracle-generate` to produce exactly the bytes `PdfAConvertTest::run`
-/// would validate, so the oracle cache keys on the *converted* hash rather than
-/// the input hash. Both call the same library pipeline, so they cannot drift.
+/// would validate **at its default flavour**, so the oracle cache keys on the
+/// *converted* hash rather than the input hash. Both call the same library
+/// pipeline, so they cannot drift.
+///
+/// It stays fixed at 2b, and a flavour run does not read what it caches: the
+/// pre-generated oracle results are stored under the auto-detect key, while a
+/// flavour run asks veraPDF a different question and caches under a key of its
+/// own (`verapdf-1b`, …). One cache serving both would answer the second
+/// question with the first question's verdict.
 ///
 /// Returns `None` when the document cannot be converted at all.
 pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
@@ -324,6 +401,14 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
         on_step: None,
     };
     pdf_manip::pdfa::convert_bytes(pdf_data, &opts).ok()
+}
+
+/// The veraPDF cache key for a document: the hash of the bytes handed to it.
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
 }
 
 /// Skip: the converter declined this input. Not a conversion defect.

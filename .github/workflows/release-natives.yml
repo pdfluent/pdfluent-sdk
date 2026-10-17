@@ -1,0 +1,1221 @@
+name: release-natives
+
+# THE RELEASE PATH for the Python, Java, .NET and C API channels.
+# Dispatch-only: the COS dispatches with --ref at the release commit and
+# `version` = x.y.z. Four jobs:
+#   natives — a matrix over the seven platforms (the gate's PLATFORMS keys:
+#     linux-x64, linux-arm64, linux-x64-musl, linux-arm64-musl, osx-x64,
+#     osx-arm64, win-x64). Each leg builds the C ABI cdylib, the JNI
+#     cdylib and the Python wheel for its platform, then uploads one
+#     artefact named natives-<platform> with this fixed layout:
+#       capi/<lib>    the pdf-capi cdylib (libpdf_capi.so/.dylib, pdf_capi.dll)
+#       java/<lib>    the pdf-java JNI cdylib (libpdfluent_java.so/.dylib,
+#                     pdfluent_java.dll)
+#       dotnet/<lib>  the same pdf-capi cdylib, staged per-RID by package
+#       wheels/*.whl  the one abi3 wheel for the platform
+#   package — downloads all seven, stages the jar (stage_java_natives.sh,
+#     PARTIAL_OK only behind a non-empty .missing-legs) and the nupkg
+#     (stage_dotnet_natives.sh), cuts the C API tarballs plus the judged
+#     capi dir (collect_capi_release.sh), builds the sdist
+#     (build_pdfluent_sdist.sh) and the pdfluent-extract dists, then runs
+#     the artefact gate ONCE with --require-all over everything and uploads
+#     release-packages-<version> — a partial set still uploads (the gate
+#     names every gap), and the final step fails the job then.
+#   ort-rust — a matrix over the five ort targets (linux-x64, linux-arm64,
+#     osx-x64, osx-arm64, win-x64). Each leg downloads its platform's ONNX
+#     Runtime library from the public models-v1 release, verifies it
+#     against the tree pins, and runs `cargo test -p pdf-engine --features
+#     ort-layout,ort-tables` with ORT_DYLIB_PATH on it. Self pool only,
+#     like the models it loads. The osx-x64 leg runs its x86_64 test binary
+#     under Rosetta on the self Mac.
+#   smoke — a matrix over the same seven platforms. Each leg clean-installs
+#     the packaged artefacts and extracts the fixture WITHOUT a licence
+#     key through every channel (python, node, java, dotnet, capi, cli),
+#     asserting the known sentence. Node and CLI artefacts come from the
+#     node-bindings.yml and release-binaries.yml runs on the same ref, so
+#     the COS dispatches those two BEFORE this workflow; a leg fails naming
+#     the missing run. musl legs run their smokes inside an alpine
+#     container (one `docker run`, artefacts prepared on the host).
+#     The tree's versions must already be `version`: every smoke asserts it.
+#     On the self pool the five non-musl legs then smoke the ort variant:
+#     each leg downloads the models-v1 assets from the public release
+#     (verified against the tree pins) and each of the cli, python and
+#     node channels installs layout+tables from the staged dir into a
+#     temp model dir and runs a balanced extract.
+# The models come from the PUBLIC models-v1 release, never from an Actions
+# artefact (D18) and never with a credential: anonymous HTTPS from the
+# release base cmd_models.rs pins, every byte verified against the tree
+# pins (models_pins.toml, ort_pins.toml, the tree's own licence texts)
+# before use. A mismatch refuses the leg outright.
+# Publishing stays manual and outside this workflow: the publish paths
+# read release-packages-<version>. build-lane.yml is NOT this: the lane
+# builds what a dev loop needs and forgives unbuilt platforms, which the
+# release never does — the lane's forgiveness flag appears in no line
+# of this file (test_release_path_never_allows_missing.py holds that).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version x.y.z (labels the release-packages upload)'
+        required: true
+      runner_pool:
+        description: 'Runner pool: github (hosted) or self (self-hosted GCP/Mac runners)'
+        required: false
+        default: 'github'
+        type: choice
+        options: ['github', 'self']
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  natives:
+    name: natives (${{ matrix.platform }})
+    runs-on: ${{ inputs.runner_pool == 'self' && matrix.runs-on-self || matrix.runs-on }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runs-on: ubuntu-latest
+            runs-on-self: [self-hosted, linux, x64, pdfluent-release]
+            triple: x86_64-unknown-linux-gnu
+            zig: true
+            musl: false
+            cross: false
+            wheel-compat: manylinux2014
+          - platform: linux-arm64
+            runs-on: ubuntu-latest
+            runs-on-self: [self-hosted, linux, x64, pdfluent-release]
+            triple: aarch64-unknown-linux-gnu
+            zig: true
+            musl: false
+            cross: false
+            wheel-compat: manylinux2014
+          - platform: linux-x64-musl
+            runs-on: ubuntu-latest
+            runs-on-self: [self-hosted, linux, x64, pdfluent-release]
+            triple: x86_64-unknown-linux-musl
+            zig: true
+            musl: true
+            cross: false
+            wheel-compat: musllinux_1_2
+          - platform: linux-arm64-musl
+            runs-on: ubuntu-latest
+            runs-on-self: [self-hosted, linux, x64, pdfluent-release]
+            triple: aarch64-unknown-linux-musl
+            zig: true
+            musl: true
+            cross: false
+            wheel-compat: musllinux_1_2
+          - platform: osx-x64
+            runs-on: macos-latest
+            runs-on-self: [self-hosted, macos, arm64, pdfluent-release]
+            triple: x86_64-apple-darwin
+            zig: false
+            musl: false
+            cross: true
+            wheel-compat: none
+          - platform: osx-arm64
+            runs-on: macos-latest
+            runs-on-self: [self-hosted, macos, arm64, pdfluent-release]
+            triple: aarch64-apple-darwin
+            zig: false
+            musl: false
+            cross: false
+            wheel-compat: none
+          - platform: win-x64
+            runs-on: windows-latest
+            runs-on-self: [self-hosted, windows, x64, pdfluent-release]
+            triple: x86_64-pc-windows-msvc
+            zig: false
+            musl: false
+            cross: false
+            wheel-compat: none
+    steps:
+      - name: The version input is x.y.z
+        # BASH, because the natives job has a Windows leg and the default
+        # shell there is pwsh, which cannot parse [[ ... ]] (run 37451377812).
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: Set up the self-hosted toolchain
+        if: inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          # zig only on the legs that build through it (the Linux ones):
+          # cargo-zigbuild is a Linux-cross tool, and the win/osx legs
+          # never invoke it. The Windows leg used to install it anyway,
+          # and its version probe aborted setup (build 2).
+          tools: rust,python,java,maturin${{ matrix.zig == true && ',zig' || '' }}
+          rust-targets: ${{ matrix.triple }}
+          python-version: '3.11'
+
+      # Missing is red here, in seconds, with the complete list -- before the
+      # build, never an hour in (m482). Read-only: it installs nothing. The
+      # --without mirrors the tools: expression above: legs that never install
+      # zig are not asked for it. (Negated because an empty --without must stay
+      # empty: `&& ''` would be falsy and fall through to the zig branch.)
+      - name: Preflight the release requirements
+        if: inputs.runner_pool == 'self'
+        shell: bash
+        run: |-
+          PY="$(command -v python3 || command -v python || true)"
+          if [ -z "$PY" ]; then
+            echo "gate_preflight: REFUSED: no python on PATH (the setup installs one only for jobs that list python in tools:)" >&2
+            exit 2
+          fi
+          "$PY" scripts/ci/gate_preflight.py --release-job release-natives.yml/natives \
+            --without "${{ matrix.zig != true && 'ziglang,cargo-zigbuild' || '' }}"
+
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        if: inputs.runner_pool != 'self'
+        with:
+          toolchain: '1.94.0'
+          targets: ${{ matrix.triple }}
+
+      # The key names the matrix triple: without it every leg of this matrix
+      # restores the same target/ (the default key has no target), and a leg
+      # then runs host build-script binaries saved by another leg's newer
+      # cross image -- GLIBC_2.28/2.29/2.30 not found on aarch64-musl (#636).
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-natives-${{ matrix.triple }}
+          cache-bin: false
+
+      - uses: actions/setup-python@v5
+        if: inputs.runner_pool != 'self'
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-java@v4
+        if: inputs.runner_pool != 'self'
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: pip install cargo-zigbuild ziglang "maturin==1.15.0"
+
+      - name: Install build tools (macOS, Windows)
+        if: runner.os != 'Linux'
+        run: pip install "maturin==1.15.0"
+
+      - name: Build the cdylibs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # rquickjs on aarch64 needs gnu99 (the build-wheels.yml trap);
+          # musl cdylibs need the dynamic CRT (musl_cdylib_rustflags.sh),
+          # in a subshell per musl target so it never leaks sideways.
+          export CFLAGS_aarch64_unknown_linux_gnu="${CFLAGS_aarch64_unknown_linux_gnu:-} -std=gnu99"
+          export CFLAGS_aarch64_unknown_linux_musl="${CFLAGS_aarch64_unknown_linux_musl:-} -std=gnu99"
+          export CFLAGS_x86_64_unknown_linux_musl="${CFLAGS_x86_64_unknown_linux_musl:-} -std=gnu99"
+          # Scrub THIS runner's paths: env RUSTFLAGS replace the config's
+          # Mac-only block outright. Musl legs add the dynamic CRT on top in
+          # their subshells below (musl_cdylib_rustflags.sh sources this too).
+          source scripts/release/release_rustflags.sh
+          build() {
+            if [[ "${{ matrix.zig }}" == "true" ]]; then
+              if [[ "${{ matrix.musl }}" == "true" ]]; then
+                ( source scripts/release/musl_cdylib_rustflags.sh && \
+                  cargo zigbuild --locked -p "$1" --release --target "${{ matrix.triple }}" )
+              else
+                cargo zigbuild --locked -p "$1" --release --target "${{ matrix.triple }}"
+              fi
+            elif [[ "${{ matrix.cross }}" == "true" ]]; then
+              # osx-x64 builds on macos-latest (arm64): Apple's toolchain
+              # cross-builds x86_64 natively, with the target's std from
+              # the toolchain step's targets:.
+              cargo build --locked -p "$1" --release --target "${{ matrix.triple }}"
+            else
+              cargo build --locked -p "$1" --release
+            fi
+          }
+          build pdf-capi
+          build pdf-java
+
+      # Minutes in, not hours later: the fresh cdylibs name no build-host
+      # path, and the log shows the remap block this runner computed.
+      - name: The fresh cdylibs embed no build-host path
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.zig }}" == "true" || "${{ matrix.cross }}" == "true" ]]; then
+            TGTD="target/${{ matrix.triple }}/release"
+          else
+            TGTD="target/release"
+          fi
+          case "${{ matrix.platform }}" in
+            win-*) libs=("$TGTD/pdf_capi.dll" "$TGTD/pdfluent_java.dll") ;;
+            osx-*) libs=("$TGTD/libpdf_capi.dylib" "$TGTD/libpdfluent_java.dylib") ;;
+            *) libs=("$TGTD/libpdf_capi.so" "$TGTD/libpdfluent_java.so") ;;
+          esac
+          bash scripts/release/check_build_host_paths.sh "${libs[@]}"
+
+      - name: Build the wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CFLAGS_aarch64_unknown_linux_gnu="${CFLAGS_aarch64_unknown_linux_gnu:-} -std=gnu99"
+          export CFLAGS_aarch64_unknown_linux_musl="${CFLAGS_aarch64_unknown_linux_musl:-} -std=gnu99"
+          export CFLAGS_x86_64_unknown_linux_musl="${CFLAGS_x86_64_unknown_linux_musl:-} -std=gnu99"
+          # Same scrubbing as the cdylibs above: without it the wheel embeds
+          # this runner's home and checkout, and fix-wheel fails the step.
+          source scripts/release/release_rustflags.sh
+          mkdir -p "natives-${{ matrix.platform }}/wheels"
+          if [[ "${{ matrix.zig }}" == "true" ]]; then
+            if [[ "${{ matrix.musl }}" == "true" ]]; then
+              ( source scripts/release/musl_cdylib_rustflags.sh && cd crates/pdf-python && \
+                maturin build --release --strip --zig --target "${{ matrix.triple }}" \
+                  --compatibility "${{ matrix.wheel-compat }}" \
+                  --out "$OLDPWD/natives-${{ matrix.platform }}/wheels" )
+            else
+              ( cd crates/pdf-python && \
+                maturin build --release --strip --zig --target "${{ matrix.triple }}" \
+                  --compatibility "${{ matrix.wheel-compat }}" \
+                  --out "$OLDPWD/natives-${{ matrix.platform }}/wheels" )
+            fi
+          elif [[ "${{ matrix.cross }}" == "true" ]]; then
+            ( cd crates/pdf-python && \
+              maturin build --release --strip --target "${{ matrix.triple }}" \
+                --out "$OLDPWD/natives-${{ matrix.platform }}/wheels" )
+          else
+            ( cd crates/pdf-python && \
+              maturin build --release --strip \
+                --out "$OLDPWD/natives-${{ matrix.platform }}/wheels" )
+          fi
+          # Resolved, not bare: Windows ships `python`, not `python3`
+          # (build 3: `python3: command not found` on win-x64).
+          PY="$(command -v python3 || command -v python)"
+          "$PY" scripts/release/fix_python_wheel_paths.py natives-${{ matrix.platform }}/wheels/*.whl
+
+      - name: The fresh wheel embeds no build-host path
+        shell: bash
+        run: bash scripts/release/check_build_host_paths.sh natives-${{ matrix.platform }}/wheels/*.whl
+
+      - name: Lay out natives-<platform>
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLAT="${{ matrix.platform }}"
+          if [[ "${{ matrix.zig }}" == "true" || "${{ matrix.cross }}" == "true" ]]; then
+            TGTD="target/${{ matrix.triple }}/release"
+          else
+            TGTD="target/release"
+          fi
+          case "$PLAT" in
+            win-*) capi_lib="pdf_capi.dll"; jni_lib="pdfluent_java.dll" ;;
+            osx-*) capi_lib="libpdf_capi.dylib"; jni_lib="libpdfluent_java.dylib" ;;
+            *) capi_lib="libpdf_capi.so"; jni_lib="libpdfluent_java.so" ;;
+          esac
+          mkdir -p "natives-$PLAT/capi" "natives-$PLAT/java" "natives-$PLAT/dotnet"
+          cp "$TGTD/$capi_lib" "natives-$PLAT/capi/$capi_lib"
+          cp "$TGTD/$jni_lib" "natives-$PLAT/java/$jni_lib"
+          cp "$TGTD/$capi_lib" "natives-$PLAT/dotnet/$capi_lib"
+          WHEELD="natives-$PLAT/wheels"
+          whls=( "$WHEELD"/*.whl )
+          test "${#whls[@]}" = "1" && test -f "${whls[0]}"
+          find "natives-$PLAT" -type f | sort
+
+      - name: No native wheel carries the SVG rasteriser
+        shell: bash
+        run: |
+          PY="$(command -v python3 || command -v python)"
+          "$PY" tests/compat/no_cairo_in_artifacts.py "natives-${{ matrix.platform }}/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: natives-${{ matrix.platform }}
+          path: natives-${{ matrix.platform }}/
+          retention-days: 1
+
+  package:
+    name: package (${{ inputs.version }})
+    needs: natives
+    # One failed leg must not skip this validation: it runs on the legs
+    # that did succeed, names every skipped one below, and fails at the
+    # end when any is missing.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ inputs.runner_pool == 'self' && fromJSON('["self-hosted", "linux", "x64", "pdfluent-release"]') || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up the self-hosted toolchain
+        if: inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          # rust: Collect the C API set builds pdf-capi through package_cabi.sh.
+          tools: rust,python,java,dotnet,maturin
+          python-version: '3.11'
+
+      # Missing is red here, in seconds, with the complete list (m482).
+      # Read-only: it installs nothing.
+      - name: Preflight the release requirements
+        if: inputs.runner_pool == 'self'
+        shell: bash
+        run: python3 scripts/ci/gate_preflight.py --release-job release-natives.yml/package
+
+      - uses: actions/setup-python@v5
+        if: inputs.runner_pool != 'self'
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-java@v4
+        if: inputs.runner_pool != 'self'
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install packaging tools
+        run: |
+          pip install "maturin==1.15.0" build
+          mvn --version | head -1
+          dotnet --version
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: natives-*
+          path: natives
+
+      - name: Flatten the natives layout
+        run: |
+          set -euo pipefail
+          for d in natives/natives-*/; do
+            mv "$d" "natives/${d#natives/natives-}"
+          done
+          ls natives
+
+      # No native names the runner that built it: no checkout, cargo home
+      # or toolchain path in the strings of any .so/.dylib/.dll, nor of the
+      # extension module inside any wheel. Runs on the legs present; a
+      # missing leg is named by the step below and fails the job at the end.
+      - name: No native embeds its build host's paths
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find natives -type f \( -name '*.so' -o -name '*.dylib' -o -name '*.dll' -o -name '*.whl' \) | sort)
+          test "${#files[@]}" -gt 0 || { echo "no natives downloaded to check" >&2; exit 1; }
+          python3 scripts/release/binary_host_paths.py --max 0 "${files[@]}"
+
+      # The legs that failed have no artefact: list every expected platform
+      # and name the missing ones, so a partial run is never silent. This
+      # fails nothing; the last step fails the job when the list is non-empty.
+      - name: List the expected legs (never silent)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > .missing-legs
+          for plat in linux-x64 linux-arm64 linux-x64-musl linux-arm64-musl osx-x64 osx-arm64 win-x64; do
+            if [[ -d "natives/$plat" ]]; then
+              echo "leg $plat: present"
+            else
+              echo "SKIPPED leg $plat: build failed"
+              echo "$plat" >> .missing-legs
+            fi
+          done
+          if [[ -s .missing-legs ]]; then
+            echo "missing legs recorded in .missing-legs"
+          else
+            echo "all seven legs present"
+          fi
+
+      - name: Stage and package the jar
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A partial run stages what exists and packages past the
+          # enforcer, so the gate below judges the present legs instead of
+          # this step refusing: the final step still fails the job naming
+          # the missing legs. A full run sets neither flag.
+          partial=false
+          if [[ -s .missing-legs ]]; then
+            echo "partial run: staging without $(tr '\n' ' ' < .missing-legs)"
+            export PARTIAL_OK=1
+            partial=true
+          fi
+          export JNI_LINUX_X64="$PWD/natives/linux-x64/java/libpdfluent_java.so"
+          export JNI_LINUX_ARM64="$PWD/natives/linux-arm64/java/libpdfluent_java.so"
+          export JNI_LINUX_X64_MUSL="$PWD/natives/linux-x64-musl/java/libpdfluent_java.so"
+          export JNI_LINUX_ARM64_MUSL="$PWD/natives/linux-arm64-musl/java/libpdfluent_java.so"
+          export JNI_OSX_X64="$PWD/natives/osx-x64/java/libpdfluent_java.dylib"
+          export JNI_OSX_ARM64="$PWD/natives/osx-arm64/java/libpdfluent_java.dylib"
+          export JNI_WIN_X64="$PWD/natives/win-x64/java/pdfluent_java.dll"
+          export CAPI_LINUX_X64="$PWD/natives/linux-x64/capi/libpdf_capi.so"
+          export CAPI_LINUX_ARM64="$PWD/natives/linux-arm64/capi/libpdf_capi.so"
+          export CAPI_LINUX_X64_MUSL="$PWD/natives/linux-x64-musl/capi/libpdf_capi.so"
+          export CAPI_LINUX_ARM64_MUSL="$PWD/natives/linux-arm64-musl/capi/libpdf_capi.so"
+          export CAPI_OSX_X64="$PWD/natives/osx-x64/capi/libpdf_capi.dylib"
+          export CAPI_OSX_ARM64="$PWD/natives/osx-arm64/capi/libpdf_capi.dylib"
+          export CAPI_WIN_X64="$PWD/natives/win-x64/capi/pdf_capi.dll"
+          bash scripts/release/stage_java_natives.sh
+          if $partial; then
+            ( cd bindings/java && mvn -B package -Denforcer.skip=true )
+          else
+            ( cd bindings/java && mvn -B package )
+          fi
+          JAR=""
+          for j in bindings/java/target/*.jar; do
+            case "$j" in *-sources*|*-javadoc*) continue ;; esac
+            if [[ -z "$JAR" || "$j" -nt "$JAR" ]]; then JAR="$j"; fi
+          done
+          # -f, not just -n: with no jar built the glob above iterates once
+          # over its own literal, which is non-empty and would export a path
+          # that names nothing.
+          if [[ -z "$JAR" || ! -f "$JAR" ]]; then
+            echo "release-natives: no packaged jar in bindings/java/target" >&2
+            exit 1
+          fi
+          echo "JAR=$JAR" >> "$GITHUB_ENV"
+
+      # The jar needs all seven natives, so its licence audit runs here,
+      # where the jar exists -- and fails the job, like every audit below.
+      - name: Audit the jar licence
+        shell: bash
+        run: python3 scripts/release/license_audit.py "$JAR"
+
+      - name: Stage and pack the nupkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CAPI_LINUX_X64="$PWD/natives/linux-x64/dotnet/libpdf_capi.so"
+          export CAPI_LINUX_ARM64="$PWD/natives/linux-arm64/dotnet/libpdf_capi.so"
+          export CAPI_LINUX_MUSL_X64="$PWD/natives/linux-x64-musl/dotnet/libpdf_capi.so"
+          export CAPI_LINUX_MUSL_ARM64="$PWD/natives/linux-arm64-musl/dotnet/libpdf_capi.so"
+          export CAPI_OSX_X64="$PWD/natives/osx-x64/dotnet/libpdf_capi.dylib"
+          export CAPI_OSX_ARM64="$PWD/natives/osx-arm64/dotnet/libpdf_capi.dylib"
+          export CAPI_WIN_X64="$PWD/natives/win-x64/dotnet/pdf_capi.dll"
+          bash scripts/release/stage_dotnet_natives.sh
+          dotnet build bindings/dotnet/src/PDFluent/PDFluent.csproj -c Release
+          rm -rf nuget-out && mkdir -p nuget-out
+          dotnet pack bindings/dotnet/src/PDFluent/PDFluent.csproj -c Release --no-build -o nuget-out
+          nupkgs=( nuget-out/*.nupkg )
+          test "${#nupkgs[@]}" = "1" && test -f "${nupkgs[0]}"
+          echo "NUPKG=${nupkgs[0]}" >> "$GITHUB_ENV"
+
+      - name: Audit the nupkg licence
+        shell: bash
+        run: python3 scripts/release/license_audit.py "$NUPKG"
+
+      - name: Collect the C API set
+        shell: bash
+        run: |
+          if [[ -s .missing-legs ]]; then
+            echo "partial run: collecting without $(tr '\n' ' ' < .missing-legs)"
+            export PARTIAL_OK=1
+          fi
+          bash scripts/release/collect_capi_release.sh \
+            --natives natives --capi-dir capi --tarballs capi-tarballs
+
+      - name: Audit the C API tarballs
+        shell: bash
+        run: python3 scripts/release/license_audit.py capi-tarballs/*.tar.gz
+
+      - name: Collect the wheels and build the sdist
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p wheels
+          cp natives/*/wheels/*.whl wheels/
+          whls=( wheels/*.whl )
+          if [[ -s .missing-legs ]]; then
+            echo "partial run: ${#whls[@]} wheels (missing: $(tr '\n' ' ' < .missing-legs))"
+            test "${#whls[@]}" -ge 1
+          else
+            test "${#whls[@]}" = "7"
+          fi
+          bash scripts/release/build_pdfluent_sdist.sh --out wheels
+
+      - name: Audit the wheels and the sdist
+        shell: bash
+        run: python3 scripts/release/license_audit.py wheels/*.whl wheels/*.tar.gz
+
+      - name: Build the pdfluent-extract dists
+        shell: bash
+        run: python -m build integrations/pdfluent-extract --outdir extract
+
+      - name: Run the artefact gate once over everything
+        shell: bash
+        run: |
+          python3 scripts/release/artifacts_cover_every_platform.py --require-all jar wheels nupkg capi \
+            --jar "$JAR" --wheels wheels/ \
+            --nupkg "$NUPKG" --capi-dir capi/ \
+            --extract-dir extract/
+
+      - name: Lay out release-packages
+        # The gate above fails on a partial set; the layout and the upload
+        # run anyway, so the present legs are still packaged and smoked.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This step runs past a failed gate, so the jar/nupkg steps above
+          # may never have exported: refuse with the cause named, not the
+          # consequence ("JAR: unbound variable", build 6).
+          : "${JAR:?release-natives: no jar was packaged}"
+          : "${NUPKG:?release-natives: no nupkg was packed}"
+          rm -rf release-packages
+          mkdir -p release-packages/java release-packages/python release-packages/nuget release-packages/capi release-packages/extract
+          cp "$JAR" release-packages/java/
+          cp wheels/* release-packages/python/
+          cp "$NUPKG" release-packages/nuget/
+          cp capi-tarballs/* release-packages/capi/
+          cp extract/* release-packages/extract/
+          find release-packages -type f | sort
+
+      - name: No release package carries the SVG rasteriser
+        shell: bash
+        run: python3 tests/compat/no_cairo_in_artifacts.py release-packages/
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: release-packages-${{ inputs.version }}
+          path: release-packages/
+          retention-days: 1
+
+      # Red when any leg was skipped: the gate above already failed on a
+      # partial set (--require-all), so this is the verdict made explicit
+      # rather than a second rule. Runs even when the gate failed.
+      - name: Fail if any leg was skipped
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          if [[ -s .missing-legs ]]; then
+            echo "missing legs:"
+            sed 's/^/  SKIPPED leg /; s/$/: build failed/' .missing-legs
+            exit 1
+          fi
+          echo "no leg skipped"
+
+  ort-rust:
+    name: ort rust tests (${{ matrix.target }})
+    # No `needs:`: the models come from the public release, not from an
+    # earlier job, so this runs beside the natives matrix rather than
+    # behind it.
+    # Self pool only, like the models it loads: on the github pool the job
+    # skips. `!cancelled()` keeps a failed run from skipping this in
+    # silence: it runs and fails on the missing download instead.
+    if: ${{ !cancelled() && inputs.runner_pool == 'self' }}
+    runs-on: ${{ inputs.runner_pool == 'self' && matrix.runs-on-self || matrix.runs-on }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runs-on: ubuntu-latest
+            runs-on-self: [self-hosted, linux, x64, pdfluent-release]
+            ort-lib: onnxruntime-linux-x86_64-1.23.2.so
+          - target: aarch64-unknown-linux-gnu
+            runs-on: ubuntu-24.04-arm
+            runs-on-self: [self-hosted, linux, arm64, pdfluent-release]
+            ort-lib: onnxruntime-linux-arm64-1.23.2.so
+          - target: x86_64-apple-darwin
+            runs-on: macos-15-intel
+            runs-on-self: [self-hosted, macos, arm64, pdfluent-release]
+            ort-lib: onnxruntime-macos-x86_64-1.23.2.dylib
+          - target: aarch64-apple-darwin
+            runs-on: macos-latest
+            runs-on-self: [self-hosted, macos, arm64, pdfluent-release]
+            ort-lib: onnxruntime-macos-arm64-1.23.2.dylib
+          - target: x86_64-pc-windows-msvc
+            runs-on: windows-latest
+            runs-on-self: [self-hosted, windows, x64, pdfluent-release]
+            ort-lib: onnxruntime-windows-x86_64-1.23.2.dll
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up the self-hosted toolchain
+        if: inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          # python is the preflight's own interpreter: the Windows image
+          # ships none, so without it the step below dies with no output.
+          tools: rust,python
+          rust-targets: ${{ matrix.target }}
+          python-version: '3.11'
+
+      # Missing is red here, in seconds, with the complete list (m482).
+      # Read-only: it installs nothing.
+      - name: Preflight the release requirements
+        if: inputs.runner_pool == 'self'
+        shell: bash
+        run: |-
+          PY="$(command -v python3 || command -v python || true)"
+          if [ -z "$PY" ]; then
+            echo "gate_preflight: REFUSED: no python on PATH (the setup installs one only for jobs that list python in tools:)" >&2
+            exit 2
+          fi
+          "$PY" scripts/ci/gate_preflight.py --release-job release-natives.yml/ort-rust
+
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        if: inputs.runner_pool != 'self'
+        with:
+          toolchain: '1.94.0'
+          targets: ${{ matrix.target }}
+
+      # The key names the matrix target: without it every leg of this matrix
+      # restores the same target/ (the default key has no target), and a leg
+      # then runs host build-script binaries saved by another leg's newer
+      # cross image -- GLIBC_2.28/2.29/2.30 not found on aarch64 (#636).
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ort-rust-${{ matrix.target }}
+          cache-bin: false
+
+      # No artefact, no secret (D18): the leg fetches its platform's ONNX
+      # Runtime library from the public models-v1 release over anonymous
+      # HTTPS and verifies every byte against the tree pins before use --
+      # a mismatch refuses the leg outright.
+      - name: Download models-v1 from the public release
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Resolved, not bare: Windows ships `python`, not `python3`.
+          PY="$(command -v python3 || command -v python)"
+          "$PY" scripts/release/fetch_models_release.py --out models-v1 \
+            --asset "${{ matrix.ort-lib }}"
+
+      - name: Run the pdf-engine suite with the ort tiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The osx-x64 leg cross-builds on the Apple Silicon Mac: cargo
+          # emits an x86_64 test binary that macOS runs under Rosetta
+          # transparently, so the leg needs Rosetta and nothing else. A leg
+          # that cannot run its binary fails naming it, never skips green.
+          if [[ "${{ matrix.target }}" == "x86_64-apple-darwin" && "$(uname -s)" == "Darwin" && "$(uname -m)" != "x86_64" ]]; then
+            arch -x86_64 /usr/bin/true 2>/dev/null \
+              || { echo "SMOKE NOT RUN: x86_64-apple-darwin needs Rosetta on this Mac"; exit 1; }
+          fi
+          export ORT_DYLIB_PATH="$PWD/models-v1/${{ matrix.ort-lib }}"
+          test -f "$ORT_DYLIB_PATH" || { echo "no ${{ matrix.ort-lib }} in models-v1/"; exit 1; }
+          cargo test --locked -p pdf-engine --features ort-layout,ort-tables --target ${{ matrix.target }}
+
+  smoke:
+    name: smoke (${{ matrix.platform }})
+    needs: [package]
+    # A failed package job must not skip these legs in silence: each leg
+    # runs, names its missing artefacts below, and fails at the end when
+    # any are missing.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ inputs.runner_pool == 'self' && matrix.runs-on-self || matrix.runs-on }}
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      PDFLUENT_RELEASE_LANE: '1'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runs-on: ubuntu-latest
+            runs-on-self: [self-hosted, linux, x64, pdfluent-release]
+            musl: false
+            node-tag: linux-x64-gnu
+            cli-target: x86_64-unknown-linux-gnu
+            wheel-glob: '*manylinux*x86_64.whl'
+          - platform: linux-arm64
+            runs-on: ubuntu-24.04-arm
+            runs-on-self: [self-hosted, linux, arm64, pdfluent-release]
+            musl: false
+            node-tag: linux-arm64-gnu
+            cli-target: aarch64-unknown-linux-gnu
+            wheel-glob: '*manylinux*aarch64.whl'
+          - platform: linux-x64-musl
+            runs-on: ubuntu-latest
+            runs-on-self: [self-hosted, linux, x64, pdfluent-release]
+            musl: true
+            node-tag: linux-x64-musl
+            cli-target: x86_64-unknown-linux-musl
+            wheel-glob: '*musllinux*x86_64.whl'
+          - platform: linux-arm64-musl
+            runs-on: ubuntu-24.04-arm
+            runs-on-self: [self-hosted, linux, arm64, pdfluent-release]
+            musl: true
+            node-tag: linux-arm64-musl
+            cli-target: aarch64-unknown-linux-musl
+            wheel-glob: '*musllinux*aarch64.whl'
+          - platform: osx-x64
+            runs-on: macos-15-intel
+            runs-on-self: [self-hosted, macos, arm64, pdfluent-release]
+            musl: false
+            node-tag: darwin-x64
+            cli-target: x86_64-apple-darwin
+            wheel-glob: '*macosx*x86_64.whl'
+          - platform: osx-arm64
+            runs-on: macos-latest
+            runs-on-self: [self-hosted, macos, arm64, pdfluent-release]
+            musl: false
+            node-tag: darwin-arm64
+            cli-target: aarch64-apple-darwin
+            wheel-glob: '*macosx*arm64*.whl'
+          - platform: win-x64
+            runs-on: windows-latest
+            runs-on-self: [self-hosted, windows, x64, pdfluent-release]
+            musl: false
+            node-tag: win32-x64-msvc
+            cli-target: x86_64-pc-windows-msvc
+            wheel-glob: '*win_amd64.whl'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up the self-hosted toolchain
+        if: inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          # dotnet for smoke_dotnet: the release lane fails without the SDK.
+          tools: python,node,java,docker,dotnet
+          python-version: '3.11'
+          node-version: '24'
+
+      # Missing is red here, in seconds, with the complete list (m482).
+      # Read-only: it installs nothing.
+      - name: Preflight the release requirements
+        if: inputs.runner_pool == 'self'
+        shell: bash
+        run: |-
+          PY="$(command -v python3 || command -v python || true)"
+          if [ -z "$PY" ]; then
+            echo "gate_preflight: REFUSED: no python on PATH (the setup installs one only for jobs that list python in tools:)" >&2
+            exit 2
+          fi
+          "$PY" scripts/ci/gate_preflight.py --release-job release-natives.yml/smoke
+
+      - uses: actions/setup-python@v5
+        if: inputs.runner_pool != 'self' && matrix.musl != true
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        if: inputs.runner_pool != 'self'
+        with:
+          node-version: 24
+
+      - uses: actions/setup-java@v4
+        if: inputs.runner_pool != 'self' && matrix.musl != true
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # The arm64 legs answer on an arm64 runner or fail naming it: a leg
+      # that cannot serve its platform is never silently green.
+      - name: The arm64 legs run on arm64
+        if: contains(matrix.platform, 'arm64')
+        run: |
+          case "$(uname -m)" in
+            aarch64|arm64) echo "arch: $(uname -m)" ;;
+            *) echo "SMOKE NOT RUN: ${{ matrix.platform }} needs an arm64 runner"; exit 1 ;;
+          esac
+
+      # The C smoke takes the first of cc/gcc/clang/cl on PATH. Clang is
+      # preferred where it ships; the setup step exports the MSVC developer
+      # prompt, so cl serves a runner whose Build Tools carry no LLVM.
+      - name: C compiler on PATH (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          command -v clang >/dev/null && exit 0
+          LLVM="/c/Program Files/LLVM/bin"
+          if test -x "$LLVM/clang.exe"; then echo "$LLVM" >> "$GITHUB_PATH"; exit 0; fi
+          command -v cl >/dev/null && { echo "no clang on this runner: the C smoke uses MSVC cl"; exit 0; }
+          echo "no C compiler (clang or cl) on this runner"; exit 1
+
+      # A leg whose natives were never built has nothing to smoke: skip
+      # here, naming the leg, instead of failing on the download below.
+      # The final step turns this into the verdict.
+      - name: Skip when this leg was never built
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # No `gh` on the self-hosted runners, by design (build 3: `gh:
+          # command not found` SKIPPED every leg, including the five that
+          # built): the run's artefacts over curl, parsed by python.
+          # Capture-then-compare — nothing pipes into `grep -q` under
+          # pipefail (build 3's second trap: the early exit is EPIPE
+          # there). The job's `actions: read` covers this API route.
+          PY="$(command -v python3 || command -v python)"
+          # Through the shared fetcher: bounded retries for transient
+          # network errors, and a failure that names the environment (15-10:
+          # curl exit 56 on the Mac runner read as a product failure).
+          body="$(mktemp)"
+          bash scripts/release/fetch_artefact.sh api \
+            "actions/runs/${{ github.run_id }}/artifacts?per_page=100" "$body"
+          if "$PY" -c 'import json,sys; sys.exit(0 if sys.argv[2] in {a["name"] for a in json.load(open(sys.argv[1])).get("artifacts", [])} else 1)' \
+              "$body" "natives-${{ matrix.platform }}"; then
+            echo "leg ${{ matrix.platform }}: natives present"
+          else
+            echo "SKIPPED leg ${{ matrix.platform }}: build failed"
+            echo "${{ matrix.platform }}" >> .missing-legs
+            exit 1
+          fi
+          rm -f "$body"
+
+      - name: Download release-packages
+        uses: actions/download-artifact@v4
+        with:
+          name: release-packages-${{ inputs.version }}
+          path: pkgs
+
+      # The package job may have failed: name this leg's missing artefacts
+      # instead of dying on the first absent file in silence.
+      - name: List this leg's artefacts (never silent)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          : > .missing-legs
+          if [[ -d pkgs ]]; then
+            echo "leg ${{ matrix.platform }}: release-packages present"
+          else
+            echo "SKIPPED leg ${{ matrix.platform }}: build failed"
+            echo "${{ matrix.platform }}" >> .missing-legs
+          fi
+
+      # Node and CLI artefacts live in their own workflows' runs, on the
+      # same ref: the newest successful run of each. No run, no smoke —
+      # the leg fails naming the workflow to dispatch first.
+      - name: Download node and CLI artefacts from their runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # No `gh` on the self-hosted runners, by design (build 3): the
+          # newest successful run of each workflow over curl, the matching
+          # artefacts downloaded as zips and unpacked beside each other —
+          # the same `<dir>/<artefact-name>/` layout `gh run download
+          # --pattern` left. Capture-then-compare throughout: API answers
+          # land in files, python reads the files, and nothing pipes into
+          # `grep -q` under pipefail. The job's `actions: read` covers
+          # these routes. Unzip is `python -m zipfile`, so no Windows leg
+          # depends on an unzip binary.
+          PY="$(command -v python3 || command -v python)"
+          # Every fetch goes through scripts/release/fetch_artefact.sh:
+          # bounded retries for transient network errors only, the zip
+          # checked against the digest the artifact API returns, and a
+          # failure named as the environment's, never the product's.
+          api_to() {
+            bash scripts/release/fetch_artefact.sh api "$1" "$2"
+          }
+          newest_successful_run() {
+            body="$(mktemp)"
+            # Called inside $(...), where errexit is off: the explicit exit
+            # makes a failed fetch fail the caller's assignment instead of
+            # reading as "no successful run".
+            api_to "actions/workflows/$1/runs?branch=$REF&status=success&per_page=1" "$body" || exit 1
+            "$PY" -c 'import json,sys; runs = json.load(open(sys.argv[1])).get("workflow_runs", []); print(runs[0]["id"] if runs else "")' "$body" | tr -d '\r'
+            rm -f "$body"
+          }
+          download_matching() {
+            body="$(mktemp)"
+            api_to "actions/runs/$1/artifacts?per_page=100" "$body"
+            pairs="$("$PY" -c 'import json,sys; [print(a["id"], a.get("digest") or "-", a["name"]) for a in json.load(open(sys.argv[1])).get("artifacts", []) if a["name"].startswith(sys.argv[2])]' "$body" "$2" | tr -d '\r')"
+            rm -f "$body"
+            test -n "$pairs" || { echo "no artefacts starting with '$2' in run $1"; exit 1; }
+            while read -r aid adigest aname; do
+              zip="$(mktemp)"
+              bash scripts/release/fetch_artefact.sh zip "$aid" "$aname" "$adigest" "$zip"
+              "$PY" -m zipfile -e "$zip" "$3/$aname"
+              rm -f "$zip"
+            done <<< "$pairs"
+          }
+          NODE_RUN="$(newest_successful_run node-bindings.yml)"
+          test -n "$NODE_RUN" || { echo "no successful node-bindings.yml run on $REF (dispatch it before release-natives)"; exit 1; }
+          echo "node run: $NODE_RUN"
+          download_matching "$NODE_RUN" "pdf-node-release-" nodearts
+          CLI_RUN="$(newest_successful_run release-binaries.yml)"
+          test -n "$CLI_RUN" || { echo "no successful release-binaries.yml run on $REF (dispatch it before release-natives)"; exit 1; }
+          echo "cli run: $CLI_RUN"
+          download_matching "$CLI_RUN" "pdfluent-" cliarts
+
+      # Rebuild the two installable tarballs (main + this platform's
+      # sub-package) from the downloaded .node files, with the same
+      # generator the publish runs.
+      - name: Pack the node tarballs for this platform
+        run: |
+          set -euo pipefail
+          find nodearts -name 'index.*.node' -exec cp {} crates/pdf-node/ \;
+          ( cd crates/pdf-node && node scripts/release/generate-npm-dirs.cjs )
+          mkdir -p nodetgz
+          ( cd crates/pdf-node && npm pack --silent --pack-destination "$OLDPWD/nodetgz" )
+          ( cd "crates/pdf-node/npm/${{ matrix.node-tag }}" && npm pack --silent --pack-destination "$OLDPWD/nodetgz" )
+          ls nodetgz
+
+      - name: Resolve this leg's artefacts
+        run: |
+          set -euo pipefail
+          wheel=( pkgs/python/${{ matrix.wheel-glob }} )
+          test "${#wheel[@]}" = "1" && test -f "${wheel[0]}" || { echo "no wheel for ${{ matrix.platform }} under pkgs/python/"; exit 1; }
+          echo "WHEEL=${wheel[0]}" >> "$GITHUB_ENV"
+          jar=( pkgs/java/*.jar )
+          test "${#jar[@]}" = "1" && test -f "${jar[0]}" || { echo "no jar under pkgs/java/"; exit 1; }
+          echo "JAR=${jar[0]}" >> "$GITHUB_ENV"
+          nupkg=( pkgs/nuget/*.nupkg )
+          test "${#nupkg[@]}" = "1" && test -f "${nupkg[0]}" || { echo "no nupkg under pkgs/nuget/"; exit 1; }
+          echo "NUPKG=${nupkg[0]}" >> "$GITHUB_ENV"
+          capi=( "pkgs/capi/pdfluent-capi-"*"-${{ matrix.platform }}.tar.gz" )
+          test "${#capi[@]}" = "1" && test -f "${capi[0]}" || { echo "no C API tarball for ${{ matrix.platform }} under pkgs/capi/"; exit 1; }
+          echo "CAPI_TGZ=${capi[0]}" >> "$GITHUB_ENV"
+          # The main tarball starts its version where the platform
+          # tarballs carry their tag (pdfluent-node-1.0.0.tgz vs
+          # pdfluent-node-linux-x64-gnu-1.0.0.tgz): [0-9] keeps them apart.
+          main=( nodetgz/pdfluent-node-[0-9]*.tgz )
+          test "${#main[@]}" = "1" && test -f "${main[0]}" || { echo "no packed main node tarball"; exit 1; }
+          echo "NODE_TGZ=${main[0]}" >> "$GITHUB_ENV"
+          plat=( "nodetgz/pdfluent-node-${{ matrix.node-tag }}-"*.tgz )
+          test "${#plat[@]}" = "1" && test -f "${plat[0]}" || { echo "no packed node tarball for ${{ matrix.node-tag }}"; exit 1; }
+          echo "NODE_PLAT_TGZ=${plat[0]}" >> "$GITHUB_ENV"
+          cli=( "cliarts/pdfluent-${{ matrix.cli-target }}/pdfluent-"* )
+          test "${#cli[@]}" = "1" && test -f "${cli[0]}" || { echo "no CLI archive for ${{ matrix.cli-target }}"; exit 1; }
+          echo "CLI_ARCH=${cli[0]}" >> "$GITHUB_ENV"
+
+      # The extract legs run on linux-x64: the npx tarball is packed here
+      # (the package job ships the python extract dists; the npm one packs
+      # where it is smoked). The pure wheel — not the sdist, whose build
+      # backend pip cannot fetch off-registry — feeds the uvx-style leg.
+      - name: Pack @pdfluent/extract (linux-x64)
+        if: matrix.platform == 'linux-x64'
+        run: |
+          set -euo pipefail
+          # @pdfluent/extract depends on @pdfluent/node of this release, which
+          # is not on the registry until it is published: install the binding
+          # tarball built above (--no-save keeps package.json as published).
+          # Not --silent: an install that fails must say why (ETARGET hid here).
+          ( cd integrations/pdfluent-extract-js && npm install --no-audit --no-fund --no-save "$OLDPWD/$NODE_TGZ" && npm run build --silent && npm pack --silent --pack-destination "$OLDPWD/nodetgz" )
+          ls nodetgz/*extract*
+          extract_whl=( pkgs/extract/pdfluent_extract-*.whl )
+          test "${#extract_whl[@]}" = "1" && test -f "${extract_whl[0]}" || { echo "no pdfluent-extract wheel under pkgs/extract/"; exit 1; }
+          echo "EXTRACT_WHL=${extract_whl[0]}" >> "$GITHUB_ENV"
+          extract_tgz=( nodetgz/pdfluent-extract-*.tgz )
+          test "${#extract_tgz[@]}" = "1" && test -f "${extract_tgz[0]}" || { echo "no packed @pdfluent/extract tarball"; exit 1; }
+          echo "EXTRACT_TGZ=${extract_tgz[0]}" >> "$GITHUB_ENV"
+
+      - name: Smoke python
+        if: matrix.musl != true
+        env:
+          VERSION: ${{ inputs.version }}
+          RUNNER_POOL: ${{ inputs.runner_pool }}
+        run: |
+          extra=""
+          test -n "${EXTRACT_WHL:-}" && extra="--extract-pkg $EXTRACT_WHL"
+          # The osx-x64 leg cross-builds on the Apple Silicon Mac: on the
+          # self pool its smoke runs under Rosetta on the runner's x64
+          # tools; every other leg runs its smoke as built.
+          rosetta=()
+          if [[ "${{ matrix.platform }}" == "osx-x64" && "$RUNNER_POOL" == "self" ]]; then
+            rosetta=(bash scripts/release/rosetta_x64.sh)
+          fi
+          # shellcheck disable=SC2086
+          "${rosetta[@]}" bash scripts/release/consumer_smokes/smoke_python.sh --artifact "$WHEEL" \
+            --version "$VERSION" --platform "${{ matrix.platform }}" $extra
+
+      - name: Smoke node
+        if: matrix.musl != true
+        env:
+          VERSION: ${{ inputs.version }}
+          RUNNER_POOL: ${{ inputs.runner_pool }}
+        run: |
+          extra=""
+          test -n "${EXTRACT_TGZ:-}" && extra="--extract-tgz $EXTRACT_TGZ"
+          # The osx-x64 leg cross-builds on the Apple Silicon Mac: on the
+          # self pool its smoke runs under Rosetta on the runner's x64
+          # tools; every other leg runs its smoke as built.
+          rosetta=()
+          if [[ "${{ matrix.platform }}" == "osx-x64" && "$RUNNER_POOL" == "self" ]]; then
+            rosetta=(bash scripts/release/rosetta_x64.sh)
+          fi
+          # shellcheck disable=SC2086
+          "${rosetta[@]}" bash scripts/release/consumer_smokes/smoke_node.sh --artifact "$NODE_TGZ" \
+            --platform-pkg "$NODE_PLAT_TGZ" --version "$VERSION" \
+            --platform "${{ matrix.platform }}" $extra
+
+      - name: Smoke java
+        if: matrix.musl != true
+        env:
+          VERSION: ${{ inputs.version }}
+          RUNNER_POOL: ${{ inputs.runner_pool }}
+        run: |
+          # The osx-x64 leg cross-builds on the Apple Silicon Mac: on the
+          # self pool its smoke runs under Rosetta on the runner's x64
+          # tools; every other leg runs its smoke as built.
+          rosetta=()
+          if [[ "${{ matrix.platform }}" == "osx-x64" && "$RUNNER_POOL" == "self" ]]; then
+            rosetta=(bash scripts/release/rosetta_x64.sh)
+          fi
+          "${rosetta[@]}" bash scripts/release/consumer_smokes/smoke_java.sh --artifact "$JAR" \
+            --version "$VERSION" --platform "${{ matrix.platform }}"
+
+      - name: Smoke dotnet
+        if: matrix.musl != true
+        env:
+          VERSION: ${{ inputs.version }}
+          RUNNER_POOL: ${{ inputs.runner_pool }}
+        run: |
+          # The osx-x64 leg cross-builds on the Apple Silicon Mac: on the
+          # self pool its smoke runs under Rosetta on the runner's x64
+          # tools; every other leg runs its smoke as built.
+          rosetta=()
+          if [[ "${{ matrix.platform }}" == "osx-x64" && "$RUNNER_POOL" == "self" ]]; then
+            rosetta=(bash scripts/release/rosetta_x64.sh)
+          fi
+          "${rosetta[@]}" bash scripts/release/consumer_smokes/smoke_dotnet.sh --artifact "$NUPKG" \
+            --version "$VERSION" --platform "${{ matrix.platform }}"
+
+      - name: Smoke capi
+        if: matrix.musl != true
+        env:
+          VERSION: ${{ inputs.version }}
+          RUNNER_POOL: ${{ inputs.runner_pool }}
+        run: |
+          # The osx-x64 dylib cannot link into a native arm64 test program:
+          # on the self pool, compile and run the C smoke under Rosetta,
+          # where the system cc targets x86_64.
+          rosetta=()
+          if [[ "${{ matrix.platform }}" == "osx-x64" && "$RUNNER_POOL" == "self" ]]; then
+            rosetta=(bash scripts/release/rosetta_x64.sh)
+          fi
+          "${rosetta[@]}" bash scripts/release/consumer_smokes/smoke_capi.sh --artifact "$CAPI_TGZ" \
+            --version "$VERSION" --platform "${{ matrix.platform }}"
+
+      - name: Smoke cli
+        if: matrix.musl != true
+        env:
+          VERSION: ${{ inputs.version }}
+          RUNNER_POOL: ${{ inputs.runner_pool }}
+        run: |
+          # The osx-x64 leg cross-builds on the Apple Silicon Mac: on the
+          # self pool its smoke runs under Rosetta, or the smoke sees an
+          # arm64 host and refuses --platform osx-x64.
+          rosetta=()
+          if [[ "${{ matrix.platform }}" == "osx-x64" && "$RUNNER_POOL" == "self" ]]; then
+            rosetta=(bash scripts/release/rosetta_x64.sh)
+          fi
+          "${rosetta[@]}" bash scripts/release/consumer_smokes/smoke_cli.sh --artifact "$CLI_ARCH" \
+            --version "$VERSION" --platform "${{ matrix.platform }}"
+
+      # The ort variant, on the self pool only: each leg downloads the
+      # models-v1 assets from the public release over anonymous HTTPS (no
+      # artefact, no secret), verifies every byte against the tree pins,
+      # and stages models-v1/ for the channel steps' file:// install. The
+      # musl legs never reach here (no musl ORT library is published).
+      # While the T1 install surface is absent the smoke fails naming the
+      # T1 job -- never a silent skip.
+      - name: Download models-v1 from the public release
+        if: inputs.runner_pool == 'self' && matrix.musl != true
+        run: |
+          set -euo pipefail
+          # Resolved, not bare: Windows ships `python`, not `python3`.
+          PY="$(command -v python3 || command -v python)"
+          "$PY" scripts/release/fetch_models_release.py --out models-v1 --all
+
+      - name: Smoke the ort variant (CLI)
+        if: inputs.runner_pool == 'self' && matrix.musl != true
+        env:
+          VERSION: ${{ inputs.version }}
+          RUNNER_POOL: ${{ inputs.runner_pool }}
+        run: |
+          # The osx-x64 leg cross-builds on the Apple Silicon Mac: on the
+          # self pool its smoke runs under Rosetta on the runner's x64
+          # tools; every other leg runs its smoke as built.
+          rosetta=()
+          if [[ "${{ matrix.platform }}" == "osx-x64" && "$RUNNER_POOL" == "self" ]]; then
+            rosetta=(bash scripts/release/rosetta_x64.sh)
+          fi
+          "${rosetta[@]}" bash scripts/release/consumer_smokes/smoke_ort_variant.sh --channel cli \
+            --artifact "$CLI_ARCH" --models models-v1 \
+            --version "$VERSION" --platform "${{ matrix.platform }}"
+
+      - name: Smoke the ort variant (python)
+        if: inputs.runner_pool == 'self' && matrix.musl != true
+        env:
+          VERSION: ${{ inputs.version }}
+          RUNNER_POOL: ${{ inputs.runner_pool }}
+        run: |
+          # The osx-x64 leg cross-builds on the Apple Silicon Mac: on the
+          # self pool its smoke runs under Rosetta on the runner's x64
+          # tools; every other leg runs its smoke as built.
+          rosetta=()
+          if [[ "${{ matrix.platform }}" == "osx-x64" && "$RUNNER_POOL" == "self" ]]; then
+            rosetta=(bash scripts/release/rosetta_x64.sh)
+          fi
+          "${rosetta[@]}" bash scripts/release/consumer_smokes/smoke_ort_variant.sh --channel python \
+            --artifact "$WHEEL" --cli-artifact "$CLI_ARCH" --models models-v1 \
+            --version "$VERSION" --platform "${{ matrix.platform }}"
+
+      - name: Smoke the ort variant (node)
+        if: inputs.runner_pool == 'self' && matrix.musl != true
+        env:
+          VERSION: ${{ inputs.version }}
+          RUNNER_POOL: ${{ inputs.runner_pool }}
+        run: |
+          # The osx-x64 leg cross-builds on the Apple Silicon Mac: on the
+          # self pool its smoke runs under Rosetta on the runner's x64
+          # tools; every other leg runs its smoke as built.
+          rosetta=()
+          if [[ "${{ matrix.platform }}" == "osx-x64" && "$RUNNER_POOL" == "self" ]]; then
+            rosetta=(bash scripts/release/rosetta_x64.sh)
+          fi
+          "${rosetta[@]}" bash scripts/release/consumer_smokes/smoke_ort_variant.sh --channel node \
+            --artifact "$NODE_TGZ" --platform-pkg "$NODE_PLAT_TGZ" \
+            --cli-artifact "$CLI_ARCH" --models models-v1 \
+            --version "$VERSION" --platform "${{ matrix.platform }}"
+
+      # musl legs: the same six smokes, inside Alpine. Artefacts are
+      # prepared on the host (above); the container only holds the
+      # toolchains and the runs, so the musl natives are exercised on
+      # musl libc rather than on the host's glibc.
+      - name: Smoke all six channels in Alpine
+        if: matrix.musl == true
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w \
+            -e PDFLUENT_RELEASE_LANE=1 \
+            -e PLATFORM="${{ matrix.platform }}" -e VERSION="$VERSION" \
+            -e WHEEL="$WHEEL" -e NODE_TGZ="$NODE_TGZ" -e NODE_PLAT_TGZ="$NODE_PLAT_TGZ" \
+            -e JAR="$JAR" -e NUPKG="$NUPKG" -e CAPI_TGZ="$CAPI_TGZ" -e CLI_ARCH="$CLI_ARCH" \
+            alpine:3.22 sh -c '
+              set -e
+              apk add --no-cache bash python3 py3-pip nodejs npm openjdk17 maven gcc musl-dev ca-certificates dotnet8-sdk
+              export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+              export PATH="$JAVA_HOME/bin:$PATH"
+              S=scripts/release/consumer_smokes
+              bash $S/smoke_python.sh --artifact "$WHEEL" --version "$VERSION" --platform "$PLATFORM"
+              bash $S/smoke_node.sh --artifact "$NODE_TGZ" --platform-pkg "$NODE_PLAT_TGZ" --version "$VERSION" --platform "$PLATFORM"
+              bash $S/smoke_java.sh --artifact "$JAR" --version "$VERSION" --platform "$PLATFORM"
+              bash $S/smoke_dotnet.sh --artifact "$NUPKG" --version "$VERSION" --platform "$PLATFORM"
+              bash $S/smoke_capi.sh --artifact "$CAPI_TGZ" --version "$VERSION" --platform "$PLATFORM"
+              bash $S/smoke_cli.sh --artifact "$CLI_ARCH" --version "$VERSION" --platform "$PLATFORM"
+            '
+
+      # Red when this leg's artefacts were missing: the resolve step above
+      # already failed on them, so this is the verdict made explicit.
+      - name: Fail if this leg was skipped
+        if: ${{ !cancelled() }}
+        run: |
+          if [[ -s .missing-legs ]]; then
+            echo "SKIPPED leg ${{ matrix.platform }}: build failed"
+            exit 1
+          fi
+          echo "leg ${{ matrix.platform }}: validated"

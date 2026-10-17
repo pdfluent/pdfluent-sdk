@@ -16,6 +16,9 @@ try {
   PdfDocument = null;
 }
 
+if (!PdfDocument) {
+  process.stderr.write('SKIPPED (not a pass): native addon not built — multi-select behaviour not checked\n');
+}
 const d = PdfDocument ? describe : describe.skip;
 
 d('AcroForm multi-select list box', () => {

@@ -1,0 +1,51 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH PDFLUENT-COMPRESS 1  "pdfluent 1.1.0" PDFluent
+.SH NAME
+pdfluent\-compress \- Reduce file size
+.SH SYNOPSIS
+\fBpdfluent compress\fR [\fB\-\-json\fR] <\fB\-o\fR|\fB\-\-out\fR> [\fB\-\-level\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-force\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIINPUT\fR> 
+.SH DESCRIPTION
+Reduce file size
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Machine\-readable JSON envelope on stdout
+.TP
+\fB\-o\fR, \fB\-\-out\fR \fI<OUT>\fR
+Output PDF, or `\-` for stdout
+.TP
+\fB\-\-level\fR \fI<LEVEL>\fR [default: strict]
+Compression preset
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+strict: Full stack, no lossy passes
+.IP \(bu 2
+lossy: Everything strict enables, plus future lossy passes
+.IP \(bu 2
+archival: Maximally safe: keeps unused objects incremental updates may need
+.RE
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Quiet: human mode prints data only (no warnings or progress notes)
+.TP
+\fB\-\-force\fR
+Overwrite the existing output file
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose stderr diagnostics (repeat for more)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+<\fIINPUT\fR>
+Input PDF, or `\-` for stdin
+.SH VERSION
+v1.1.0

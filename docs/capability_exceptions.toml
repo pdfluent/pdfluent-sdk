@@ -21,6 +21,7 @@
 
 [unreachable_crates]
 # Published, and absent from the facade dependency graph entirely.
+"epub-extract" = "Deliberate MVP split. New extraction crate, tested and published, but the facade has no EPUB entry point yet; wiring one in is a follow-up, not this change. Nothing advertises EPUB extraction, so nothing implies it ships."
 "pdf-ocr" = "Deliberate. Wiring it in would make every pdfluent user carry an OCR stack: Tesseract needs C system libraries, and PaddleOCR needs ONNX Runtime plus model weights. Opting in is the customer's decision. See crates/pdf-ocr/README.md."
 "pdf-invoice" = "Roadmap: wiring job, size S. Implements ZUGFeRD/Factur-X/XRechnung embedding AND validation; the facade simply does not depend on it. Nothing to build, only to expose and test."
 "pdf-text-format" = "Engine-internal text formatting, consumed by pdf-manip and the XFA layout engine rather than by callers. Published because the workspace publishes everything it builds; not intended as customer API."

@@ -279,10 +279,43 @@ Signing helpers:
 
 `PadesProfile` maps to the common PAdES levels:
 
-- `BasicSignature` = PAdES B-B
-- `Timestamped` = PAdES B-T
-- `LongTerm` = PAdES B-LT and is the current default
-- `LongTermArchive` = PAdES B-LTA
+- `BasicSignature` = PAdES B-B, and the default
+- `Timestamped` = PAdES B-T, signed through `PdfDocument::sign_timestamped`
+- `LongTerm` = PAdES B-LT, signed through `PdfDocument::sign_timestamped`, and
+  it needs revocation evidence via `SignOptions::revocation_data`
+- `LongTermArchive` = PAdES B-LTA, **not implemented** and returns an error
+
+B-T and B-LT need a DER-encoded RFC 3161 timestamp token from your own
+timestamp authority. Fetching one is an HTTP request, and the engine has no
+HTTP client of its own, so the request stays yours — but a timestamp covers a
+*signature*, so it can only be asked for once the signature exists.
+`sign_timestamped` puts the two steps in that order and gives your callback the
+bytes to have stamped:
+
+```rust,ignore
+doc.sign_timestamped(
+    &signer,
+    SignOptions::new()
+        .profile(PadesProfile::LongTerm)
+        .revocation_data(ocsp_responses, crls),
+    |signature| my_tsa_client(signature),
+)?;
+```
+
+B-LT is the profile a verifier can still check years later offline, and that
+takes more than the certificate chain: it takes the evidence those certificates
+were not revoked. Fetching it is yours, for the same reason fetching the token
+is. Without any of it, `LongTerm` is refused rather than written — a DSS
+holding certificates and nothing else says who signed, not that they were
+allowed to.
+
+Asking for B-T or B-LT without a token is an error rather than a quiet
+fallback to B-B, and so is a token whose message imprint covers anything other
+than the signature in the document.
+
+`SignOptions::timestamp_token` still accepts a token you already hold, for a
+token carried in from elsewhere that genuinely stamps this signature. A token
+obtained before signing is not one of those and is refused.
 
 ```rust,no_run
 use pdfluent::prelude::*;

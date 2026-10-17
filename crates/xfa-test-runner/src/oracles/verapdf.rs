@@ -143,6 +143,47 @@ impl VeraPdfOracle {
         Ok(result)
     }
 
+    /// Validate a PDF against one named PDF/A flavour (`1b`, `2b`, `2u`, `3b`,
+    /// `3u`), instead of letting veraPDF pick the flavour from the file's own
+    /// XMP.
+    ///
+    /// [`Self::validate`] passes `--flavour 0`, which reads the claim the
+    /// document makes about itself. That is the right question for a document
+    /// found in the wild and the wrong one for output we produced on request:
+    /// a converter that writes `part 2` into the XMP while it was asked for
+    /// part 1 would be graded against its own mistake and pass. So the flavour
+    /// the caller asked for is the flavour veraPDF is told to apply.
+    ///
+    /// The cache key carries the flavour for the same reason the PDF/UA and
+    /// PDF/X paths have their own: the same bytes get a different verdict per
+    /// flavour, and one key would serve the first verdict to every later
+    /// question.
+    pub fn validate_pdfa_flavour(
+        &self,
+        pdf_path: &Path,
+        pdf_hash: &str,
+        flavour: &str,
+    ) -> Result<VeraPdfResult, String> {
+        let cache_key = format!("verapdf-{flavour}");
+
+        if let Some(db) = &self.db {
+            if let Some(cached) = db.get_oracle_cache(&cache_key, pdf_hash) {
+                return serde_json::from_str(&cached)
+                    .map_err(|e| format!("cache deserialize error: {e}"));
+            }
+        }
+
+        let result = self.run_verapdf_flavour(flavour, pdf_path)?;
+
+        if let Some(db) = &self.db {
+            if let Ok(json) = serde_json::to_string(&result) {
+                let _ = db.set_oracle_cache(&cache_key, pdf_hash, &json);
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Validate a PDF against PDF/UA-1 using veraPDF `--flavour ua1`.
     ///
     /// Uses a separate cache key (`"verapdf-ua1"`) so results don't collide

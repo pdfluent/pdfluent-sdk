@@ -29,6 +29,9 @@ pub struct ColorSpaceReport {
     pub overprint_mode_fixed: usize,
     /// Number of ICCBased /N values corrected (rule 6.2.4.2:1).
     pub icc_n_fixed: usize,
+    /// Which device colour families the document was found to reach, and so
+    /// which Default* profiles it was given.
+    pub device_color_use: DeviceColorUse,
 }
 
 /// Detect device-dependent color spaces used in page resources.
@@ -196,9 +199,543 @@ pub fn add_srgb_output_intent(doc: &mut Document) -> Result<()> {
     Ok(())
 }
 
-/// Normalize color spaces: add appropriate OutputIntent if missing.
-/// Uses CMYK OutputIntent if DeviceCMYK is used, sRGB otherwise.
+fn only_calrgb_registration_colors(doc: &Document) -> bool {
+    fn visit(doc: &Document, obj: &Object, calrgb: &mut bool, other: &mut bool) {
+        match obj {
+            Object::Array(a) => {
+                if a.len() >= 4
+                    && a[0].as_name().ok() == Some(b"Separation")
+                    && a[1].as_name().ok() == Some(b"All")
+                {
+                    let calibrated_rgb = doc
+                        .dereference(&a[2])
+                        .ok()
+                        .and_then(|(_, o)| o.as_array().ok())
+                        .and_then(|a| a.first())
+                        .and_then(|o| o.as_name().ok())
+                        == Some(b"CalRGB");
+                    *calrgb |= calibrated_rgb;
+                    *other |= !calibrated_rgb;
+                }
+                for o in a {
+                    visit(doc, o, calrgb, other);
+                }
+            }
+            Object::Dictionary(d) => {
+                for (_, o) in d.iter() {
+                    visit(doc, o, calrgb, other);
+                }
+            }
+            Object::Stream(s) => {
+                for (_, o) in s.dict.iter() {
+                    visit(doc, o, calrgb, other);
+                }
+            }
+            _ => {}
+        }
+    }
+    let (mut calrgb, mut other) = (false, false);
+    for obj in doc.objects.values() {
+        visit(doc, obj, &mut calrgb, &mut other);
+    }
+    // Removing the output condition from CMYK registration content can darken
+    // ordinary process text. Only the demonstrated CalRGB case is eligible;
+    // mixed and unresolved alternates keep the established output profile.
+    calrgb && !other
+}
+
+fn needs_explicit_output_device(doc: &Document) -> bool {
+    // A conservative census: uncertain transparency/inline image context
+    // keeps the existing archival output profile rather than claiming it is
+    // redundant. Pixel samples are never rewritten to make a metric pass.
+    for obj in doc.objects.values() {
+        let d = match obj {
+            Object::Dictionary(d) => d,
+            Object::Stream(s) => &s.dict,
+            _ => continue,
+        };
+        if d.has(b"SMask") || d.has(b"BM") || d.has(b"ca") || d.has(b"CA") || d.has(b"Group") {
+            return true;
+        }
+        if let Object::Stream(s) = obj {
+            if s.dict.has(b"Length1")
+                || matches!(
+                    get_name(&s.dict, b"Subtype").as_deref(),
+                    Some("Image" | "Type1C" | "CIDFontType0C" | "OpenType")
+                )
+            {
+                continue;
+            }
+            if let Ok(bytes) = s.get_plain_content() {
+                // The lexical decoder distinguishes actual images from BI in
+                // strings. Declining a damaged stream keeps the safe baseline.
+                match crate::inline_image::decode_strict(&bytes) {
+                    Ok(content) if content.operations.iter().any(|o| o.operator == "BI") => {
+                        return true
+                    }
+                    Err(_) if bytes.windows(2).any(|w| w == b"BI") => return true,
+                    _ => {}
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Which device colour space families a document can reach.
+///
+/// One flag per family, and a flag means "this document can put a mark on a
+/// page in that device space, by any route" — not "a Default\* entry belongs in
+/// some particular resource dictionary". The two coincide for our purposes:
+/// the ICC profile behind `DefaultCMYK` is the same object
+/// [`fix_device_colorspaces_in_deep_structures`] substitutes into an image or
+/// shading dictionary, so one family flag decides both.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeviceColorUse {
+    /// DeviceGray, including the initial colour space of every content stream.
+    pub gray: bool,
+    /// DeviceRGB.
+    pub rgb: bool,
+    /// DeviceCMYK.
+    pub cmyk: bool,
+    /// A stream that would not decode was met, so every family is set whether
+    /// or not it was seen. Recorded separately because it is the difference
+    /// between "this document uses CMYK" and "this document could not be read".
+    pub undecodable_stream: bool,
+}
+
+impl DeviceColorUse {
+    fn everything() -> Self {
+        Self {
+            gray: true,
+            rgb: true,
+            cmyk: true,
+            undecodable_stream: false,
+        }
+    }
+
+    fn saturated(&self) -> bool {
+        self.gray && self.rgb && self.cmyk
+    }
+
+    /// Record a colour space name, in full or in the abbreviation an inline
+    /// image is allowed. Anything else -- a resource key, a calibrated or ICC
+    /// space -- is not a device colour space and is not one of these families.
+    fn note(&mut self, family: &[u8]) {
+        match family {
+            b"DeviceGray" | b"G" => self.gray = true,
+            b"DeviceRGB" | b"RGB" => self.rgb = true,
+            b"DeviceCMYK" | b"CMYK" => self.cmyk = true,
+            _ => {}
+        }
+    }
+}
+
+/// Every stream in the document is a content program unless it is demonstrably
+/// opaque payload.
+///
+/// By exclusion, deliberately. Enumerating the containers that hold a content
+/// stream — pages, Form XObjects, tiling patterns, Type3 glyph procedures,
+/// annotation appearances, soft-mask groups — is the census with a hole this
+/// module was warned about: a container nobody thought to list is a colour
+/// operator nobody counted, and the document that proves it is one we do not
+/// have. Getting the exclusions wrong costs bytes (a payload scanned as
+/// content produces false operators, which keeps a profile that was not
+/// needed); getting an inclusion wrong costs conformance.
+fn is_opaque_payload(stream: &Stream) -> bool {
+    let dict = &stream.dict;
+    // A font program: Length1/2/3 on Type1, or the FontFile3 subtypes.
+    if dict.has(b"Length1")
+        || matches!(
+            get_name(dict, b"Subtype").as_deref(),
+            Some("Image" | "Type1C" | "CIDFontType0C" | "OpenType")
+        )
+    {
+        return true;
+    }
+    if matches!(
+        get_name(dict, b"Type").as_deref(),
+        Some("Metadata" | "XRef" | "ObjStm" | "EmbeddedFile" | "CMap")
+    ) {
+        return true;
+    }
+    // An ICC profile stream (/N components), a sampled function, a shading
+    // mesh: binary, and each carries its colour space in its dictionary where
+    // the object walk below reads it.
+    if dict.has(b"N") || dict.has(b"FunctionType") || dict.has(b"ShadingType") {
+        return true;
+    }
+    // Image-shaped without saying so. A thumbnail is an image XObject whose
+    // /Type and /Subtype "shall be omitted" (PDF 32000-1 §12.3.4), so the
+    // subtype test above does not catch it and decoding it as content would
+    // report an undecodable stream on every document that has one.
+    if dict.has(b"Width") && dict.has(b"Height") {
+        return true;
+    }
+    // An image codec is never a content stream's filter.
+    if let Ok(filters) = stream.filters() {
+        if filters.iter().any(|f| {
+            matches!(
+                AsRef::<[u8]>::as_ref(f),
+                b"DCTDecode" | b"DCT" | b"JPXDecode" | b"CCITTFaxDecode" | b"CCF" | b"JBIG2Decode"
+            )
+        }) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Device colour space names anywhere in the object graph.
+///
+/// A device colour space is either a name in the object graph or an operator in
+/// a content stream; there is no third place. This half covers the first, which
+/// is every image /ColorSpace, shading /ColorSpace, transparency group /CS,
+/// Separation and DeviceN alternate, Indexed base, pattern colour space and
+/// resource /ColorSpace entry at once — including the ones reached through a
+/// reference to a bare name, because the referenced name is itself an object in
+/// this walk.
+///
+/// The single exclusion is `/Alternate` inside an ICC profile stream. That
+/// entry names what a reader would fall back to if it could not use the
+/// profile; the colour space in use is the ICCBased one. Counting it would mean
+/// every document carrying a CMYK ICC profile — and every output of ours, since
+/// the sRGB output intent's profile has `/Alternate /DeviceRGB` — pays for a
+/// Default\* it never uses.
+fn note_colorspace_names(obj: &Object, in_icc_profile: bool, seen: &mut DeviceColorUse) {
+    match obj {
+        Object::Name(name) => {
+            // Inline-image abbreviations are only legal inside a BI dictionary,
+            // which is handled by the content scan; a bare /G in the object
+            // graph is a resource key, not a colour space.
+            if matches!(
+                name.as_slice(),
+                b"DeviceGray" | b"DeviceRGB" | b"DeviceCMYK"
+            ) {
+                seen.note(name);
+            }
+        }
+        Object::Array(items) => {
+            for item in items {
+                note_colorspace_names(item, false, seen);
+            }
+        }
+        Object::Dictionary(dict) => {
+            for (key, value) in dict.iter() {
+                if in_icc_profile && key == b"Alternate" {
+                    continue;
+                }
+                note_colorspace_names(value, false, seen);
+            }
+        }
+        Object::Stream(stream) => {
+            let is_icc = stream.dict.has(b"N") && !stream.dict.has(b"Width");
+            for (key, value) in stream.dict.iter() {
+                if is_icc && key == b"Alternate" {
+                    continue;
+                }
+                note_colorspace_names(value, false, seen);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Device colour operators read from bytes rather than tokens, for a content
+/// stream the strict parser refused.
+///
+/// Refusal is common and mostly means the producer wrote something the parser
+/// will not sign off on, not that the stream is unreadable: on the 300-document
+/// tuning set `decode_strict` refuses 8,040 streams across 238 of the 300
+/// documents. Counting all of those as "uses every device space" is a census
+/// that has given up -- it was worth 7 of the 4.9 MB this round is about,
+/// because 247 of 300 documents kept a CMYK profile on the strength of a
+/// parser complaint.
+///
+/// So the bytes are read instead. The discipline is the operand count, exactly
+/// as in the token scan: a whitespace-then-`k` byte pair occurs constantly in
+/// arbitrary data -- including the inline-image payloads that are still inline
+/// here, since the stream did not parse -- and four numbers in front of it do
+/// not. What survives of the conservative rule is the direction of the error:
+/// this over-counts on binary noise, which costs bytes, and it takes a
+/// deliberately strange encoding of an operator to make it under-count.
+fn note_content_bytes(content: &[u8], seen: &mut DeviceColorUse) {
+    // Whatever this stream is, it is a content stream with bytes in it, so it
+    // paints; and a content stream starts in DeviceGray.
+    seen.gray = true;
+
+    for (operator, operands) in [
+        (b"k".as_slice(), 4usize),
+        (b"K".as_slice(), 4),
+        (b"rg".as_slice(), 3),
+        (b"RG".as_slice(), 3),
+        (b"g".as_slice(), 1),
+        (b"G".as_slice(), 1),
+    ] {
+        if operator_with_operands(content, operator, operands) {
+            seen.note(match operator {
+                b"k" | b"K" => b"DeviceCMYK",
+                b"rg" | b"RG" => b"DeviceRGB",
+                _ => b"DeviceGray",
+            });
+        }
+    }
+
+    // Colour space names, including the inline-image abbreviations, which are
+    // only meaningful inside a BI dictionary but cost nothing to over-count.
+    for name in [
+        b"/DeviceCMYK".as_slice(),
+        b"/DeviceRGB",
+        b"/DeviceGray",
+        b"/CMYK",
+        b"/RGB",
+    ] {
+        if content.windows(name.len()).any(|w| w == name) {
+            seen.note(&name[1..]);
+        }
+    }
+}
+
+/// Whether `content` contains `operator` as a token with `operands` numeric
+/// operands in front of it.
+fn operator_with_operands(content: &[u8], operator: &[u8], operands: usize) -> bool {
+    let is_space = |b: u8| matches!(b, b' ' | b'\t' | b'\r' | b'\n' | 0x0c | 0);
+    let is_number = |b: u8| b.is_ascii_digit() || b == b'.' || b == b'-' || b == b'+';
+
+    for start in 0..content.len().saturating_sub(operator.len() - 1) {
+        if &content[start..start + operator.len()] != operator {
+            continue;
+        }
+        if start == 0 || !is_space(content[start - 1]) {
+            continue;
+        }
+        let after = content.get(start + operator.len());
+        let ends = match after {
+            None => true,
+            Some(&b) => is_space(b) || matches!(b, b'/' | b'[' | b']' | b'<' | b'>' | b'(' | b')'),
+        };
+        if !ends {
+            continue;
+        }
+        let mut at = start;
+        let mut found = 0;
+        while found < operands {
+            while at > 0 && is_space(content[at - 1]) {
+                at -= 1;
+            }
+            let end = at;
+            while at > 0 && is_number(content[at - 1]) {
+                at -= 1;
+            }
+            if at == end {
+                break;
+            }
+            found += 1;
+        }
+        if found == operands {
+            return true;
+        }
+    }
+    false
+}
+
+/// Device colour operators in one decoded content program.
+fn note_content_operators(operations: &[lopdf::content::Operation], seen: &mut DeviceColorUse) {
+    // The last `count` operands, numeric. Trailing rather than exact because
+    // the content lexer ends an operator token at the first digit, so the `1`
+    // of a Type3 glyph's `d1` arrives as an operand of the operator after it:
+    // `10 0 0 0 10 10 d1 / 0 0 0 1 k` parses as `d [10 0 0 0 10 10]` followed
+    // by `k [1 0 0 0 1]`. Requiring exactly four operands there misses the
+    // CMYK fill in every Type3 glyph procedure in existence.
+    let numeric = |operands: &[Object], count: usize| {
+        operands.len() >= count
+            && operands[operands.len() - count..]
+                .iter()
+                .all(|o| o.as_float().is_ok())
+    };
+    for op in operations {
+        match op.operator.as_str() {
+            // The operand count is the operator. `k` with three numbers in
+            // front of it is not setcmykcolor, and a whitespace-then-`k` byte
+            // pair occurs constantly in arbitrary data (govdocs 104_104177 is
+            // the document that taught this module the difference).
+            "g" | "G" if numeric(&op.operands, 1) => seen.gray = true,
+            "rg" | "RG" if numeric(&op.operands, 3) => seen.rgb = true,
+            "k" | "K" if numeric(&op.operands, 4) => seen.cmyk = true,
+            "cs" | "CS" => {
+                if let Some(Ok(name)) = op.operands.first().map(Object::as_name) {
+                    seen.note(name);
+                }
+            }
+            // An inline image carries its colour space in a dictionary that is
+            // not an object in the document, so the object walk never sees it.
+            "BI" => {
+                if let Some(Ok(image)) = op.operands.first().map(Object::as_stream) {
+                    for key in [b"CS".as_slice(), b"ColorSpace"] {
+                        match image.dict.get(key) {
+                            Ok(Object::Name(name)) => seen.note(name),
+                            Ok(other) => note_colorspace_names(other, false, seen),
+                            Err(_) => {}
+                        }
+                    }
+                }
+            }
+            // Everything a content stream can paint. The initial colour space
+            // of a content stream is DeviceGray (PDF 32000-1 §8.6.8), so a mark
+            // made before any colour operator is a DeviceGray mark. Deciding
+            // per mark whether a colour was selected first needs a full
+            // graphics-state interpreter across q/Q, form invocation and
+            // pattern nesting; getting that wrong costs conformance to save the
+            // 126 bytes a DefaultGray profile occupies.
+            "S" | "s" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "Tj" | "TJ" | "'" | "\"" => {
+                seen.gray = true
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Which device colour spaces this document can actually reach.
+///
+/// Complete over the two places a device colour space can be named — the object
+/// graph and a content program — with three conservative rules where certainty
+/// is not available:
+///
+///  * a stream whose bytes cannot be recovered at all -- a filter that fails --
+///    counts as using all three, because a census that skips what it cannot
+///    read is a census with a hole in it. A stream whose bytes are there but
+///    whose syntax the strict parser refuses is read as bytes instead, with
+///    the same operand-count discipline;
+///  * anything not demonstrably opaque payload is read as a content program,
+///    so an unrecognised container is scanned rather than skipped;
+///  * any painting or text-showing operator counts as DeviceGray, because that
+///    is the colour space a content stream starts in.
+///
+/// Being wrong in the conservative direction embeds a profile that was not
+/// needed and costs bytes. Being wrong in the other direction is a conformance
+/// regression on a document we do not have, which is why this is the shape it
+/// is.
+pub fn census_device_colors(doc: &Document) -> DeviceColorUse {
+    let mut seen = DeviceColorUse::default();
+
+    for obj in doc.objects.values() {
+        note_colorspace_names(obj, false, &mut seen);
+    }
+
+    for obj in doc.objects.values() {
+        if seen.saturated() {
+            break;
+        }
+        let Object::Stream(stream) = obj else {
+            continue;
+        };
+        if is_opaque_payload(stream) {
+            continue;
+        }
+        // Undecodable: it may set any colour, and nothing here can say it does
+        // not. A filter that fails is not an error here -- the decoder warns
+        // and hands back nothing rather than refusing, so a filtered stream
+        // that decodes to nothing is the shape a broken filter arrives in.
+        let bytes = match stream.get_plain_content() {
+            Ok(bytes) if !bytes.is_empty() || stream.content.is_empty() => bytes,
+            _ => {
+                let mut all = DeviceColorUse::everything();
+                all.undecodable_stream = true;
+                return all;
+            }
+        };
+        match crate::inline_image::decode_strict(&bytes) {
+            Ok(content) => note_content_operators(&content.operations, &mut seen),
+            // Not "unreadable": the bytes are here, the parser declined them.
+            // Read them.
+            Err(_) => note_content_bytes(&bytes, &mut seen),
+        }
+    }
+
+    seen
+}
+
+/// Load every object the cross-reference table names.
+///
+/// `doc.objects` holds what has been parsed so far; objects inside object
+/// streams may not be there yet. A census over the parsed half is a census with
+/// a hole, so this runs before one.
+///
+/// Iterate the xref entries, never `1..=trailer /Size`: a crafted file can set
+/// /Size to `u32::MAX` and turn that range into four billion lookups
+/// (PDFA-CS-DOS-01).
+fn materialize_all_objects(doc: &mut Document) {
+    let numbers: Vec<u32> = doc.reference_table.entries.keys().copied().collect();
+    for number in numbers {
+        let id = (number, 0);
+        if doc.objects.contains_key(&id) {
+            continue;
+        }
+        if let Some(obj) = doc.get_object(id).ok().cloned() {
+            doc.objects.insert(id, obj);
+        }
+    }
+}
+
+/// Give every content-bearing stream a Resources dictionary of its own.
+///
+/// ISO 19005-2 6.2.2:2 -- "a content stream that references other objects ...
+/// shall have an explicitly associated Resources dictionary" -- and veraPDF
+/// enforces it by name: a Form XObject with no `/Resources` inherits the
+/// page's, and resolving a name through that inheritance is the failure.
+///
+/// This used to happen by accident. Adding Default\* to every form, pattern and
+/// appearance stream created the dictionary on the way past, for any of them
+/// that had none, and 6.2.2:2 was satisfied by a colour pass that was not
+/// thinking about it. Making the profiles conditional took that away, and
+/// `PDFBOX-4372-...-p4_reduced.pdf` in the gate corpus went from conformant to
+/// not: one nested form, no Resources of its own, one `/Fm0` resolved through
+/// the page.
+///
+/// So it is done deliberately now, on the same containers and with the same
+/// result. What it does not do is copy the inherited resources in, so a name
+/// that only resolved through inheritance still does not resolve -- exactly as
+/// before this was written down. That is the better fix and it is a different
+/// one: it changes what a reader draws, and it needs the render axis to say so.
+fn ensure_explicit_resources(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            let Object::Stream(stream) = obj else {
+                return None;
+            };
+            let is_container = get_name(&stream.dict, b"Subtype").as_deref() == Some("Form")
+                || stream.dict.has(b"PatternType");
+            // `has` is not the question. The document that found this carries
+            // `/Resources null`, which is a key with nothing behind it: the old
+            // colour pass read it, got no dictionary, and wrote a fresh one.
+            let explicit = match stream.dict.get(b"Resources") {
+                Ok(Object::Dictionary(_)) => true,
+                Ok(Object::Reference(id)) => {
+                    matches!(doc.objects.get(id), Some(Object::Dictionary(_)))
+                }
+                _ => false,
+            };
+            (is_container && !explicit).then_some(*id)
+        })
+        .collect();
+
+    for id in ids {
+        if let Some(Object::Stream(stream)) = doc.objects.get_mut(&id) {
+            stream
+                .dict
+                .set("Resources", Object::Dictionary(lopdf::Dictionary::new()));
+        }
+    }
+}
+
+/// Characterize device colors through Default* profiles and preserve supplied output intents.
 pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
+    // Before anything is counted or added: an object still inside an object
+    // stream is an object the census cannot see.
+    materialize_all_objects(doc);
+    let census = census_device_colors(doc);
     let had_output_intent = has_pdfa_output_intent(doc);
     let device_cs = find_device_colorspaces(doc);
     let pages_scanned = count_pages(doc);
@@ -213,24 +750,39 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
             .collect()
     };
 
-    // One archival output condition is sufficient. Device spaces are
-    // characterized by the Default* profiles below. The compact CMYK profile
-    // is an input characterization (scnr), not a valid PDF/A output profile.
-    // Preserve any existing output condition and otherwise use sRGB (mntr).
-    let output_intent_added = if !had_output_intent {
+    // Registration colours have special process-device semantics. Inventing
+    // an RGB output device can turn /Separation /All tint 0 (paper) black in
+    // readers. Fully characterized opaque content needs no output intent.
+    // Retain the existing output-device policy for transparency and inline
+    // images until their independent blending/resource context is established.
+    let registration = only_calrgb_registration_colors(doc);
+    let needs_output_device = registration && needs_explicit_output_device(doc);
+    let output_intent_added = if !had_output_intent && (!registration || needs_output_device) {
         add_srgb_output_intent(doc)?;
         true
     } else {
         false
     };
 
-    // Always add Default{CMYK,RGB,Gray} to all pages — even if we don't detect
-    // usage, device color spaces may appear in compressed streams or inline images.
-    // These Default* entries are harmless on pages that don't use the color space.
-    // DefaultGray satisfies 6.2.4.3:4 regardless of OutputIntent presence.
-    let cmyk_cs_id = add_default_cmyk_colorspace(doc);
-    let rgb_cs_id = add_default_rgb_colorspace(doc);
-    add_default_gray_colorspace(doc);
+    // Add Default{CMYK,RGB,Gray} where the document can reach that device
+    // space, and nowhere else. Adding all three unconditionally was the safe
+    // reading of "device color spaces may appear in compressed streams or
+    // inline images", and it cost 16,333 bytes in every output — 4,899,900
+    // over the 300-document tuning set, against a total overshoot of 5,400,759
+    // (benchmarks/pdfa/size/ROUND1.md). `census_device_colors` is what makes
+    // the condition safe: it reads the compressed streams and the inline
+    // images rather than assuming about them, and it counts a stream it cannot
+    // decode as using everything.
+    // Independent of the census, and it has to come first: what used to give
+    // these streams a Resources dictionary was the Default* pass walking past
+    // them.
+    ensure_explicit_resources(doc);
+
+    let cmyk_cs_id = census.cmyk.then(|| add_default_cmyk_colorspace(doc));
+    let rgb_cs_id = census.rgb.then(|| add_default_rgb_colorspace(doc));
+    if census.gray {
+        add_default_gray_colorspace(doc);
+    }
 
     // Replace DeviceCMYK/DeviceRGB references in deep structures (Shading, Group, Pattern)
     // that are not covered by Default* resource fallback.
@@ -256,6 +808,7 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
         separations_unified,
         overprint_mode_fixed,
         icc_n_fixed,
+        device_color_use: census,
     })
 }
 
@@ -277,68 +830,6 @@ fn has_device_rgb_in_streams(doc: &Document) -> bool {
             .windows(b"DeviceRGB".len())
             .any(|w| w == b"DeviceRGB")
     })
-}
-
-/// PostScript whitespace, as the content-stream lexer sees it.
-#[cfg(test)]
-fn is_cs_space(b: u8) -> bool {
-    matches!(b, b' ' | b'\t' | b'\r' | b'\n' | 0x0c | 0)
-}
-
-/// Whether the content stream actually sets a CMYK colour, i.e. contains a
-/// `k`/`K` operator with its four operands.
-///
-/// The operand count is the whole point. Testing for a whitespace byte
-/// followed by `k` matches inside inline-image samples and text strings alike
-/// — arbitrary binary hits it constantly — and a false positive is not
-/// harmless here: it earns the document a CMYK OutputIntent, and because
-/// §6.2.3:2 makes every OutputIntent share one ICC object, that CMYK profile
-/// then owns the slot an RGB one needed (govdocs holdout 104_104177: no CMYK
-/// anywhere, 29 inline RGB images, and 58 §6.2.4.3:2 failures because the
-/// document had been given a CMYK output intent on the strength of a byte
-/// pair in image data).
-#[cfg(test)]
-fn has_cmyk_operator(content: &[u8]) -> bool {
-    let is_num = |b: u8| b.is_ascii_digit() || b == b'.' || b == b'-' || b == b'+';
-
-    for i in 0..content.len() {
-        if content[i] != b'k' && content[i] != b'K' {
-            continue;
-        }
-        if i == 0 || !is_cs_space(content[i - 1]) {
-            continue;
-        }
-        let after_ok = i + 1 >= content.len()
-            || is_cs_space(content[i + 1])
-            || matches!(
-                content[i + 1],
-                b'/' | b'[' | b']' | b'<' | b'>' | b'(' | b')'
-            );
-        if !after_ok {
-            continue;
-        }
-
-        // Four numeric operands must precede it, or this is not `setcmykcolor`.
-        let mut j = i;
-        let mut operands = 0;
-        while operands < 4 {
-            while j > 0 && is_cs_space(content[j - 1]) {
-                j -= 1;
-            }
-            let end = j;
-            while j > 0 && is_num(content[j - 1]) {
-                j -= 1;
-            }
-            if j == end {
-                break;
-            }
-            operands += 1;
-        }
-        if operands == 4 {
-            return true;
-        }
-    }
-    false
 }
 
 /// The same complete CMYK characterization already used by the renderer.
@@ -1220,14 +1711,18 @@ fn add_default_cs_to_annotation_appearances(doc: &mut Document, name: &[u8], cs_
 /// These deep structures are not covered by the Default* resource fallback mechanism.
 fn fix_device_colorspaces_in_deep_structures(
     doc: &mut Document,
-    cmyk_cs_id: ObjectId,
-    rgb_cs_id: ObjectId,
+    cmyk_cs_id: Option<ObjectId>,
+    rgb_cs_id: Option<ObjectId>,
 ) {
     // Helper: map a device colorspace name to its ICCBased replacement.
+    //
+    // `None` means the census found no use of that family, so there is nothing
+    // here to substitute: every name this function reads is a name in the
+    // object graph, and the census reads the same graph.
     let replacement = |cs_name: &str| -> Option<ObjectId> {
         match cs_name {
-            "DeviceCMYK" => Some(cmyk_cs_id),
-            "DeviceRGB" => Some(rgb_cs_id),
+            "DeviceCMYK" => cmyk_cs_id,
+            "DeviceRGB" => rgb_cs_id,
             _ => None,
         }
     };
@@ -1323,7 +1818,7 @@ fn fix_device_colorspaces_in_deep_structures(
 
                 // Group dicts on XObject streams: /Group << /CS /DeviceCMYK|DeviceRGB >>
                 let group_repl = if let Ok(Object::Dictionary(group)) = dict.get(b"Group") {
-                    get_name(group, b"CS").and_then(|n| replacement(&n))
+                    resolve_device_cs(group, b"CS", doc).and_then(|n| replacement(&n))
                 } else {
                     None
                 };
@@ -1385,7 +1880,7 @@ fn fix_device_colorspaces_in_deep_structures(
         };
         if let Some(gid) = group_ref_id {
             let repl = if let Some(Object::Dictionary(group)) = doc.objects.get(&gid) {
-                get_name(group, b"CS").and_then(|n| replacement(&n))
+                resolve_device_cs(group, b"CS", doc).and_then(|n| replacement(&n))
             } else {
                 None
             };
@@ -1566,12 +2061,16 @@ fn ensure_devicen_colorants(doc: &mut Document) {
 
 /// Fix DeviceN/NChannel colorspace arrays that reference DeviceCMYK or DeviceRGB
 /// as their alternate colorspace or Process/ColorSpace attribute.
-fn fix_devicen_process_colors(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_id: ObjectId) {
+fn fix_devicen_process_colors(
+    doc: &mut Document,
+    cmyk_cs_id: Option<ObjectId>,
+    rgb_cs_id: Option<ObjectId>,
+) {
     let replacement = |name: &[u8]| -> Option<ObjectId> {
         if name == b"DeviceCMYK" {
-            Some(cmyk_cs_id)
+            cmyk_cs_id
         } else if name == b"DeviceRGB" {
-            Some(rgb_cs_id)
+            rgb_cs_id
         } else {
             None
         }
@@ -1731,12 +2230,16 @@ fn fix_devicen_process_colors(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_i
 /// output intent) for Separation alternates. Also helps 6.2.4.4:2 by ensuring
 /// all occurrences of a Separation with the same name have an identical alternate
 /// object reference rather than a bare device colorspace name.
-fn fix_separation_device_alternates(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_id: ObjectId) {
+fn fix_separation_device_alternates(
+    doc: &mut Document,
+    cmyk_cs_id: Option<ObjectId>,
+    rgb_cs_id: Option<ObjectId>,
+) {
     let replacement = |name: &[u8]| -> Option<ObjectId> {
         if name == b"DeviceCMYK" {
-            Some(cmyk_cs_id)
+            cmyk_cs_id
         } else if name == b"DeviceRGB" {
-            Some(rgb_cs_id)
+            rgb_cs_id
         } else {
             None
         }
@@ -1786,24 +2289,9 @@ fn fix_separation_device_alternates(doc: &mut Document, cmyk_cs_id: ObjectId, rg
 fn normalize_separation_colorspaces(doc: &mut Document) -> usize {
     use std::collections::{HashMap, HashSet};
 
-    // Materialize lazily-loaded objects (including objects inside object streams)
-    // so Separation arrays referenced outside the currently loaded object set are
+    // Separation arrays referenced outside the currently loaded object set are
     // still considered for 6.2.4.4:2 consistency checks.
-    //
-    // Iterate over actual xref entry keys, NOT 1..=max_id. A crafted PDF can set
-    // trailer /Size to u32::MAX, which would cause ~4 billion HashMap lookups via the
-    // 1..=max_id range (PDFA-CS-DOS-01).
-    let xref_obj_nums: Vec<u32> = doc.reference_table.entries.keys().copied().collect();
-    for obj_num in xref_obj_nums {
-        let id = (obj_num, 0);
-        if doc.objects.contains_key(&id) {
-            continue;
-        }
-        let loaded = doc.get_object(id).ok().cloned();
-        if let Some(obj) = loaded {
-            doc.objects.insert(id, obj);
-        }
-    }
+    materialize_all_objects(doc);
 
     // Phase 1: Collect all Separation arrays across all objects.
     // A Separation array is: [/Separation name alternateCS tintTransform]
@@ -2322,9 +2810,9 @@ fn gray_icc_profile_bytes() -> Vec<u8> {
     // === wtpt (XYZType) — D50 ===
     p.extend_from_slice(b"XYZ ");
     p.extend_from_slice(&[0u8; 4]);
-    p.extend_from_slice(&0x0000F351_i32.to_be_bytes());
+    p.extend_from_slice(&0x0000F6D6_i32.to_be_bytes());
     p.extend_from_slice(&0x00010000_i32.to_be_bytes());
-    p.extend_from_slice(&0x000116CC_i32.to_be_bytes());
+    p.extend_from_slice(&0x0000D32D_i32.to_be_bytes());
     debug_assert_eq!(p.len(), 296);
 
     // === cprt ===
@@ -2476,12 +2964,77 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_adds_intent() {
+    fn normalization_characterizes_device_spaces_with_output_intent() {
         let mut doc = make_doc_with_device_rgb();
         let report = normalize_colorspaces(&mut doc).unwrap();
         assert!(!report.had_output_intent);
         assert!(report.output_intent_added);
         assert_eq!(report.pages_scanned, 1);
+    }
+
+    #[test]
+    fn opaque_registration_paper_keeps_its_tint_transform_without_rgb_output_device() {
+        let mut doc = make_doc_with_device_rgb();
+        let tint = doc.add_object(dictionary! {"FunctionType"=>2,"Domain"=>vec![0.into(),1.into()],"C0"=>vec![1.into(),1.into(),1.into()],"C1"=>vec![0.into(),0.into(),0.into()],"N"=>1});
+        let calrgb = doc.add_object(Object::Array(vec![
+            "CalRGB".into(),
+            dictionary! {"WhitePoint"=>vec![0.9505.into(),1.into(),1.089.into()]}.into(),
+        ]));
+        let separation = doc.add_object(Object::Array(vec![
+            Object::Name(b"Separation".to_vec()),
+            Object::Name(b"All".to_vec()),
+            calrgb.into(),
+            tint.into(),
+        ]));
+        let before = doc.objects[&tint].clone();
+        let report = normalize_colorspaces(&mut doc).unwrap();
+        assert!(!report.output_intent_added);
+        assert!(!has_pdfa_output_intent(&doc));
+        assert_eq!(doc.objects[&tint], before);
+        assert_eq!(
+            doc.get_object(separation).unwrap().as_array().unwrap()[1]
+                .as_name()
+                .unwrap(),
+            b"All"
+        );
+        // Transparency still needs an explicit blending/output condition.
+        doc.add_object(dictionary! {"Type"=>"ExtGState","ca"=>0.5});
+        assert!(normalize_colorspaces(&mut doc).unwrap().output_intent_added);
+    }
+
+    #[test]
+    fn cmyk_mixed_and_unresolved_registration_keep_the_output_condition() {
+        for alternate in ["DeviceCMYK", "DeviceRGB", "UnknownColorSpace"] {
+            let mut doc = make_doc_with_device_rgb();
+            let calrgb = doc.add_object(Object::Array(vec![
+                "CalRGB".into(),
+                dictionary! {"WhitePoint"=>vec![0.9505.into(),1.into(),1.089.into()]}.into(),
+            ]));
+            let tint = doc.add_object(
+                dictionary! {"FunctionType"=>2,"Domain"=>vec![0.into(),1.into()],"N"=>1},
+            );
+            doc.add_object(Object::Array(vec![
+                "Separation".into(),
+                "All".into(),
+                calrgb.into(),
+                tint.into(),
+            ]));
+            doc.add_object(Object::Array(vec![
+                "Separation".into(),
+                "All".into(),
+                Object::Name(alternate.as_bytes().to_vec()),
+                tint.into(),
+            ]));
+            assert!(
+                normalize_colorspaces(&mut doc).unwrap().output_intent_added,
+                "{alternate}"
+            );
+        }
+    }
+    #[test]
+    fn gray_profile_white_point_matches_its_d50_pcs_illuminant() {
+        let gray = gray_icc_profile_bytes();
+        assert_eq!(&gray[284..296], &gray[68..80]);
     }
 
     #[test]
@@ -2721,8 +3274,9 @@ mod tests {
     #[test]
     fn test_output_intent_survives_roundtrip() {
         let mut doc = make_doc_with_device_rgb();
+        add_srgb_output_intent(&mut doc).unwrap();
         let report = normalize_colorspaces(&mut doc).unwrap();
-        assert!(report.output_intent_added);
+        assert!(!report.output_intent_added);
         assert!(has_pdfa_output_intent(&doc));
 
         // Save and reload
@@ -2979,7 +3533,7 @@ mod inline_rgb_output_intent_tests {
     /// deleted. A CMYK document whose only RGB is an inline image is the one
     /// shape where the answer decides the outcome, and it is 104_104177's.
     #[test]
-    fn normalize_colorspaces_gives_a_cmyk_document_srgb_for_its_inline_rgb() {
+    fn normalization_characterizes_inline_rgb_alongside_named_cmyk() {
         let mut doc = Document::with_version("1.7");
         let pages_id = doc.new_object_id();
 
@@ -3021,57 +3575,54 @@ mod inline_rgb_output_intent_tests {
 
         normalize_colorspaces(&mut doc).expect("normalize");
 
-        // Assert on the condition identifier, not the profile's component
-        // count: the two intents currently share one DestOutputProfile object,
-        // so an N-based check reads the CMYK profile and says "no sRGB" even
-        // when the sRGB intent is there. What this test is about is whether
-        // the inline image reached the decision at all.
-        let identifiers: Vec<String> = doc
-            .objects
-            .values()
-            .filter_map(|obj| match obj {
-                Object::Dictionary(d)
-                    if matches!(d.get(b"Type"), Ok(Object::Name(n)) if n == b"OutputIntent") =>
-                {
-                    match d.get(b"OutputConditionIdentifier") {
-                        Ok(Object::String(s, _)) => Some(String::from_utf8_lossy(s).into_owned()),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            })
-            .collect();
-
-        assert!(
-            identifiers.iter().any(|i| i.contains("sRGB")),
-            "inline-image RGB must reach the OutputIntent decision; got {identifiers:?}"
-        );
+        let page = doc.get_dictionary(page_id).unwrap();
+        let resources = page.get(b"Resources").unwrap().as_dict().unwrap();
+        let cs = resources.get(b"ColorSpace").unwrap().as_dict().unwrap();
+        for (key, n) in [(b"DefaultRGB".as_slice(), 3), (b"DefaultCMYK", 4)] {
+            let id = cs.get(key).unwrap().as_reference().unwrap();
+            let array = doc.get_object(id).unwrap().as_array().unwrap();
+            assert_eq!(array[0].as_name().unwrap(), b"ICCBased");
+            let profile = doc
+                .get_object(array[1].as_reference().unwrap())
+                .unwrap()
+                .as_stream()
+                .unwrap();
+            assert_eq!(profile.dict.get(b"N").unwrap().as_i64().unwrap(), n);
+        }
+        assert!(doc.catalog().unwrap().has(b"OutputIntents"));
     }
 
-    /// `k` is `setcmykcolor` and takes four operands. Without insisting on
+    /// The byte-level fallback in `note_content_bytes` reads `k` as
+    /// `setcmykcolor` only with its four operands. Without insisting on
     /// them, any whitespace-then-`k` byte pair reads as CMYK usage — and
     /// inline-image samples are arbitrary binary, so they hit it constantly.
     /// The consequence is not cosmetic: a spurious CMYK OutputIntent takes the
     /// single ICC slot §6.2.3:2 allows, and the document's real RGB content
     /// then has no output intent to stand on (govdocs holdout 104_104177 and
     /// 212_212392, 58 and 8 §6.2.4.3:2 failures, zero CMYK anywhere in either).
+    fn cmyk_operator_in_bytes(content: &[u8]) -> bool {
+        operator_with_operands(content, b"k", 4) || operator_with_operands(content, b"K", 4)
+    }
+
     #[test]
     fn cmyk_operator_needs_its_four_operands() {
-        assert!(has_cmyk_operator(b"q 0 0 0 1 k 10 10 100 100 re f Q"));
-        assert!(has_cmyk_operator(b"0.1 0.2 0.3 0.4 K\n"));
-        assert!(has_cmyk_operator(b"BT 1 1 1 1 k ET"));
+        assert!(cmyk_operator_in_bytes(b"q 0 0 0 1 k 10 10 100 100 re f Q"));
+        assert!(cmyk_operator_in_bytes(b"0.1 0.2 0.3 0.4 K\n"));
+        assert!(cmyk_operator_in_bytes(b"BT 1 1 1 1 k ET"));
     }
 
     #[test]
     fn stray_k_bytes_are_not_cmyk_usage() {
         // Binary image samples: a space followed by 0x6B means nothing.
-        assert!(!has_cmyk_operator(b"BI /W 2 /H 2 ID \x01\x02 k\x99\x04 EI"));
+        assert!(!cmyk_operator_in_bytes(
+            b"BI /W 2 /H 2 ID \x01\x02 k\x99\x04 EI"
+        ));
         // A `k` that is part of a longer token is not the operator.
-        assert!(!has_cmyk_operator(b"q 0 0 0 1 kilo Q"));
+        assert!(!cmyk_operator_in_bytes(b"q 0 0 0 1 kilo Q"));
         // Text, not colour.
-        assert!(!has_cmyk_operator(b"BT (a black cat) Tj ET"));
+        assert!(!cmyk_operator_in_bytes(b"BT (a black cat) Tj ET"));
         // Three operands is `rg`-shaped, not `k`.
-        assert!(!has_cmyk_operator(b"0 0 1 k"[..6].as_ref()));
+        assert!(!cmyk_operator_in_bytes(b"0 0 1 k"[..6].as_ref()));
     }
 
     /// Compressed streams have to be searched decompressed, or a Flate content
@@ -3094,4 +3645,26 @@ mod inline_rgb_output_intent_tests {
 
         assert!(has_device_rgb_in_streams(&doc));
     }
+}
+
+/// How many of the streams [`census_device_colors`] reads as content programs
+/// the strict parser refuses, so that the census has to read their bytes.
+///
+/// For `examples/pdfa_device_colour_census.rs`. It is the figure that decides
+/// whether a parser complaint may be treated as "unreadable": on the
+/// 300-document tuning set it may not, by three orders of magnitude.
+///
+/// Opaque payload is excluded on the same test the census uses. Counting every
+/// stream instead reports four times as many refusals -- images and font
+/// programs, which are not content and are never parsed as any.
+pub fn content_streams_the_parser_refuses(doc: &Document) -> usize {
+    doc.objects
+        .values()
+        .filter(|object| match object {
+            Object::Stream(stream) if !is_opaque_payload(stream) => stream
+                .get_plain_content()
+                .is_ok_and(|bytes| crate::inline_image::decode_strict(&bytes).is_err()),
+            _ => false,
+        })
+        .count()
 }

@@ -6,6 +6,88 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — a timestamp stamps the signature it travels with — 2026-09-10
+
+### Fixed
+
+- **A B-T or B-LT timestamp is now checked against the signature it is embedded
+  in.** `SignOptions::timestamp_token` asked for the RFC 3161 token as an input
+  to `sign`, so the caller had to hold it before signing began — at which point
+  the signature did not exist and the token's `messageImprint` could not be its
+  digest. The token was then carried into the CMS as opaque bytes and never
+  read back, so the file came out with the timestamp attribute in the right
+  place, the right SubFilter and the right OID, and failed the first verifier
+  that recomputed the imprint. Every marker our own tests looked at was
+  satisfied. A token that does not stamp the signature in the document is now
+  refused, at both the façade and `pdf-sign`.
+
+### Added
+
+- **`PdfDocument::sign_timestamped(signer, opts, fetch)`** — the route that
+  works. It signs, calls `fetch` once with the CMS `SignerInfo` signature value
+  (what a CAdES signature timestamp covers, RFC 5126 §6.1.1), and embeds the
+  token that comes back. No network call is made by the engine: `fetch` is your
+  code, and what leaves it is a hash of a signature, never the document. In
+  `pdf-sign` the same two phases are `sign_pdf_pending_timestamp` and
+  `PendingTimestamp::timestamped` / `::long_term`.
+  `SignOptions::timestamp_token` still accepts a token you already hold — it now
+  has to be a token about this signature.
+- **`SignOptions::revocation_data(ocsp_responses, crls)`** — DER-encoded
+  revocation evidence for the DSS. `PadesProfile::LongTerm` is refused without
+  it: a DSS holding certificates and nothing else says who signed, not that they
+  were allowed to, which is B-T filed under a longer name.
+
+---
+
+## [Unreleased] — PAdES profiles produce what they name — 2026-09-07
+
+### Fixed
+
+- **`PadesProfile` selects a profile again, and B-T and B-LT are reachable.**
+  #176 had stopped the silent downgrade by refusing the three profiles that
+  were not wired; they are now wired. `SignOptions::timestamp_token` takes a
+  DER-encoded RFC 3161 token, `Timestamped` embeds it, and `LongTerm` adds a
+  Document Security Store with the signer's chain. Asking for either without a
+  token is still an error rather than a quiet B-B. `LongTermArchive` stays an
+  error and now says why: it needs a document timestamp
+  (`/Type /DocTimeStamp`), which nothing writes.
+- **An appended revision now describes its own position in the file.**
+  `sign_pdf_incremental` and `embed_dss_incremental` appended a save whose
+  cross-reference offsets counted from its own first byte, so `startxref`
+  pointed into the middle of the first revision. Every such file was rejected by
+  a strict reader. It went unnoticed because the tests read the result with a
+  scanning parser, which never consults `startxref`. There is now a check
+  against qpdf.
+- **`sign_pdf_ltv` timestamped a signature it then threw away.** It signed once
+  to get a CMS for the authority and signed again with the token in hand; the
+  signing time is a signed attribute, so the second signature differs from the
+  first whenever the two straddle a second boundary, and the token covered a
+  signature that never reached the file. The fetch now sits between signing and
+  embedding. Behind the `tsa` feature, so no released default build was affected.
+- **`extract_cms_from_signed` matched a literal `/Contents <`** while lopdf
+  writes no space, so it failed on every input with "/Contents not found in
+  signed PDF" — which means `sign_pdf_ltv` had never worked. Its only test sat
+  behind `#[cfg(feature = "tsa")]`, a feature CI does not enable, so the test
+  existed and never ran.
+
+### Removed
+
+- **`pdf_sign::signer::{PadesProfile, SignerConfig}`, `Pkcs12Signer::with_config`
+  and `effective_pades_profile`.** A second profile layer that nothing read:
+  signing never consulted the config, and the inference behind it was wrong in
+  two of four cases (long-term without a timestamp authority, archival without
+  an archive timestamp). The profile lives in `pdfluent::signer::PadesProfile`,
+  which signing acts on.
+
+### Changed
+
+- **`crates/pdf-sign/README.md` says which profiles are produced.** It promised
+  all four on crates.io. It also carried "0 fails on 20K-PDF sign+verify
+  roundtrip suite", a number with no run behind it in the claims register; that
+  line is gone rather than repeated.
+
+---
+
 ## [Unreleased] — sdk/api-contract-alignment — 2026-06-15
 
 ### Changed

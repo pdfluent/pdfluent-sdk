@@ -130,7 +130,10 @@ jobs:
         with:
           toolchain: ${{ steps.pin.outputs.channel }}
           targets: wasm32-unknown-unknown
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
       - run: cargo build --target wasm32-unknown-unknown -p xfa-wasm
 
   binding-tests:
@@ -143,7 +146,10 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Build C API library
         run: cargo build --release -p pdf-capi
@@ -167,7 +173,10 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -191,7 +200,10 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Run conversion tests
         run: |
@@ -209,7 +221,10 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Build test runner
         run: cargo build --release -p xfa-test-runner

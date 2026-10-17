@@ -488,7 +488,12 @@ fn main() -> Result<()> {
 
 Capabilities exercised: `PdfParse`, `PageOps`, `PdfWrite`.
 
-### 9.3 Flow 3 — Sign document (PAdES B-LT)
+### 9.3 Flow 3 — Sign document (PAdES B-B)
+
+> Corrected 07-09-2026 (#362). This flow was headed B-LT while calling
+> `SignOptions::new()`, whose default is B-B. B-LT additionally needs a
+> timestamp token, which since #515 is fetched over the finished signature
+> through `PdfDocument::sign_timestamped`; B-LTA is not implemented.
 
 ```rust
 use pdfluent::prelude::*;

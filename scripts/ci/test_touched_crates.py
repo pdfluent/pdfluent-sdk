@@ -166,6 +166,36 @@ def main() -> int:
            tc.select(["scripts/ci/local_ci_gate.sh", "docs/ci/x.md", "README.md"],
                      dirs, dependents, excluded=()) == [], "")
 
+    # A FILE A CRATE'S TESTS READ, outside the crate (#574): a learned model's
+    # parity rows are held to the engine by pdf-engine's tests, so a change to
+    # them alone is a change to what pdf-engine's tests say.
+    engine = ({**dirs, "pdf-engine": "crates/pdf-engine"}, {**dependents, "pdf-engine": set()})
+    chosen = tc.select(["scripts/extraction/learned/models/list_item/parity.json"],
+                       *engine, excluded=())
+    expect("a model's parity rows select the crate whose tests read them",
+           chosen == ["pdf-engine"], str(chosen))
+    chosen = tc.select(["scripts/extraction/learned/train_lists.py"], *engine, excluded=())
+    expect("and a trainer beside them does not", chosen == [], str(chosen))
+
+    # A FILE A CRATE'S TESTS READ, outside the crate (#636): the generated
+    # CLI reference is held current by pdfluent-cli's cli_docs.rs, so a
+    # change to it alone is a change to what that suite says.
+    cli = ({**dirs, "pdfluent-cli": "crates/pdfluent-cli"},
+           {**dependents, "pdfluent-cli": set()})
+    chosen = tc.select(["docs/cli/extract.md"], *cli, excluded=())
+    expect("generated CLI docs select the crate whose tests hold them current",
+           chosen == ["pdfluent-cli"], str(chosen))
+    chosen = tc.select(["docs/en/cli.md"], *cli, excluded=())
+    expect("and the handwritten CLI guide does not", chosen == [], str(chosen))
+    chosen = tc.select(["man/pdfluent-extract.1"], *cli, excluded=())
+    expect("generated man pages select the crate whose tests hold them current",
+           chosen == ["pdfluent-cli"], str(chosen))
+    chosen = tc.select(["scripts/ci/generate_cli_docs.sh"], *cli, excluded=())
+    expect("the CLI docs generator selects the crate whose tests run it",
+           chosen == ["pdfluent-cli"], str(chosen))
+    chosen = tc.select(["scripts/ci/local_ci_gate.sh"], *cli, excluded=())
+    expect("and any other CI script does not", chosen == [], str(chosen))
+
     # --- when the answer has to be everything -----------------------------
     for path in ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
                  "rust-toolchain", ".cargo/config.toml"):
@@ -213,6 +243,18 @@ def main() -> int:
     expect("a scripts-only change compiles no crate here", rc == 0 and lines == [],
            f"rc={rc} {lines}")
 
+    rc, lines = run("--file", "docs/cli/extract.md")
+    expect("generated CLI docs select pdfluent-cli here",
+           rc == 0 and "pdfluent-cli" in lines, f"rc={rc} {lines}")
+
+    rc, lines = run("--file", "man/pdfluent-extract.1")
+    expect("generated man pages select pdfluent-cli here",
+           rc == 0 and "pdfluent-cli" in lines, f"rc={rc} {lines}")
+
+    rc, lines = run("--file", "scripts/ci/generate_cli_docs.sh")
+    expect("the CLI docs generator selects pdfluent-cli here",
+           rc == 0 and "pdfluent-cli" in lines, f"rc={rc} {lines}")
+
     # `crates/xfa-license/src/lib.rs` stood here until 06-09-2026. That crate was
     # deleted with the licence key it validated (#226), so the case stopped
     # measuring what it was written for: an unknown directory is answered with
@@ -235,6 +277,24 @@ def main() -> int:
     rc, lines = run("--file", "Cargo.lock")
     expect("the real lockfile still means everything",
            rc == 0 and lines == [tc.ALL], f"rc={rc} {lines}")
+
+    # #623: the excluded crates a change reaches are still checked. A change in
+    # pdf-engine reached xfa-wasm's own guard test and no landing ran it.
+    rc, lines = run("--excluded-reached", "--file", "crates/pdf-engine/src/lib.rs")
+    expect("a change in pdf-engine reaches xfa-wasm, which the landing checks",
+           rc == 0 and lines == ["xfa-wasm"], f"rc={rc} {lines}")
+    rc, lines = run("--excluded-reached", "--file", "scripts/ci/local_ci_gate.sh")
+    expect("a script change reaches no excluded crate", rc == 0 and lines == [], str(lines))
+    rc, lines = run("--excluded-reached", "--file", "Cargo.lock")
+    expect("a workspace-wide change reaches every checked excluded crate",
+           rc == 0 and lines == sorted(tc.CHECKED_WHEN_REACHED), str(lines))
+    expect("pdf-desktop is excluded and not checked (the rig has no desktop toolchain)",
+           "pdf-desktop" not in tc.CHECKED_WHEN_REACHED, str(tc.CHECKED_WHEN_REACHED))
+    gate = (tc.ROOT / "scripts" / "ci" / "local_ci_gate.sh").read_text()
+    expect("a selection that cannot answer checks every excluded crate (fails closed)",
+           'EXCLUDED_REACHED="xfa-wasm"' in gate.split("--excluded-reached", 1)[1].split("fi", 1)[0])
+    expect("the landing lane runs what it reaches",
+           "--excluded-reached" in gate and "zwaar excldeps bash scripts/ci/run_excluded_dependents.sh $EXCLUDED_REACHED" in gate)
 
     rc, _ = run("--check-excludes")
     expect("the exclude lists in this repository agree", rc == 0, str(rc))

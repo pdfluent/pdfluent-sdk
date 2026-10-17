@@ -1,0 +1,91 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH PDFLUENT-CONVERT 1  "pdfluent 1.1.0" PDFluent
+.SH NAME
+pdfluent\-convert \- Convert to Word, Excel, PowerPoint, image, or PDF/A
+.SH SYNOPSIS
+\fBpdfluent convert\fR [\fB\-\-json\fR] <\fB\-\-to\fR> <\fB\-o\fR|\fB\-\-out\fR> [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-dpi\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-\-profile\fR] [\fB\-\-pages\fR] [\fB\-\-raster\fR] [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIINPUT\fR> 
+.SH DESCRIPTION
+Convert to Word, Excel, PowerPoint, image, or PDF/A
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Machine\-readable JSON envelope on stdout
+.TP
+\fB\-\-to\fR \fI<TO>\fR
+Conversion target
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+docx: Word document (`.docx`)
+.IP \(bu 2
+xlsx: Excel workbook (`.xlsx`)
+.IP \(bu 2
+pptx: PowerPoint deck (`.pptx`)
+.IP \(bu 2
+png: PNG images, one per page (needs `\-o <dir>`)
+.IP \(bu 2
+jpeg: JPEG images, one per page (needs `\-o <dir>`)
+.IP \(bu 2
+pdfa: Archival PDF (PDF/A)
+.RE
+.TP
+\fB\-o\fR, \fB\-\-out\fR \fI<OUT>\fR
+Output file, or a directory for images (created when missing). Single\-file targets also accept `\-` for stdout
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Quiet: human mode prints data only (no warnings or progress notes)
+.TP
+\fB\-\-dpi\fR \fI<DPI>\fR
+Render resolution for images (default 150)
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose stderr diagnostics (repeat for more)
+.TP
+\fB\-\-profile\fR \fI<PROFILE>\fR
+PDF/A profile for `\-\-to pdfa` (default a2b)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+a1b: PDF/A\-1b
+.IP \(bu 2
+a2b: PDF/A\-2b (default)
+.IP \(bu 2
+a3b: PDF/A\-3b
+.RE
+.TP
+\fB\-\-pages\fR \fI<PAGES>\fR
+Page range for images, e.g. `1\-3` (single range only)
+.TP
+\fB\-\-raster\fR \fI<RASTER>\fR
+Raster pipeline for images: `quality` (default, f32) or `speed` (u8, faster)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+quality: Higher\-precision f32 pipeline (default, historical output)
+.IP \(bu 2
+speed: Faster u8 pipeline (~1.4–1.6× on content\-heavy pages)
+.RE
+.TP
+\fB\-\-force\fR
+Overwrite existing output files
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+<\fIINPUT\fR>
+Input PDF, or `\-` for stdin
+.SH VERSION
+v1.1.0

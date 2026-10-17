@@ -191,6 +191,17 @@ jobs:
         run: cargo build --release
 """
 
+RELEASE_POOL_UNCHECKED = """name: Under test
+on: push
+jobs:
+  builder:
+    runs-on: [self-hosted, windows, x64, pdfluent-release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile
+        run: cargo build --release
+"""
+
 HOSTED_UNCHECKED = """name: Under test
 on: push
 jobs:
@@ -286,6 +297,10 @@ def main() -> int:
         # --- who is exempt, and why ---------------------------------------
         r = run(pipeline(root, "ephemeral", EPHEMERAL_UNCHECKED), "--expect-build-jobs", "0")
         expect("an ephemeral runner is exempt", r.returncode == 0, r.stderr.strip()[:200])
+
+        # The release pool's runners (#636) are made per job and deleted after.
+        r = run(pipeline(root, "releasepool", RELEASE_POOL_UNCHECKED), "--expect-build-jobs", "0")
+        expect("a pdfluent-release runner is exempt", r.returncode == 0, r.stderr.strip()[:200])
 
         r = run(pipeline(root, "hosted", HOSTED_UNCHECKED), "--expect-build-jobs", "0")
         expect("a hosted runner is exempt", r.returncode == 0, r.stderr.strip()[:200])

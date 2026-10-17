@@ -12,6 +12,8 @@ right, and that is the whole of the defect.
 """
 from __future__ import annotations
 
+import json as _json
+import os
 import pathlib
 import subprocess
 import sys
@@ -91,7 +93,6 @@ def main() -> int:
     geldt, hoezo = guard.de_corpusreden_geldt_nog(machinepaden)
     case("the tree still says what the register says it says", geldt is True, hoezo)
 
-    import json as _json
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         tmp = pathlib.Path(d)
@@ -129,6 +130,177 @@ def main() -> int:
         case("and so does one with no entries at all",
              guard.de_corpusreden_geldt_nog(leeg)[0] is None)
 
+    # --- registered against answering-right-now ------------------------------
+    # THE DISTINCTION THE GUARD IS ABOUT, and the one it got wrong until
+    # 09-09-2026: it asked GitHub for online runners only, so the twenty minutes
+    # the desktop spent rebooting turned every push in the repository red on a
+    # guard about labels nobody carries. A registered runner that is offline
+    # carries its label; the queue behind it drains when the machine is back.
+    antwoord = _json.dumps([
+        {"status": "offline", "labels": ["self-hosted", "Linux", "xfa-fast"]},
+        {"status": "online", "labels": ["hetzner", "gh-runner-1"]},
+        {"status": "online",
+         "labels": ["self-hosted", "linux", "x64", "pdfluent-release"]},
+    ])
+
+    class _Antwoord:
+        def __init__(self, stdout: str, returncode: int = 0):
+            self.stdout, self.returncode, self.stderr = stdout, returncode, ""
+
+    echt = guard.subprocess.run
+    gevraagd_aan_gh: list[list[str]] = []
+
+    def _stub(cmd, *a, **kw):
+        gevraagd_aan_gh.append(list(cmd))
+        return _Antwoord(antwoord)
+
+    try:
+        guard.subprocess.run = _stub
+        lijsten = guard.geregistreerd()
+        # WHAT IT ASKS GITHUB FOR, and not only what it does with the answer.
+        # The stub answers whatever the query was, so a query that went back to
+        # `select(.status=="online")` would still satisfy every case below. The
+        # question this guard judges is which labels are REGISTERED, and a
+        # filter in the query throws that away before the code can see it.
+        vraag = " ".join(gevraagd_aan_gh[-1] if gevraagd_aan_gh else [])
+        case("it asks GitHub for every runner, not only the online ones",
+             'select(.status=="online")' not in vraag and "status" in vraag, vraag)
+        case("the runner list is read as runners, not as a flat list of labels",
+             lijsten is not None, repr(lijsten))
+        ingeschreven, online, tijdelijk = lijsten or (set(), set(), set())
+        case("an offline runner's label counts as registered",
+             "xfa-fast" in ingeschreven, repr(sorted(ingeschreven)))
+        case("and is not reported as answering now",
+             "xfa-fast" not in online, repr(sorted(online)))
+        case("an online runner's label is in both",
+             "hetzner" in ingeschreven and "hetzner" in online, repr(sorted(online)))
+        # A label no runner carries at all is the failure this file exists for,
+        # and it must survive the change above: absent from both sets.
+        case("a label nobody carries is in neither",
+             "xfa-corpus" not in ingeschreven and "xfa-corpus" not in online)
+        case("a transient runner's labels are in neither judged set",
+             "pdfluent-release" not in ingeschreven
+             and "pdfluent-release" not in online,
+             repr(sorted(ingeschreven)))
+        case("and they are reported as transient, not dropped silently",
+             "pdfluent-release" in tijdelijk, repr(sorted(tijdelijk)))
+        case("a transient linux does not leak into the registered set either",
+             "linux" not in ingeschreven, repr(sorted(ingeschreven)))
+        guard.subprocess.run = lambda *a, **kw: _Antwoord("[]")
+        leeg = guard.geregistreerd()
+        case("no runners at all is three empty sets, not an unreadable list",
+             leeg == (set(), set(), set()), repr(leeg))
+        guard.subprocess.run = lambda *a, **kw: _Antwoord("not json")
+        case("an unreadable answer is None -- SKIPPED, never a pass",
+             guard.geregistreerd() is None)
+    finally:
+        guard.subprocess.run = echt
+
+    # --- the release-runner exemption ----------------------------------------
+    # Rented on demand, like the hetzner ephemeral runners: the labels exist
+    # only while the COS's VM runs, so absence from the registered list is
+    # the design, not a queue. Narrow on purpose -- the release set AND the
+    # runner_pool routing must both hold.
+    routed = (
+        "${{ inputs.runner_pool == 'self' "
+        "&& fromJSON('[\"self-hosted\", \"linux\", \"x64\"]') "
+        "|| 'ubuntu-latest' }}"
+    )
+    case("a routed release set exempts its platform and arch",
+         guard.release_pool_labels(routed) >= {"linux", "x64"},
+         repr(guard.release_pool_labels(routed)))
+    case("and the pool values riding along are not labels",
+         guard.release_pool_labels(routed) >= {"self", "github"})
+    for platform, arch in (("linux", "arm64"), ("macos", "arm64"), ("windows", "x64")):
+        leg = routed.replace('"linux"', f'"{platform}"').replace('"x64"', f'"{arch}"')
+        case(f"a routed {platform}/{arch} set is exempt too",
+             guard.release_pool_labels(leg) >= {platform, arch}, leg)
+    routed4 = routed.replace(
+        '["self-hosted", "linux", "x64"]',
+        '["self-hosted", "linux", "x64", "pdfluent-release"]',
+    )
+    case("a routed pool set exempts the pool label too",
+         "pdfluent-release" in guard.release_pool_labels(routed4),
+         repr(guard.release_pool_labels(routed4)))
+    case("a hardcoded release set with no routing is NOT exempt",
+         guard.release_pool_labels("[self-hosted, linux, x64]") == set(),
+         "no github fallback: it queues whenever no VM runs")
+    case("and neither is a hardcoded pool set -- the job-level skip owns that",
+         guard.release_pool_labels(
+             "[self-hosted, linux, x64, pdfluent-release]") == set())
+    xfa = routed.replace(
+        '["self-hosted", "linux", "x64"]', '["self-hosted", "xfa-fast"]'
+    )
+    case("a routed non-release set is NOT exempt",
+         guard.release_pool_labels(xfa) == set(), xfa)
+    case("a plain hosted runs-on exempts nothing",
+         guard.release_pool_labels("ubuntu-latest") == set())
+
+    # --- case-insensitive, transient-proof, through main() -------------------
+    # The comparison itself, not the units around it: a fixture workflows
+    # directory (with the four BEKEND rows, so the baseline checks still run)
+    # and a stubbed runner list. The corpus-manifest check reads the real
+    # tree, which is what the register's reason is about.
+    import contextlib
+    import io
+
+    def _bekend_rows(d):
+        for name, jobname in (("bench.yml", "benchmark"),
+                              ("crash-guard.yml", "crash-guard"),
+                              ("gate-ci.yml", "gate"),
+                              ("wasm-gate.yml", "wasm-gate")):
+            (d / name).write_text(
+                "on: workflow_dispatch\njobs:\n"
+                "  blocker:\n    runs-on: ubuntu-latest\n"
+                "    steps:\n      - run: exit 1\n"
+                f"  {jobname}:\n"
+                "    runs-on: [self-hosted, xfa-corpus]\n"
+                "    needs: blocker\n    steps:\n      - run: true\n"
+            )
+
+    def _oordeel(runs_on, runners):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = pathlib.Path(d)
+            _bekend_rows(tmp)
+            (tmp / "probe.yml").write_text(
+                "on: push\njobs:\n"
+                f"  probe:\n    runs-on: {runs_on}\n"
+                "    steps:\n      - run: true\n"
+            )
+            echt_flows, echt_run = guard.FLOWS, guard.subprocess.run
+            guard.FLOWS = tmp
+            guard.subprocess.run = lambda *a, **kw: _Antwoord(
+                _json.dumps(runners))
+            try:
+                with contextlib.redirect_stdout(
+                        io.StringIO()) as uit, contextlib.redirect_stderr(
+                        io.StringIO()) as err:
+                    code = guard.main()
+                return code, uit.getvalue(), err.getvalue()
+            finally:
+                guard.FLOWS, guard.subprocess.run = echt_flows, echt_run
+
+    durable = [{"status": "online",
+                "labels": ["self-hosted", "Linux", "X64"]}]
+    release = [{"status": "online",
+                "labels": ["self-hosted", "linux", "x64", "pdfluent-release"]}]
+    code, _, err = _oordeel("[self-hosted, linux, x64]", durable)
+    case("a live set with capitalised Linux/X64 answers lowercase labels",
+         code == 0, err[-200:])
+    code, _, err = _oordeel(
+        "[self-hosted, linux, x64, pdfluent-release]", durable + release)
+    case("a live set with an extra release runner passes", code == 0,
+         err[-200:])
+    code, _, err = _oordeel(
+        "[self-hosted, linux, x64, pdfluent-release]", durable)
+    case("and so does the pool job with no release runner up", code == 0,
+         err[-200:])
+    code, _, err = _oordeel("[self-hosted, linux, x64]", release)
+    case("transient capacity does not satisfy durable demand", code == 1,
+         err[-200:])
+    code, _, err = _oordeel("[self-hosted, no-runner-carries-this]", durable)
+    case("a label no runner has still fails", code == 1, err[-200:])
+
     # --- the guard on the real tree ------------------------------------------
     # THE GUARD CANNOT RUN EVERYWHERE, AND THIS TEST HAS TO SAY SO.
     #
@@ -150,12 +322,26 @@ def main() -> int:
     # local_ci_gate.sh where `gh` is authenticated -- a skip there means the
     # environment is broken, and calling that green is the shape this
     # repository keeps finding.
+    #
+    # And then it was wired into ci.yml's guards job anyway (for the fixture
+    # halves, which need nothing but Python), where the one failure above fired
+    # on every push to master from 10-09 to 23-09-2026: the job was red for a
+    # reason the test itself had documented as "cannot run here". Inside GitHub
+    # Actions the real-tree half is now announced as skipped instead; its home
+    # is `labelstest` in local_ci_gate.sh, where an unreadable list still fails.
     clean = subprocess.run([sys.executable, str(GUARD)], capture_output=True, text=True)
     could_not_read = "could not read the runner list" in clean.stderr
-    case("the guard could read the runner list", not could_not_read,
-         "`gh api /actions/runners` answered nothing. This test belongs in "
-         "local_ci_gate.sh, where gh is authenticated; it cannot run in GitHub "
-         "Actions, because that endpoint needs `administration: read`.")
+    in_actions = os.environ.get("GITHUB_ACTIONS") == "true"
+    if could_not_read and in_actions:
+        sys.stderr.write(
+            "SKIPPED (not a pass): the real-tree half needs `gh api /actions/runners` "
+            "(administration: read), which GITHUB_TOKEN cannot have; it runs as "
+            "`labelstest` in local_ci_gate.sh\n")
+    else:
+        case("the guard could read the runner list", not could_not_read,
+             "`gh api /actions/runners` answered nothing. This test belongs in "
+             "local_ci_gate.sh, where gh is authenticated; it cannot run in GitHub "
+             "Actions, because that endpoint needs `administration: read`.")
     if not could_not_read:
         case("the repository as it stands passes", clean.returncode == 0,
              (clean.stdout + clean.stderr)[-300:])

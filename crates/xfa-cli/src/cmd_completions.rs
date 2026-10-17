@@ -12,7 +12,7 @@ use std::io;
 
 pub fn run(shell: Shell) {
     let mut cmd = crate::Cli::command();
-    let bin_name = "pdfluent";
+    let bin_name = "xfa-runner";
     generate(shell, &mut cmd, bin_name, &mut io::stdout());
 }
 

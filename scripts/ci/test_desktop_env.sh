@@ -120,14 +120,23 @@ grep -q 'NOT MOUNTED' <<<"$uit" && klaag "a dead device is called an absent moun
 # 5. The probe returns on time even when its child does not. This is the whole
 #    reason the parent holds the clock: a D-state child cannot be killed, so
 #    `timeout` waits out the outage and everything behind it waits too.
+#
+#    Load-robust by construction: the child outlives any scheduling delay and
+#    the bar is relative to the child. At load 100 the watcher was starved and
+#    `sleep 10` ended normally first (rc 0 after 35 s), which looked like a
+#    broken deadline but was a child shorter than the delay. With a 120 s child
+#    the 1 s deadline still has to fire, and returning before half the child
+#    proves the child was killed well before it would finish.
 geval
+kind=120
+grens=$(( kind / 2 ))
 start=$(date +%s)
-( . "$PROBE"; _bounded_probe 1 sleep 10 ) >/dev/null 2>&1
+( . "$PROBE"; _bounded_probe 1 sleep "$kind" ) >/dev/null 2>&1
 rc=$?
 duur=$(( $(date +%s) - start ))
 [[ $rc -eq 124 ]] || klaag "a probe that outran its deadline returned ${rc}, not 124"
 geval
-[[ $duur -le 4 ]] || klaag "the probe waited ${duur}s on a 1s deadline — the parent joined the child"
+[[ $duur -lt $grens ]] || klaag "the probe waited ${duur}s on a 1s deadline (child ${kind}s, bar ${grens}s) — the parent joined the child"
 
 # 6. And it is still an ordinary command runner: output and exit code survive.
 geval

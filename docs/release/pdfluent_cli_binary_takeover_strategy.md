@@ -1,12 +1,17 @@
-# PDFluent CLI — Binary Coexistence & Future Takeover Strategy
+# PDFluent CLI — Binary Coexistence & Takeover Strategy
 
-**Current state (DO NOT change in this milestone):**
-- Public CLI binary = **`pdfluent-cli`** (crate `crates/pdfluent-cli`, `publish = false`).
-- Internal binary = **`pdfluent`** (crate `crates/xfa-cli`), consumed by XFA/benchmark tooling
-  via `target/release/pdfluent`.
-- They **do not collide** (distinct names). No takeover is performed here.
+**Executed 30-09-2026 (#636), the owner decision this document was gated behind:**
+- Public CLI binary = **`pdfluent`** (crate `crates/pdfluent-cli`), with **`pdfluent-cli`**
+  kept as an alias binary for one release (transition window, step 4 below).
+- Internal binary = **`xfa-runner`** (crate `crates/xfa-cli`), consumed by XFA/benchmark
+  tooling via `target/release/xfa-runner`.
+- They **do not collide** (distinct names).
 
-## Known internal consumers of `target/release/pdfluent`
+What follows is the plan as written before the takeover, kept so a reader can see
+what was done. Step 1 (rename internal + repoint) and step 3 (promote public) both
+landed in #636; the consumer list below is the pre-takeover inventory.
+
+## Known internal consumers (pre-takeover inventory; all now point at `xfa-runner`)
   - scripts/corpus_full_replay_benchmark.sh
   - scripts/corpus_js_runtime_benchmark.sh
   - scripts/m56_common.py

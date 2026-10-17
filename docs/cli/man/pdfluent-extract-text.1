@@ -1,0 +1,41 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH PDFLUENT-EXTRACT-TEXT 1  "pdfluent 1.1.0" PDFluent
+.SH NAME
+pdfluent\-extract\-text \- Extract plain text (kept for compatibility; prefer `extract`)
+.SH SYNOPSIS
+\fBpdfluent extract\-text\fR [\fB\-\-json\fR] [\fB\-\-out\fR] [\fB\-\-no\-page\-breaks\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-force\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIINPUT\fR> 
+.SH DESCRIPTION
+Extract plain text (kept for compatibility; prefer `extract`)
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Machine\-readable JSON envelope on stdout
+.TP
+\fB\-\-out\fR \fI<OUT>\fR
+Write extracted text to this path instead of stdout
+.TP
+\fB\-\-no\-page\-breaks\fR
+Join pages with a blank line instead of ending each with a form feed (U+000C).
+
+Page boundaries are lost; for a consumer that chunks or cites by page they are the point. Here for pipelines written against the pre\-1.0 output.
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Quiet: human mode prints data only (no warnings or progress notes)
+.TP
+\fB\-\-force\fR
+Overwrite the existing `\-\-out` file
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose stderr diagnostics (repeat for more)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+<\fIINPUT\fR>
+Input PDF file, or `\-` for stdin
+.SH VERSION
+v1.1.0

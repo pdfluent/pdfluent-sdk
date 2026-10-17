@@ -1,6 +1,8 @@
 # pdfluent
 
-**Enterprise PDF SDK for Python — built on a pure-Rust stack, zero system dependencies.**
+[Source on GitHub](https://github.com/pdfluent/pdfluent-sdk) · [Documentation](https://pdfluent.com/docs) · [Report an issue](https://github.com/pdfluent/pdfluent-sdk/issues)
+
+**PDFluent for Python: a pure-Rust PDF SDK with no system dependencies, from a single `pip install`.**
 
 Render pages, extract text, fill forms, annotate, redact, encrypt, merge, and validate PDF/A — all from a single `pip install`.
 
@@ -80,7 +82,7 @@ decrypt_pdf("sensitive_enc.pdf", "sensitive_dec.pdf", password="s3cr3t")
 | **Redaction** | Search-and-redact: black-box all occurrences of a string |
 | **Encryption** | AES-256 (PDF 2.0) encrypt/decrypt with user + owner passwords |
 | **Merge / split** | Merge multiple PDFs; split into individual pages (via page slicing) |
-| **PDF/A validation** | Validate against PDF/A-1B, 2B, 3B with issue-level reporting |
+| **PDF/A validation** | Validate against PDF/A-1B, 2B, 3B with issue-level reporting. Validation only: PDF/A conversion is not exposed here, and where it is exposed it delivers 1B, 2B and 3B |
 | **Metadata** | Read title, author, subject, keywords, creator, producer |
 | **Bookmarks** | Traverse the document outline tree |
 | **Thumbnails** | Fast downscaled preview images |
@@ -97,7 +99,6 @@ doc = Document(open("file.pdf","rb").read())  # from bytes
 doc = Document("encrypted.pdf", password="pw")
 ```
 
-**Properties:** `page_count`, `metadata`, `bookmarks`  
 **Methods:** `render_all(dpi)`, `search(query)`, `extract_text(page_num)`, `save(path)`,
 `get_form_fields()`, `set_form_field(name, value)`, `get_annotations(page)`,
 `add_annotation(page, type, rect, content)`, `redact_text(term, page=None)`,
@@ -138,11 +139,11 @@ Read-only fields raise `PdfluentError`.
 Structured text with position data.
 
 **Properties:** `text`, `x`, `y`, `font_size`  
-**G1 font-metadata (Optional):** `font_name`, `is_bold`, `is_italic`, `color`
+**Font metadata (optional):** `font_name`, `is_bold`, `is_italic`, `color`
 
-> G1 fields return `None` in the current release. They are typed as `Optional`
+> These fields return `None` in the current release. They are typed as `Optional`
 > so downstream code handles the `None` case correctly today and will
-> automatically receive data once the G1 extraction milestone lands.
+> receive data once font-metadata extraction lands.
 
 ```python
 for block in page.extract_text_blocks():
@@ -151,6 +152,13 @@ for block in page.extract_text_blocks():
             print(f"{span.font_name} {'bold' if span.is_bold else ''}")
         print(f"  '{span.text}' @ ({span.x:.1f}, {span.y:.1f})")
 ```
+
+### Quality tiers
+
+`Document.extract_markdown` runs in the `fast` tier by default and takes
+`quality="balanced"` for the preview model tier, with `model_dir=` and
+`table_model_dir=` pointing it at directories outside the default. See
+[Quality tiers](../../docs/STRUCTURED_EXTRACTION.md#quality-tiers).
 
 ### Module-level functions
 
@@ -228,30 +236,15 @@ def safe_open(path: str) -> Optional[Document]:
         return None
 ```
 
-## Comparison
-
-| | pdfluent | pypdf | pdfminer | pdfplumber | pikepdf |
-|---|---|---|---|---|---|
-| Rendering | ✓ | – | – | ✓ (via pdfminer) | – |
-| Text extraction | ✓ | ✓ | ✓ | ✓ | – |
-| Form fill | ✓ | ✓ | – | – | ✓ |
-| Redaction | ✓ | – | – | – | ✓ |
-| Encryption | ✓ (AES-256) | ✓ | – | – | ✓ |
-| PDF/A validation | ✓ | – | – | – | – |
-| Typed stubs | ✓ | partial | – | – | – |
-| Native deps | **none** | none | none | none | libqpdf |
-| Language | **Rust** | Python | Python | Python | C++ |
-
 ## Licence
 
-PDFluent is published under the **GNU AGPLv3**, with the **PDFluent Commercial
-Licence** as the alternative for anyone who cannot accept the copyleft
-obligation. There is no licence key, no activation call and no tier: every
-feature works in every build and output is never marked.
-
-The commercial route is a signed order form, not a checkout. Write to
-sales@pdfluent.com; the terms are in `LICENSE-COMMERCIAL` and the form template
-in `docs/licensing/order-form.md`.
+AGPL-3.0 or a commercial licence, at your option. The AGPL is the default and
+the complete product: there is no licence key, no activation call and no tier,
+and every feature works in every build. If you cannot accept the copyleft
+obligation, the commercial licence is sold yearly and self-service at
+[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing), in four options: Commercial (per
+organisation), OEM Startup and OEM (per product), and Priority support (an
+add-on). The two texts are `LICENSE` and `LICENSE-COMMERCIAL` in this crate.
 
 ## Building from Source
 
@@ -264,13 +257,9 @@ maturin develop --release          # install in current venv
 maturin build --release            # build wheel in ./dist/
 ```
 
-## Licence
-
-AGPL-3.0-only, or the PDFluent Commercial Licence. See `LICENSE`.
-
 ## Links
 
 - **Documentation:** <https://pdfluent.com/docs>
-- **Pricing:** <https://pdfluent.com/pricing>
+- **Pricing:** <https://pdfluent.com/sdk/pricing>
 - **PDFluent editor** (source-available): <https://github.com/pdfluent/pdfluent>. The free desktop app this SDK powers.
 - Built by [Innovation Trigger BV](https://pdfluent.com)

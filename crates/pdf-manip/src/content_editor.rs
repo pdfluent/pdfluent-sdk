@@ -67,6 +67,15 @@ impl ContentEditor {
         })
     }
 
+    /// Decode every byte, declining malformed trailing syntax.
+    #[cfg(feature = "pdfa-convert")]
+    pub(crate) fn from_stream_strict(stream: &[u8]) -> Result<Self> {
+        let content = crate::inline_image::decode_strict(stream)?;
+        Ok(Self {
+            operations: content.operations,
+        })
+    }
+
     /// Create an editor from a pre-existing list of operations.
     pub fn from_operations(operations: Vec<Operation>) -> Self {
         Self { operations }

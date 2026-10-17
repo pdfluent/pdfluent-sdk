@@ -1,25 +1,26 @@
 name: Node.js Bindings
 
-# Build and smoke-test Node.js bindings on every commit to master.
-# Publish to npm on version tags (v*.*.*).
+# Manual and gated: nothing here fires by itself, and the publish needs a
+# decision plus a green gate. A `v*` tag used to publish to npm automatically,
+# with no artefact gate and no smoke over the fresh bytes.
 #
 # napi-rs publish pattern:
 #   1. build-and-test: smoke test on ubuntu/macos/windows.
 #   2. build-release: cross-compile all platform targets, upload .node artifacts.
-#   3. publish-npm: download all artifacts, run napi prepublish, publish packages.
+#   3. release-gate: the artefact gate plus the loader smoke, over the fresh bytes.
+#   4. publish-npm: download all artifacts, run napi prepublish, publish packages.
 #
 # Required secrets:
 #   NPM_TOKEN  — npmjs.org publish token with write access to @pdfluent scope.
+#
+# Self-hosted runs never publish: with runner_pool=self and publish_npm=true
+# the first step of every job fails before anything builds.
 
 on:
-  push:
-    tags: ['node/v*', 'v*.*.*']
-    # Deliberately no `branches:`. With master in here, every push to master ran
-    # build-and-test across ubuntu, macOS and Windows, plus build-release across
-    # macos-13 and macos-latest. macOS bills at ten times the Linux rate and
-    # Windows at twice, so an ordinary push was the largest line on the Actions
-    # bill -- to answer a question ("do the bindings still build for a release?")
-    # that only matters at a tag.
+  # Deliberately dispatch-only (same shape as build-wheels.yml): a tag is a
+  # release moment, not a publish decision, and precondition 6 of #358 says
+  # the publish runs from the runbook on our own machines. Dispatch with
+  # publish_npm=false (the default) to build and gate; 'true' to publish.
   workflow_dispatch:
     inputs:
       publish_npm:
@@ -27,6 +28,12 @@ on:
         default: 'false'
         type: choice
         options: ['true', 'false']
+      runner_pool:
+        description: 'Runner pool: github (hosted) or self (self-hosted GCP/Mac runners)'
+        required: false
+        default: 'github'
+        type: choice
+        options: ['github', 'self']
 
 concurrency:
   # A publish run gets its own group and is never cancelled. With one shared
@@ -45,24 +52,77 @@ env:
 jobs:
   build-and-test:
     name: Node ${{ matrix.node }} / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ inputs.runner_pool == 'self' && matrix.os-self || matrix.os }}
+    # actions: read for the wheel download below (the build-wheels run's
+    # artefacts); contents: read for the checkout.
+    permissions:
+      contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        node: [24]
+        include:
+          # wheel-artifact: the build-wheels.yml artefact this host's Python
+          # installs, for the chunks parity suite.
+          - os: ubuntu-latest
+            os-self: [self-hosted, linux, x64, pdfluent-release]
+            node: 24
+            wheel-artifact: wheels-linux-x86_64
+          - os: macos-latest
+            os-self: [self-hosted, macos, arm64, pdfluent-release]
+            node: 24
+            wheel-artifact: wheels-macos-aarch64
+          - os: windows-latest
+            os-self: [self-hosted, windows, x64, pdfluent-release]
+            node: 24
+            wheel-artifact: wheels-windows-x86_64
     defaults:
       run:
         working-directory: crates/pdf-node
 
     steps:
+      - name: Self-hosted runs never publish
+        if: inputs.runner_pool == 'self' && inputs.publish_npm == 'true'
+        shell: bash
+        run: |
+          echo "::error::runner_pool=self refuses publish_npm=true: self-hosted runs never publish" >&2
+          exit 1
+
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Set up the self-hosted toolchain
+        if: inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          # python is the preflight's own interpreter: the Windows image
+          # ships none, so without it the step below dies with no output.
+          tools: rust,node,python
+          rust-version: stable
+          node-version: '24'
 
+      # Missing is red here, in seconds, with the complete list -- before the
+      # build, never an hour in (m482). Read-only: it installs nothing.
+      - name: Preflight the release requirements
+        if: inputs.runner_pool == 'self'
+        shell: bash
+        run: |-
+          PY="$(command -v python3 || command -v python || true)"
+          if [ -z "$PY" ]; then
+            echo "gate_preflight: REFUSED: no python on PATH (the setup installs one only for jobs that list python in tools:)" >&2
+            exit 2
+          fi
+          "$PY" ../../scripts/ci/gate_preflight.py --release-job node-bindings.yml/build-and-test
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: inputs.runner_pool != 'self'
+
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - uses: actions/setup-node@v4
+        if: inputs.runner_pool != 'self'
         with:
           node-version: ${{ matrix.node }}
 
@@ -72,7 +132,74 @@ jobs:
       - name: Build native binding
         run: npm run build
 
+      # The chunks parity suite (tests/chunks_parity.test.js) compares Node
+      # iterChunks against Python iter_chunks, so it needs this candidate's
+      # Python binding too. Not rebuilt here: the wheel comes from a
+      # successful build-wheels.yml run on this very commit (head_sha, not
+      # merely the branch -- a version string does not pin the native module
+      # inside the wheel), installed into a throwaway venv. The suite then
+      # checks content itself: chunks.py byte-identical and the version equal.
+      # No such run is SKIPPED (not a pass) on the hosted pool and red on the
+      # self-hosted pool, which is the release lane (dispatch build-wheels.yml
+      # on the same commit first). No `gh` on the self-hosted runners: curl
+      # and python, as in release-natives.yml.
+      - name: Install this commit's Python wheel for the parity suite
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          WHEEL_ARTIFACT: ${{ matrix.wheel-artifact }}
+          RELEASE_LANE: ${{ inputs.runner_pool == 'self' && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          PY="$(command -v python3 || command -v python || true)"
+          missing() {
+            if [ "$RELEASE_LANE" = "1" ]; then
+              echo "::error::chunks parity: $1" >&2
+              exit 1
+            fi
+            echo "SKIPPED (not a pass): chunks parity: $1" >&2
+            exit 0
+          }
+          test -n "$PY" || missing "no python on PATH to install the wheel with"
+          # Through the shared fetcher (cwd is crates/pdf-node): bounded
+          # retries for transient network errors only, the zip checked
+          # against the API's digest, a failure named as the environment's.
+          api_to() {
+            bash ../../scripts/release/fetch_artefact.sh api "$1" "$2"
+          }
+          body="$RUNNER_TEMP/parity-runs.json"
+          api_to "actions/workflows/build-wheels.yml/runs?head_sha=$SHA&status=success&per_page=1" "$body"
+          RUN="$("$PY" -c 'import json,sys; runs = json.load(open(sys.argv[1])).get("workflow_runs", []); print(runs[0]["id"] if runs else "")' "$body" | tr -d '\r')"
+          test -n "$RUN" || missing "no successful build-wheels.yml run on $SHA (dispatch it on this commit first)"
+          echo "build-wheels run: $RUN"
+          api_to "actions/runs/$RUN/artifacts?per_page=100" "$body"
+          read -r AID DIGEST <<< "$("$PY" -c 'import json,sys; ids = [(a["id"], a.get("digest") or "-") for a in json.load(open(sys.argv[1])).get("artifacts", []) if a["name"] == sys.argv[2]]; print(*ids[0]) if ids else print("")' "$body" "$WHEEL_ARTIFACT" | tr -d '\r')" || true
+          test -n "${AID:-}" || missing "run $RUN has no artefact $WHEEL_ARTIFACT"
+          WHEELS="$RUNNER_TEMP/parity-wheels"
+          VENV="$RUNNER_TEMP/parity-venv"
+          rm -rf "$WHEELS" "$VENV"
+          bash ../../scripts/release/fetch_artefact.sh zip "$AID" "$WHEEL_ARTIFACT" "$DIGEST" "$RUNNER_TEMP/parity-wheel.zip"
+          "$PY" -m zipfile -e "$RUNNER_TEMP/parity-wheel.zip" "$WHEELS"
+          ls "$WHEELS"
+          "$PY" -m venv "$VENV"
+          if [ -x "$VENV/bin/python" ]; then VPY="$VENV/bin/python"; else VPY="$VENV/Scripts/python.exe"; fi
+          # The wheel declares no runtime dependencies (only extras), so
+          # --no-deps --no-index installs exactly it and reaches no index.
+          # pip picks by tag: a wheel for another arch or libc is refused
+          # here, naming it, rather than imported wrongly later.
+          VERSION="$("$PY" -c 'import re,sys; t = open(sys.argv[1]).read(); m = re.search(r"(?ms)^\[project\].*?^version\s*=\s*\"([^\"]+)\"", t); print(m.group(1) if m else "")' ../pdf-python/pyproject.toml)"
+          test -n "$VERSION" || { echo "::error::no [project] version in crates/pdf-python/pyproject.toml" >&2; exit 1; }
+          "$VPY" -m pip install --disable-pip-version-check --no-index --no-deps --find-links "$WHEELS" "pdfluent==$VERSION"
+          if command -v cygpath >/dev/null 2>&1; then VPY="$(cygpath -w "$VPY")"; fi
+          echo "PDFLUENT_PYTHON=$VPY" >> "$GITHUB_ENV"
+          echo "chunks parity will compare against pdfluent $VERSION from run $RUN under $VPY"
+
       - name: Run smoke tests
+        env:
+          # Self-hosted is the release lane: there the parity suite fails on a
+          # missing or different Python binding instead of skipping.
+          PDFLUENT_RELEASE_LANE: ${{ inputs.runner_pool == 'self' && '1' || '0' }}
         run: npm test
 
       - name: Upload native binding
@@ -81,59 +208,264 @@ jobs:
           name: pdf-node-smoke-${{ matrix.os }}-node${{ matrix.node }}
           path: crates/pdf-node/index.*.node
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
 
 # ---------------------------------------------------------------------------
-# Release builds: all napi targets (only on v* tags or manual publish)
+# Release builds: all seven napi targets, on dispatch
 # ---------------------------------------------------------------------------
   build-release:
     name: Build release / ${{ matrix.target }}
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_npm == 'true'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ inputs.runner_pool == 'self' && matrix.os-self || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-apple-darwin
-            os: macos-13
+            # The retired Intel label is gone: x86_64 builds on
+            # macos-latest (arm64), cross to --target.
+            os: macos-latest
+            os-self: [self-hosted, macos, arm64, pdfluent-release]
           - target: aarch64-apple-darwin
             os: macos-latest
+            os-self: [self-hosted, macos, arm64, pdfluent-release]
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+            os-self: [self-hosted, linux, x64, pdfluent-release]
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
+            os-self: [self-hosted, linux, x64, pdfluent-release]
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
+            os-self: [self-hosted, linux, x64, pdfluent-release]
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            os-self: [self-hosted, linux, x64, pdfluent-release]
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            os-self: [self-hosted, windows, x64, pdfluent-release]
     defaults:
       run:
         working-directory: crates/pdf-node
 
     steps:
+      - name: Self-hosted runs never publish
+        if: inputs.runner_pool == 'self' && inputs.publish_npm == 'true'
+        shell: bash
+        run: |
+          echo "::error::runner_pool=self refuses publish_npm=true: self-hosted runs never publish" >&2
+          exit 1
+
       - uses: actions/checkout@v4
+
+      - name: Set up the self-hosted toolchain
+        if: inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          tools: rust,node,python,napi
+          rust-targets: ${{ matrix.target }}
+          node-version: '24'
+
+      # All four Linux legs link through zig (napi --zig in the build step
+      # below), so they take the zig tool too: pip ziglang plus
+      # cargo-zigbuild, like release-natives.yml. The musl legs for the
+      # dynamic CRT; the gnu legs for the glibc floor, see the build step.
+      # A step of its own rather than an expression in `tools:` above, which
+      # a_job_that_reaches_cargo_finds_it_on_path.py reads as a literal
+      # list. python rides along because setup_zig installs through the
+      # python it brings.
+      - name: Set up zig for the self-hosted Linux legs
+        if: inputs.runner_pool == 'self' && (matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-unknown-linux-gnu' || matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl')
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          tools: python,zig
+
+      # Missing is red here, in seconds, with the complete list -- before the
+      # build, never an hour in (m482). Read-only: it installs nothing. The
+      # --without mirrors the zig setup's own condition above: mac and
+      # Windows never install zig, so it is not asked of them. (The condition is
+      # negated because an empty --without must stay empty: `&& ''` would be
+      # falsy and fall through to the zig branch.)
+      - name: Preflight the release requirements
+        if: inputs.runner_pool == 'self'
+        shell: bash
+        run: |-
+          PY="$(command -v python3 || command -v python || true)"
+          if [ -z "$PY" ]; then
+            echo "gate_preflight: REFUSED: no python on PATH (the setup installs one only for jobs that list python in tools:)" >&2
+            exit 2
+          fi
+          "$PY" ../../scripts/ci/gate_preflight.py --release-job node-bindings.yml/build-release \
+            --without "${{ !(matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-unknown-linux-gnu' || matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl') && 'ziglang,cargo-zigbuild' || '' }}"
 
       # Pinned to rust-toolchain.toml: `@stable` adds the matrix target to
       # stable, cargo then switches to the pinned channel and finds no std
       # for it -- "can't find crate for `core`", naming neither.
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        if: inputs.runner_pool != 'self'
         with:
           toolchain: '1.94.0'
           targets: ${{ matrix.target }}
 
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
         with:
           key: node-release-${{ matrix.target }}
+          cache-bin: false
 
       - uses: actions/setup-node@v4
+        if: inputs.runner_pool != 'self'
         with:
           node-version: 24
 
       - name: Install dependencies
         run: npm install
 
+      # THE CROSS TARGETS NEED A CROSS LINKER, and until the step below actually
+      # passed the target to napi they never asked for one: those two jobs were
+      # building the host. All four Linux legs now link through zig, which
+      # is the cross linker for each of them; aarch64-linux-gnu-gcc, which
+      # the aarch64 gnu leg used to link with, linked against the runner's
+      # own glibc. It was set here, per job, rather than in
+      # .cargo/config.toml -- the file is read by every machine, including
+      # the Mac, where that linker does not exist. (codex, #1901)
+      #
+      # Both gnu legs build with napi --zig --zig-abi-suffix 2.17: zig links
+      # against a glibc 2.17 stub instead of the runner's. Without it the
+      # 1.1.0 candidates needed GLIBC_2.39 (x86_64, pidfd_spawnp) and
+      # GLIBC_2.43 (aarch64, atan2f), where @pdfluent/node-linux-x64-gnu@1.0.0
+      # needed at most GLIBC_2.17: 1.0.0 was built by hand with zig
+      # (docs/release/REGISTRY_1_0_0_RUNBOOK.md section 3.2, at v1.0.0:
+      # `--zig --compatibility manylinux2014`). The suffix is explicit
+      # because napi only defaults it for cross builds, and the x86_64 leg
+      # is not one. Held by node_glibc_floor.py in the release gate.
+      #
+      # Both musl legs build with napi --zig: the 2.x CLI links through
+      # `zig cc -target <triple>-musl` (a plain cargo build; napi's zig mode
+      # needs the `zig` binary on PATH, not cargo-zigbuild). The x86_64 leg
+      # used to link with musl-gcc from musl-tools, but the dynamic-CRT
+      # cdylib needs musl libgcc_s, which the host's musl-tools does not
+      # ship ("/usr/bin/ld: cannot find libgcc_s.so.1"); aarch64 musl has no
+      # apt linker at all (Ubuntu ships no aarch64 musl-gcc). And napi
+      # probes `zig version` on every cross-for-Linux build even without
+      # --zig, so without zig on PATH the log opens with "zig: not found".
+      # ziglang and cargo-zigbuild come from pip (no new Action to pin),
+      # like release-natives.yml installs them — and the bundled zig is
+      # exported onto PATH, because pip's ziglang ships no `zig` script,
+      # only `python -m ziglang`.
+      - name: Cross linker for ${{ matrix.target }}
+        if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-unknown-linux-gnu' || matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu|x86_64-unknown-linux-musl|aarch64-unknown-linux-musl)
+              python3 -m pip install --quiet ziglang cargo-zigbuild
+              python3 -c 'import os, ziglang; print(os.path.dirname(ziglang.__file__))' >> "$GITHUB_PATH"
+              ;;
+          esac
+
       - name: Build for ${{ matrix.target }}
-        run: npm run build -- --target ${{ matrix.target }}
+        # BASH, because this step is POSIX shell now (the musl legs source a
+        # helper and switch on the target) and one of these seven runners is
+        # Windows, whose default shell is PowerShell. Same reason as the step
+        # below it. (review, #1901)
+        shell: bash
+        # `npm run build -- --target X` PUT THE TARGET ON THE WRONG COMMAND.
+        # The script is `napi build --release --platform && node
+        # scripts/build/postbuild.cjs`, and npm appends `--` arguments to the
+        # LAST command in the chain -- so postbuild got the flag, napi built for
+        # the host, and three of these six jobs (musl and aarch64 on
+        # ubuntu-latest, both of them cross targets) produced
+        # `index.linux-x64-gnu.node`. Measured on this machine: with the flag on
+        # the npm script, `--target x86_64-apple-darwin` finished in 0.33 s and
+        # wrote no new file; called on napi directly it compiled for two minutes
+        # and wrote `index.darwin-x64.node`.
+        #
+        # What that cost: the artefact of three jobs is the same host binary
+        # under three names, so the publish never had six platforms. It fails
+        # loudly rather than shipping the wrong bytes -- `publish.sh` refuses to
+        # generate a partial platform set -- which is why nobody had seen a wrong
+        # `.node` on the registry; the channel simply could not be published.
+        # No linker env: all four Linux legs link through zig, and the linker
+        # env napi --zig exports overrides the musl-gcc linker
+        # .cargo/config.toml still names for x86_64 musl.
+        run: |
+          # musl cdylibs need the dynamic CRT plus the path scrubbing from
+          # musl_cdylib_rustflags.sh (P0: the flag must not live in the cargo
+          # config, where it would dynamically link the CLI too). napi appends
+          # its own -crt-static for musl targets and preserves this env.
+          # Every other leg takes the same remap block without the CRT flag
+          # (release_rustflags.sh): env flags replace the config's Mac-only
+          # block outright, so an unsourced leg ships the runner's paths.
+          case "${{ matrix.target }}" in
+            *-musl) source ../../scripts/release/musl_cdylib_rustflags.sh ;;
+            *) source ../../scripts/release/release_rustflags.sh ;;
+          esac
+          case "${{ matrix.target }}" in
+            *-musl)
+              # --zig, not --cross-compile: the latter is a napi 3 flag and
+              # the pinned 2.18 CLI dies on it ("Unsupported option name").
+              # Held by test_napi_build_flags.py against the 2.18 help text.
+              # napi --zig exports its musl zig-cc wrapper as the global
+              # CC/CXX, so host C builds (proc-macro deps like rquickjs)
+              # would emit musl ELF into the host link. HOST_CC/HOST_CXX
+              # pin the host compilations back to the host compiler (the cc
+              # crate prefers them over plain CC); the target keeps napi's
+              # wrapper through TARGET_CC.
+              export HOST_CC=cc HOST_CXX=c++
+              npx napi build --release --platform --zig --features ort-layout,ort-tables --target ${{ matrix.target }} ;;
+            *-linux-gnu)
+              # The glibc floor: see the Cross linker step. Same HOST_CC
+              # reason as the musl arm -- napi --zig exports its wrapper as
+              # the global CC for gnu targets too.
+              export HOST_CC=cc HOST_CXX=c++
+              npx napi build --release --platform --zig --zig-abi-suffix 2.17 --features ort-layout,ort-tables --target ${{ matrix.target }} ;;
+            *)
+              npx napi build --release --platform --features ort-layout,ort-tables --target ${{ matrix.target }} ;;
+          esac
+          node scripts/build/postbuild.cjs
+
+      # Minutes in, not hours later: the fresh .node names no build-host path,
+      # and the log shows the remap block this runner computed.
+      - name: The fresh binding embeds no build-host path
+        shell: bash
+        run: bash ../../scripts/release/check_build_host_paths.sh *.node
+
+      - name: The binary is the one this job was asked for
+        # BASH, because one of these six runners is Windows and its default
+        # shell is PowerShell, which cannot parse this body at all. (codex, #1901)
+        shell: bash
+        # `if-no-files-found: error` on the upload catches "no .node at all" and
+        # not "the .node of another platform", which is exactly what was
+        # happening. The expected name comes from the same matrix the generator,
+        # the validator and the publisher read.
+        run: |
+          verwacht="$(node -e "
+            const { MATRIX, nodeFileFor } = require('./scripts/release/platform-matrix.cjs');
+            const tags = {
+              'x86_64-apple-darwin': 'darwin-x64',
+              'aarch64-apple-darwin': 'darwin-arm64',
+              'x86_64-unknown-linux-gnu': 'linux-x64-gnu',
+              'x86_64-unknown-linux-musl': 'linux-x64-musl',
+              'aarch64-unknown-linux-gnu': 'linux-arm64-gnu',
+              'aarch64-unknown-linux-musl': 'linux-arm64-musl',
+              'x86_64-pc-windows-msvc': 'win32-x64-msvc',
+            };
+            const tag = tags['${{ matrix.target }}'];
+            if (!tag) { console.error('no tag for target ${{ matrix.target }}'); process.exit(2); }
+            if (!MATRIX.some((m) => m.tag === tag)) {
+              console.error('tag ' + tag + ' is not in the platform matrix'); process.exit(2);
+            }
+            process.stdout.write(nodeFileFor(tag));
+          ")"
+          if [ ! -f "$verwacht" ]; then
+            echo "::error::${{ matrix.target }} produced no $verwacht. Present: $(ls index.*.node 2>/dev/null | tr '\n' ' ')" >&2
+            exit 1
+          fi
+          # And nothing else, so a stale binary from a cached target directory
+          # cannot travel under this job's artefact name.
+          for f in index.*.node; do
+            [ "$f" = "$verwacht" ] || { echo "::error::$f is not this job's binary ($verwacht)" >&2; exit 1; }
+          done
+          echo "$verwacht is present and is the only binary here"
 
       - name: Upload platform binding
         uses: actions/upload-artifact@v4
@@ -141,20 +473,19 @@ jobs:
           name: pdf-node-release-${{ matrix.target }}
           path: crates/pdf-node/index.*.node
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
 # ---------------------------------------------------------------------------
-# npm publish (requires all release builds to succeed)
+# Release gate: the artefact gate plus the loader smoke, over the fresh bytes
 # ---------------------------------------------------------------------------
-  publish-npm:
-    name: Publish to npm
+  release-gate:
+    name: Release gate (artefacts + smoke)
     needs: [build-and-test, build-release]
-    # `secrets` is not a valid context in a job-level `if:` — GitHub rejects
-    # the whole file with "Unrecognized named-value: 'secrets'", so this
-    # workflow could not be dispatched at all. The token check moved to the
-    # publish step, where `secrets` is available.
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_npm == 'true'
-    runs-on: ubuntu-latest
+    # One failed leg must not skip this validation: it runs on the legs
+    # that did succeed, names every skipped one below, and fails at the
+    # end when any is missing.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ inputs.runner_pool == 'self' && fromJSON('["self-hosted", "linux", "x64", "pdfluent-release"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
     defaults:
@@ -162,9 +493,193 @@ jobs:
         working-directory: crates/pdf-node
 
     steps:
+      - name: Self-hosted runs never publish
+        if: inputs.runner_pool == 'self' && inputs.publish_npm == 'true'
+        shell: bash
+        run: |
+          echo "::error::runner_pool=self refuses publish_npm=true: self-hosted runs never publish" >&2
+          exit 1
+
       - uses: actions/checkout@v4
 
+      - name: Set up the self-hosted toolchain
+        if: inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          tools: node,python
+          node-version: '24'
+
+      # Missing is red here, in seconds, with the complete list (m482).
+      # Read-only: it installs nothing.
+      - name: Preflight the release requirements
+        if: inputs.runner_pool == 'self'
+        shell: bash
+        run: python3 ../../scripts/ci/gate_preflight.py --release-job node-bindings.yml/release-gate
+
       - uses: actions/setup-node@v4
+        if: inputs.runner_pool != 'self'
+        with:
+          node-version: 24
+
+      - uses: actions/setup-python@v5
+        if: inputs.runner_pool != 'self'
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Download all platform bindings
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pdf-node-release-*
+          path: crates/pdf-node/artifacts
+          merge-multiple: true
+
+      - name: Move bindings into place
+        shell: bash
+        run: |
+          find artifacts -name 'index.*.node' -exec cp {} . \;
+          ls -la index.*.node
+
+      # The build legs that failed have no binding: list every expected
+      # platform and name the missing ones, so a partial run is never
+      # silent. Filenames are index.<tag>.node, the tags of MATRIX in
+      # crates/pdf-node/scripts/release/platform-matrix.cjs. This fails
+      # nothing; the last step fails the job when any is missing.
+      - name: List the expected legs (never silent)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > .missing-legs
+          for tag in darwin-arm64 darwin-x64 linux-x64-gnu linux-x64-musl linux-arm64-gnu linux-arm64-musl win32-x64-msvc; do
+            if [[ -f "index.${tag}.node" ]]; then
+              echo "leg $tag: present"
+            else
+              echo "SKIPPED leg $tag: build failed"
+              echo "$tag" >> .missing-legs
+            fi
+          done
+          if [[ -s .missing-legs ]]; then
+            echo "missing legs recorded in .missing-legs"
+          else
+            echo "all seven legs present"
+          fi
+
+      # The same generator the publish runs: it refuses unless all seven
+      # fresh .node files are present, so a partial set fails here and not
+      # in the publish.
+      - name: Generate platform package dirs
+        run: node scripts/release/generate-npm-dirs.cjs
+
+      # The gate reads the seven fresh .node files: presence per platform,
+      # per-native size, and kind/arch/libc off the bytes. A host binary
+      # travelling under a cross target's name fails here.
+      - name: Artefact gate over the fresh bindings
+        shell: bash
+        run: python3 ../../scripts/release/artifacts_cover_every_platform.py --node-dir . --require-all node
+
+      # The prepublish guard publish.sh runs first: seven platform dirs, one
+      # binary and an undrifted LICENSE per package. Same script, earlier.
+      - name: Prepublish guard
+        run: node scripts/release/guard-prepublish.cjs
+
+      # The glibc floor over the two fresh gnu bindings: no GLIBC_ symbol
+      # version above 2.17, which is what @pdfluent/node-linux-x64-gnu@1.0.0
+      # needed. The 1.1.0 candidates built without zig needed 2.39 and 2.43.
+      - name: The gnu bindings need no glibc above 2.17
+        shell: bash
+        run: python3 ../../scripts/release/node_glibc_floor.py --max 2.17 index.linux-x64-gnu.node index.linux-arm64-gnu.node
+
+      # No fresh binding names the runner that built it: no checkout, cargo
+      # home or toolchain path in its strings. The 1.1.0 candidates carried
+      # hundreds, because the remap block only knew one Mac's paths.
+      - name: No binding embeds its build host's paths
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 ../../scripts/release/binary_host_paths.py --max 0 *.node
+
+      # The loader smoke, against the fresh linux-x64-gnu binary the loader
+      # picks on this runner. The other six platforms' bytes are judged by
+      # the artefact gate above, which reads what `npm test` cannot load here.
+      - name: Loader smoke on the fresh bytes
+        run: npm test
+
+      # Red when any leg was skipped: the generator and the gate above
+      # already failed on a partial set, so this is the verdict made
+      # explicit rather than a second rule. Runs even when they failed.
+      - name: Fail if any leg was skipped
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          if [[ -s .missing-legs ]]; then
+            echo "missing legs:"
+            sed 's/^/  SKIPPED leg /; s/$/: build failed/' .missing-legs
+            exit 1
+          fi
+          echo "no leg skipped"
+
+# ---------------------------------------------------------------------------
+# npm publish (manual: dispatch with publish_npm=true, behind the gate)
+# ---------------------------------------------------------------------------
+  publish-npm:
+    name: Publish to npm
+    needs: [build-and-test, build-release, release-gate]
+    # `secrets` is not a valid context in a job-level `if:` — GitHub rejects
+    # the whole file with "Unrecognized named-value: 'secrets'", so this
+    # workflow could not be dispatched at all. The token check moved to the
+    # publish step, where `secrets` is available.
+    #
+    # MANUAL: dispatch at a tag with publish_npm=true is the only way in.
+    # A `v*` tag used to publish automatically, with no gate and no smoke
+    # over the fresh bytes; tags start nothing in this workflow now. And a
+    # branch dispatch with publish_npm=true publishes nothing either: an
+    # npm publish needs a tag, not just an input.
+    #
+    # A PRE-RELEASE TAG ARMS NOTHING HERE (#358). The rule is about the REF and
+    # not about how the run started: a dispatch aimed at `v1.0.0-rc.3` is the
+    # same publish with a person's name on it, and precondition 6 of #358 has a
+    # real publish running from the runbook on our own machines anyway.
+    # Held by scripts/ci/a_pre_release_tag_arms_no_publish.py, which evaluates
+    # this condition rather than grepping for the clause.
+    if: >-
+      !(github.ref_type == 'tag' && contains(github.ref_name, '-'))
+      && github.ref_type == 'tag'
+      && inputs.publish_npm == 'true'
+    runs-on: ${{ inputs.runner_pool == 'self' && fromJSON('["self-hosted", "linux", "x64", "pdfluent-release"]') || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: crates/pdf-node
+
+    steps:
+      - name: Self-hosted runs never publish
+        if: inputs.runner_pool == 'self' && inputs.publish_npm == 'true'
+        shell: bash
+        run: |
+          echo "::error::runner_pool=self refuses publish_npm=true: self-hosted runs never publish" >&2
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: Set up the self-hosted toolchain
+        if: inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          tools: node
+          node-version: '24'
+
+      # Missing is red here, in seconds, with the complete list (m482).
+      # Read-only: it installs nothing.
+      - name: Preflight the release requirements
+        if: inputs.runner_pool == 'self'
+        shell: bash
+        run: python3 ../../scripts/ci/gate_preflight.py --release-job node-bindings.yml/publish-npm
+
+      - uses: actions/setup-node@v4
+        if: inputs.runner_pool != 'self'
         with:
           node-version: 24
 
@@ -183,10 +698,38 @@ jobs:
           find artifacts -name 'index.*.node' -exec cp {} . \;
           ls -la index.*.node
 
-      - name: Prepare npm packages
-        run: npm run prepublishOnly
+      # The packed tarballs publish.sh is about to upload, scanned before
+      # they go: generate the same platform dirs, pack all seven plus the
+      # main package to a temp dir (never into the tree: publish.sh
+      # refuses a dirty tree), scan, remove. (#643)
+      - name: No packed tarball carries the SVG rasteriser
+        run: |
+          MAIN_VER="$(node -p "require('./package.json').version")"
+          PDFLUENT_NODE_PLATFORM_VERSION="${PDFLUENT_NODE_PLATFORM_VERSION:-$MAIN_VER}" node scripts/release/generate-npm-dirs.cjs
+          scan="$(mktemp -d)"
+          for t in darwin-arm64 darwin-x64 linux-x64-gnu linux-x64-musl linux-arm64-gnu linux-arm64-musl win32-x64-msvc; do
+            (cd "npm/$t" && npm pack --ignore-scripts --pack-destination "$scan" >/dev/null)
+          done
+          npm pack --ignore-scripts --pack-destination "$scan" >/dev/null
+          python3 ../../tests/compat/no_cairo_in_artifacts.py "$scan"
+          rm -rf "$scan"
 
       - name: Publish platform packages and main package
+        # THE SAME SCRIPT THE OPERATOR RUNS, NOT A SECOND PATH (#541). This job
+        # ran `npm run prepublishOnly` (a read-only guard) and then
+        # `npx napi publish`, which builds its own platform directories -- so
+        # `scripts/release/generate-npm-dirs.cjs`, the file that decides what
+        # goes in each platform package and is the one that carries the
+        # third-party notices beside each binary, was not part of publishing at
+        # all. `napi prepublish` is also the path that shipped the broken
+        # 3-of-6 @pdfluent/node@1.0.0-beta.17, which is why publish.sh exists.
+        #
+        # publish.sh regenerates the six directories, asserts one binary and an
+        # undrifted LICENSE per package, publishes idempotently (a version
+        # already on the registry is skipped, so a re-run after a partial
+        # failure is safe), validates the exact main tarball and then publishes
+        # it with --ignore-scripts. It refuses a dirty tree, which in this job
+        # is satisfied by construction.
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -196,5 +739,5 @@ jobs:
             exit 1
           fi
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> ~/.npmrc
-          npx napi publish
+          bash scripts/release/publish.sh
           echo "npm publish complete"

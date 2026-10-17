@@ -26,7 +26,7 @@ use lopdf::{
 use pdf_annot::builder::{add_annotation_to_page, AnnotRect, AnnotationBuilder};
 use pdf_annot::Annotation;
 use pdf_compliance::{validate_pdfa as compliance_validate_pdfa, PdfALevel, Severity};
-use pdf_engine::{PdfDocument, RenderOptions, ThumbnailOptions};
+use pdf_engine::{BlockKind, PdfDocument, RenderOptions, ThumbnailOptions};
 use pdf_forms::{
     apply_field_value, parse_acroform, FieldType, FieldValue, WriteOutcome, WriteValue,
     WritebackError,
@@ -179,6 +179,12 @@ fn new_string_array<'a>(
     for (i, item) in items.iter().enumerate() {
         let s = env.new_string(item.as_str())?;
         env.set_object_array_element(&arr, i as i32, &s)?;
+        // The array holds its own reference from here on. The local one would
+        // otherwise stay live until the native method returns, and the block
+        // API passes sixteen strings per block through here: a hundred blocks
+        // is sixteen hundred live locals, past the 512-entry local table an
+        // Android runtime typically gives a native frame.
+        env.delete_local_ref(s)?;
     }
     Ok(JObject::from(arr))
 }
@@ -1283,6 +1289,271 @@ pub extern "system" fn Java_com_pdfluent_PdfUtils_nativeValidatePdfa<'a>(
     }
 }
 
+/// The window an `extract` native was asked for (#573).
+///
+/// `pageCount` is signed and negative means "to the end of the document",
+/// which is what `ExtractOptions::page_count = None` says in Rust. A count of
+/// zero therefore still means zero pages.
+fn extract_options(first_page: jint, page_count: jint) -> pdf_engine::ExtractOptions {
+    // No struct literal: `ExtractOptions` is `#[non_exhaustive]`, so the
+    // asked-for fields are assigned onto the default.
+    let mut options = pdf_engine::ExtractOptions::default();
+    options.first_page = first_page.max(0) as usize;
+    options.page_count = (page_count >= 0).then_some(page_count as usize);
+    // AND WHATEVER THE ENGINE ADDS NEXT stays at its default rather than
+    // left out: this is a binding, and a field it forgets is a feature this
+    // language silently does not get. `learned` arrived that way (#599) and
+    // broke the build here rather than in a test, which is the lucky version
+    // of the same mistake.
+    options
+}
+
+/// `native String nativeExtractMarkdown(long handle, int firstPage, int pageCount)`
+///
+/// Preview: output quality is still improving and the API may change in a minor release.
+///
+/// The document as markdown, in reading order (#573).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeExtractMarkdown<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    first_page: jint,
+    page_count: jint,
+) -> jobject {
+    if handle == 0 {
+        throw_pdf_exception(&mut env, "document is closed");
+        return JObject::null().into_raw();
+    }
+    let doc = unsafe { from_handle(handle) };
+    match doc
+        .engine
+        .extract_markdown(&extract_options(first_page, page_count))
+    {
+        Ok(markdown) => match env.new_string(&markdown) {
+            Ok(s) => s.into_raw(),
+            Err(e) => {
+                throw_pdf_exception(&mut env, &format!("string conversion error: {e}"));
+                JObject::null().into_raw()
+            }
+        },
+        Err(e) => {
+            throw_pdf_exception(&mut env, &e.to_string());
+            JObject::null().into_raw()
+        }
+    }
+}
+
+/// `native String nativeExtractDocling(long handle, int firstPage, int pageCount, String name)`
+///
+/// Preview: output quality is still improving and the API may change in a minor release.
+///
+/// The document as a Docling `DoclingDocument`, as JSON (#629). The Java side
+/// never passes a null `name`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeExtractDocling<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    first_page: jint,
+    page_count: jint,
+    name: JString<'a>,
+) -> jobject {
+    if handle == 0 {
+        throw_pdf_exception(&mut env, "document is closed");
+        return JObject::null().into_raw();
+    }
+    let name: String = match env.get_string(&name) {
+        Ok(s) => s.into(),
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("name string error: {e}"));
+            return JObject::null().into_raw();
+        }
+    };
+    let doc = unsafe { from_handle(handle) };
+    match doc
+        .engine
+        .extract_docling(&name, &extract_options(first_page, page_count))
+    {
+        Ok(json) => match env.new_string(&json) {
+            Ok(s) => s.into_raw(),
+            Err(e) => {
+                throw_pdf_exception(&mut env, &format!("string conversion error: {e}"));
+                JObject::null().into_raw()
+            }
+        },
+        Err(e) => {
+            throw_pdf_exception(&mut env, &e.to_string());
+            JObject::null().into_raw()
+        }
+    }
+}
+
+/// `native String[] nativeExtractBlocks(long handle, int firstPage, int pageCount)`
+///
+/// Preview: output quality is still improving and the API may change in a minor release.
+///
+/// The document's blocks as a flat `String[]` with stride 16 (#573):
+/// `[kind, text, page, x0, y0, x1, y1, index, continuesPrevious, level,
+/// ordinal, row, column, rowSpan, columnSpan, header]` per block, an empty
+/// string where the field does not belong to the block's kind.
+///
+/// THE STRIDE OF THIS METHOD NEVER CHANGES, and #624 is why it is written down
+/// (codex on #1977). The library is loaded at run time from `java.library.path`
+/// or `PDFLUENT_NATIVE_LIB`, so an OLD jar with a NEW library is a combination
+/// this project supports -- and that jar's loop advances by sixteen whatever the
+/// library emits. Appending a field here would hand it the first block's extra
+/// value as the second block's kind and shift every field after it, silently. So
+/// a field added to the record goes in a NEW method:
+/// `nativeExtractBlocksWithConfidence` next door emits seventeen, and a jar that
+/// knows to ask for it is by construction a jar that knows how to read it.
+///
+/// A flat array of strings for the reason `nativeExtractTextBlocks` next door
+/// uses one: building a Java object per block across JNI means finding a
+/// class, a constructor and every field from Rust, and the wrapper on the
+/// other side has to walk the result either way. `PdfluentDocument` turns this
+/// back into a list of `Block`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeExtractBlocks<'a>(
+    env: JNIEnv<'a>,
+    class: JClass<'a>,
+    handle: jlong,
+    first_page: jint,
+    page_count: jint,
+) -> jobject {
+    flat_blocks(env, class, handle, first_page, page_count, false)
+}
+
+/// `native String[] nativeExtractBlocksWithConfidence(long, int, int)`
+///
+/// Preview: output quality is still improving and the API may change in a minor release.
+///
+/// The same records with `confidence` and the builder's grid evidence appended,
+/// stride 22 (#624, #574). A separate
+/// method rather than a wider stride on the one above, because an old jar loading
+/// a new library decodes by a stride it was compiled with: a jar that calls this
+/// name is one that knows the record is seventeen long.
+///
+/// The value is empty where no model spoke about the block, which is `None`
+/// everywhere else in this field and means nobody measured it -- not a confidence
+/// of zero.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeExtractBlocksWithConfidence<'a>(
+    env: JNIEnv<'a>,
+    class: JClass<'a>,
+    handle: jlong,
+    first_page: jint,
+    page_count: jint,
+) -> jobject {
+    flat_blocks(env, class, handle, first_page, page_count, true)
+}
+
+/// The body both of them share: the records, with or without the last field.
+fn flat_blocks<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    first_page: jint,
+    page_count: jint,
+    with_confidence: bool,
+) -> jobject {
+    if handle == 0 {
+        throw_pdf_exception(&mut env, "document is closed");
+        return JObject::null().into_raw();
+    }
+    let doc = unsafe { from_handle(handle) };
+    let blocks = match doc
+        .engine
+        .extract_blocks(&extract_options(first_page, page_count))
+    {
+        Ok(blocks) => blocks,
+        Err(e) => {
+            throw_pdf_exception(&mut env, &e.to_string());
+            return JObject::null().into_raw();
+        }
+    };
+    let mut items: Vec<String> = Vec::with_capacity(blocks.len() * 16);
+    for block in &blocks {
+        let (kind, level, ordinal, cell) = match block.kind {
+            BlockKind::Paragraph => ("paragraph", None, None, None),
+            BlockKind::Heading { level } => ("heading", Some(level), None, None),
+            BlockKind::ListItem { level, ordinal } => ("listItem", Some(level), ordinal, None),
+            BlockKind::TableCell {
+                row,
+                column,
+                row_span,
+                column_span,
+                header,
+            } => (
+                "tableCell",
+                None,
+                None,
+                Some((row, column, row_span, column_span, header)),
+            ),
+            BlockKind::Header => ("header", None, None, None),
+            BlockKind::Footer => ("footer", None, None, None),
+            BlockKind::Caption => ("caption", None, None, None),
+            // `BlockKind` is `#[non_exhaustive]`: a kind added to the engine
+            // reaches Java as a paragraph rather than stopping the build of a
+            // crate that has not been taught about it yet.
+            _ => ("paragraph", None, None, None),
+        };
+        items.push(kind.to_string());
+        items.push(block.text.clone());
+        items.push(block.page.to_string());
+        for edge in block.bbox {
+            items.push(edge.to_string());
+        }
+        items.push(block.index.to_string());
+        items.push(block.continues_previous.to_string());
+        items.push(level.map(|l| l.to_string()).unwrap_or_default());
+        items.push(ordinal.map(|o| o.to_string()).unwrap_or_default());
+        match cell {
+            None => {
+                for _ in 0..5 {
+                    items.push(String::new());
+                }
+            }
+            Some((row, column, row_span, column_span, header)) => {
+                items.push(row.to_string());
+                items.push(column.to_string());
+                items.push(row_span.to_string());
+                items.push(column_span.to_string());
+                items.push(header.to_string());
+            }
+        }
+        if with_confidence {
+            // Empty rather than a number where no model spoke, which is what
+            // `None` means everywhere else in this field: nobody measured it.
+            items.push(block.confidence.map(|c| c.to_string()).unwrap_or_default());
+            // And the builder's own evidence about this cell's table (#574): five
+            // values, empty on a block that is not a cell. Appended to THIS
+            // method's record only, for the reason the method exists at all.
+            match block.grid {
+                Some(g) => {
+                    items.push(g.thin_rows.to_string());
+                    items.push(g.fill.to_string());
+                    items.push(g.retried_from.to_string());
+                    items.push(g.full_rows.to_string());
+                    items.push(g.columns.to_string());
+                }
+                None => {
+                    for _ in 0..5 {
+                        items.push(String::new());
+                    }
+                }
+            }
+        }
+    }
+    match new_string_array(&mut env, &items) {
+        Ok(arr) => arr.into_raw(),
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("array creation error: {e}"));
+            JObject::null().into_raw()
+        }
+    }
+}
+
 /// `native String[] nativeExtractTextBlocks(long handle, int pageIndex)`
 ///
 /// Returns a flat `String[]` with stride 5: `[x, y, width, height, text]` per
@@ -1340,6 +1611,192 @@ pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeExtractTextBlock
         items.push(block.text());
     }
     match new_string_array(&mut env, &items) {
+        Ok(arr) => arr.into_raw(),
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("array creation error: {e}"));
+            JObject::null().into_raw()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Plain embedded-image API: the facade's image calls over JNI.
+// ---------------------------------------------------------------------------
+
+/// Open the plain facade over the handle's source bytes.
+fn facade_for(doc: &JniDocument) -> Result<pdfluent::PdfDocument, String> {
+    pdfluent::PdfDocument::from_bytes(&doc.raw_bytes).map_err(|e| e.to_string())
+}
+
+/// `native String[] nativePageImages(long handle, int pageIndex)`
+///
+/// Returns a flat `String[]` with stride 10: `[id, width, height,
+/// bitsPerComponent, components, colorSpace, colorSpaceName, filter, name,
+/// hasMask]` per stored image, `hasMask` as `"true"`/`"false"`.
+/// `pageIndex` counts from 0. Empty array for pages with no images.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativePageImages<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    page_index: jint,
+) -> jobject {
+    if handle == 0 {
+        throw_pdf_exception(&mut env, "document is closed");
+        return JObject::null().into_raw();
+    }
+    if page_index < 0 {
+        throw_pdf_exception(&mut env, "page index out of range");
+        return JObject::null().into_raw();
+    }
+    let doc = unsafe { from_handle(handle) };
+    let facade = match facade_for(doc) {
+        Ok(facade) => facade,
+        Err(e) => {
+            throw_pdf_exception(&mut env, &e);
+            return JObject::null().into_raw();
+        }
+    };
+    let images = match facade.page_images(page_index as usize + 1) {
+        Ok(images) => images,
+        Err(e) => {
+            throw_pdf_exception(&mut env, &e.to_string());
+            return JObject::null().into_raw();
+        }
+    };
+    let mut items: Vec<String> = Vec::with_capacity(images.len() * 10);
+    for image in &images {
+        items.push(image.id.as_u32().to_string());
+        items.push(image.width.to_string());
+        items.push(image.height.to_string());
+        items.push(image.bits_per_component.to_string());
+        items.push(image.components.to_string());
+        items.push(image.color_space.name().to_string());
+        items.push(image.color_space_name.clone());
+        items.push(image.filter.clone());
+        items.push(image.name.clone());
+        items.push(if image.has_mask {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        });
+    }
+    match new_string_array(&mut env, &items) {
+        Ok(arr) => arr.into_raw(),
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("array creation error: {e}"));
+            JObject::null().into_raw()
+        }
+    }
+}
+
+/// Append a big-endian length prefix and the bytes that follow it.
+fn push_len_prefixed(buf: &mut Vec<u8>, bytes: &[u8]) {
+    buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+    buf.extend_from_slice(bytes);
+}
+
+/// `native byte[] nativeExtractImageData(long handle, int imageId)`
+///
+/// Returns one stored image's header facts plus encoded bytes:
+/// `[width:4][height:4][bitsPerComponent:4][components:4][masked:4][xres:4][yres:4]`,
+/// all big-endian u32, then length-prefixed UTF-8 `colorSpace`,
+/// `colorSpaceName` and `encoding`, then the length-prefixed encoded bytes.
+/// Null on failure, with a pending `PdfluentException`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeExtractImageData<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    image_id: jint,
+) -> jobject {
+    if handle == 0 {
+        throw_pdf_exception(&mut env, "document is closed");
+        return JObject::null().into_raw();
+    }
+    if image_id < 0 {
+        throw_pdf_exception(&mut env, "unknown image id");
+        return JObject::null().into_raw();
+    }
+    let doc = unsafe { from_handle(handle) };
+    let facade = match facade_for(doc) {
+        Ok(facade) => facade,
+        Err(e) => {
+            throw_pdf_exception(&mut env, &e);
+            return JObject::null().into_raw();
+        }
+    };
+    let image = match facade.extract_image_data(pdfluent::ImageId::from(image_id as u32)) {
+        Ok(image) => image,
+        Err(e) => {
+            throw_pdf_exception(&mut env, &e.to_string());
+            return JObject::null().into_raw();
+        }
+    };
+    let mut buf = Vec::with_capacity(28 + image.data.len() + 64);
+    buf.extend_from_slice(&image.width.to_be_bytes());
+    buf.extend_from_slice(&image.height.to_be_bytes());
+    buf.extend_from_slice(&u32::from(image.bits_per_component).to_be_bytes());
+    buf.extend_from_slice(&u32::from(image.components).to_be_bytes());
+    buf.extend_from_slice(&u32::from(image.masked).to_be_bytes());
+    buf.extend_from_slice(&image.xres.to_be_bytes());
+    buf.extend_from_slice(&image.yres.to_be_bytes());
+    push_len_prefixed(&mut buf, image.color_space.name().as_bytes());
+    push_len_prefixed(&mut buf, image.color_space_name.as_bytes());
+    push_len_prefixed(&mut buf, image.encoding.as_bytes());
+    push_len_prefixed(&mut buf, &image.data);
+    match env.byte_array_from_slice(&buf) {
+        Ok(arr) => arr.into_raw(),
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("array creation error: {e}"));
+            JObject::null().into_raw()
+        }
+    }
+}
+
+/// `native byte[] nativeDecodeImagePixels(long handle, int imageId)`
+///
+/// Returns one stored image decoded to raw samples, top row first:
+/// `[width:4][height:4][components:4]`, all big-endian u32, then a
+/// length-prefixed UTF-8 `colorSpace`, then the length-prefixed samples.
+/// Null on failure, with a pending `PdfluentException`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeDecodeImagePixels<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    image_id: jint,
+) -> jobject {
+    if handle == 0 {
+        throw_pdf_exception(&mut env, "document is closed");
+        return JObject::null().into_raw();
+    }
+    if image_id < 0 {
+        throw_pdf_exception(&mut env, "unknown image id");
+        return JObject::null().into_raw();
+    }
+    let doc = unsafe { from_handle(handle) };
+    let facade = match facade_for(doc) {
+        Ok(facade) => facade,
+        Err(e) => {
+            throw_pdf_exception(&mut env, &e);
+            return JObject::null().into_raw();
+        }
+    };
+    let image = match facade.decode_image_pixels(pdfluent::ImageId::from(image_id as u32)) {
+        Ok(image) => image,
+        Err(e) => {
+            throw_pdf_exception(&mut env, &e.to_string());
+            return JObject::null().into_raw();
+        }
+    };
+    let mut buf = Vec::with_capacity(12 + image.pixels.len() + 16);
+    buf.extend_from_slice(&image.width.to_be_bytes());
+    buf.extend_from_slice(&image.height.to_be_bytes());
+    buf.extend_from_slice(&u32::from(image.components).to_be_bytes());
+    push_len_prefixed(&mut buf, image.color_space.name().as_bytes());
+    push_len_prefixed(&mut buf, &image.pixels);
+    match env.byte_array_from_slice(&buf) {
         Ok(arr) => arr.into_raw(),
         Err(e) => {
             throw_pdf_exception(&mut env, &format!("array creation error: {e}"));

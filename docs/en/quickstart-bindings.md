@@ -119,4 +119,4 @@ mapping proof is a Quality-milestone item (QR-11).
 ## Troubleshooting
 
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for install/build, native-lib
-load, WASM init, license activation, and malformed/encrypted-PDF issues.
+load, WASM init, licensing, and malformed/encrypted-PDF issues.

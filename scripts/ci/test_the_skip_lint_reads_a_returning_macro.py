@@ -47,6 +47,49 @@ fn it_needs_a_host_font() {
 """
 
 
+# A silent bail-out: the shape the lint must report, with no macro in sight.
+SILENT = """
+#[test]
+fn it_writes_the_fixtures() {
+    let Ok(dir) = std::env::var("PDFA_FIXTURE_DIR") else {
+        return;
+    };
+    std::fs::write(format!("{dir}/one.pdf"), build()).expect("write fixture");
+}
+"""
+
+# A helper that hands a word back to its caller. Not a bail-out: the caller
+# asserts on the word, so something is still being measured. Reading the bare
+# word `return` reported this as a silent skip until 10-09-2026 (#510).
+A_HELPER_THAT_RETURNS_A_VALUE = """
+fn name_of_embedded_face(doc: &Document) -> String {
+    let Ok(face) = ttf_parser::Face::parse(&stream.content, 0) else {
+        return String::from("<unparseable>");
+    };
+    face.family()
+}
+
+#[test]
+fn the_face_is_the_one_that_can_draw_it() {
+    assert_eq!(name_of_embedded_face(&doc), "Noto Naskh Arabic");
+}
+"""
+
+
+# `return ();` is `return;` with the unit written out. A narrowing that reads
+# the explicit unit as a value hands back the silent skip this lint is for.
+# Reported by codex on #1865.
+SILENT_WITH_AN_EXPLICIT_UNIT = """
+#[test]
+fn it_writes_the_fixtures() {
+    let Ok(dir) = std::env::var("PDFA_FIXTURE_DIR") else {
+        return ();
+    };
+    std::fs::write(format!("{dir}/one.pdf"), build()).expect("write fixture");
+}
+"""
+
+
 def run(source: str, mutate: bool = False) -> tuple[int, str]:
     """Run the lint over a tree holding one test file, and report its verdict.
 
@@ -104,6 +147,45 @@ class TheSkipLintReadsAReturningMacro(unittest.TestCase):
             code, 0,
             "`skip_test!` announces and returns in one, and the lint reported it "
             f"as a silent skip anyway. The lint said:\n{output}",
+        )
+
+    def test_a_bare_silent_return_is_reported(self) -> None:
+        """The rule the whole lint is for, with no macro involved.
+
+        The narrowing below asks what a `return` hands back. Without this case
+        the narrowing could go all the way to "nothing is a bail-out" and every
+        other case here would still pass.
+        """
+        code, output = run(SILENT)
+        self.assertEqual(
+            code, 1,
+            "a test that returns in silence when its environment variable is "
+            f"unset was not reported. The lint said:\n{output}",
+        )
+        self.assertIn("skipping.rs", output)
+
+    def test_an_explicit_unit_return_is_still_silent(self) -> None:
+        """`return ();` ends the test exactly as `return;` does."""
+        code, output = run(SILENT_WITH_AN_EXPLICIT_UNIT)
+        self.assertEqual(
+            code, 1,
+            "a test that bails out with `return ();` was not reported. The "
+            f"lint said:\n{output}",
+        )
+        self.assertIn("skipping.rs", output)
+
+    def test_a_helper_that_returns_a_value_is_not_a_bail_out(self) -> None:
+        """A `return` that hands a word to the caller does not end a test.
+
+        The caller asserts on the word, so the measurement is still happening
+        one frame up. Reading the bare word `return` made the lint report such
+        a helper, and a lint that cries wolf gets switched off.
+        """
+        code, output = run(A_HELPER_THAT_RETURNS_A_VALUE)
+        self.assertEqual(
+            code, 0,
+            "a helper returning a value was reported as a silent skip. The "
+            f"lint said:\n{output}",
         )
 
     def test_the_lint_refuses_a_tree_it_cannot_read(self) -> None:

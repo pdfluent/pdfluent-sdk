@@ -8,7 +8,6 @@ All public symbols here are re-exported by ``pdfluent.__init__``.
 
 from __future__ import annotations
 
-from typing import Iterator, List, Optional, Tuple, Type, Union
 
 # ---------------------------------------------------------------------------
 # Exception hierarchy
@@ -24,7 +23,7 @@ class PdfluentValidationError(PdfluentError):
     """Raised when a document fails schema or compliance validation."""
 
 class PdfluentRenderError(PdfluentError):
-    """Raised when page rendering or XFA flattening fails."""
+    """Raised when a page cannot be rendered."""
 
 class PdfluentEncryptedError(PdfluentError):
     """Raised when an operation is blocked by PDF encryption."""
@@ -61,6 +60,67 @@ def decrypt_pdf(input_path: str, output_path: str, password: str) -> None:
     """Decrypt a password-protected PDF and write the decrypted copy."""
     ...
 
+def extract_office(
+    source: Union[str, bytes], format: str = "markdown", name: str = "document"
+) -> str:
+    ...
+
+def render_markdown(blocks: List[Block]) -> str:
+    """Render blocks as markdown, the module-level renderer."""
+    ...
+
+def page_spans(doc: Document, page: int) -> List[TextSpan]:
+    """Every span of one page, hidden ones included, in draw order."""
+    ...
+
+def page_images(doc: Document, page: int) -> List[List[float]]:
+    """Image boxes of one page in PDF user space, y up, as ``[x0, y0, x1, y1]``."""
+    ...
+
+def ocr_engine_available() -> bool:
+    """Whether an OCR engine is available to this build."""
+    ...
+
+# ---------------------------------------------------------------------------
+# Door bridge (L3): read off the top level by pdfluent_extract
+# ---------------------------------------------------------------------------
+
+def door_file_metadata(doc: Document) -> dict[str, object>:
+    """File-level metadata record for the door's JSON output."""
+    ...
+
+def door_toc(doc: Document) -> list[list[object]]:
+    """Outline rows as [level, title, page] triples."""
+    ...
+
+def door_form_details(doc: Document) -> list[dict[str, object]]:
+    """Key/value form-field records."""
+    ...
+
+def door_page_drawings(doc: Document, page: int) -> dict[str, object]:
+    """One page's images, rulings, fills and graphic clusters."""
+    ...
+
+def door_page_links(doc: Document, page: int) -> list[dict[str, object]]:
+    """One page's links as plain dicts."""
+    ...
+
+def door_page_tables(doc: Document, page: int) -> list[dict[str, object]]:
+    """One page's table proposals as plain dicts."""
+    ...
+
+def door_page_spans(page: Page) -> list[tuple[str, float, float, float, list[list[float]], bool]]:
+    """One page's spans with per-glyph advance boxes."""
+    ...
+
+def door_page_size(page: Page) -> tuple[float, float]:
+    """One page's exact size in points as (width, height)."""
+    ...
+
+def door_page_span_geometry(page: Page) -> list[tuple[str, float, float, float, Optional[float], Optional[float], bool]]:
+    """One page's spans with tight-geometry boxes in extraction order."""
+    ...
+
 # ---------------------------------------------------------------------------
 # Document
 # ---------------------------------------------------------------------------
@@ -79,7 +139,15 @@ class Document:
     """
 
     def __init__(
-        self, source: Union[str, bytes], password: Optional[str] = None
+        self,
+        source: Union[str, bytes, None] = None,
+        password: Optional[str] = None,
+        *,
+        stream: Optional[bytes] = None,
+        filetype: Optional[str] = None,
+        rect: Optional[object] = None,
+        width: float = 0.0,
+        height: float = 0.0,
     ) -> None: ...
 
     @property
@@ -91,7 +159,10 @@ class Document:
     @property
     def bookmarks(self) -> List[Bookmark]: ...
 
+    @overload
     def __getitem__(self, index: int) -> Page: ...
+    @overload
+    def __getitem__(self, index: slice) -> List[Page]: ...
     def __len__(self) -> int: ...
     def __iter__(self) -> Iterator[Page]: ...
     def __enter__(self) -> Document: ...
@@ -105,8 +176,72 @@ class Document:
 
     def render_all(self, dpi: float = 150.0) -> List[RenderedImage]: ...
     def search(self, query: str) -> List[int]: ...
-    def extract_text(self, page_num: int) -> str: ...
-    def save(self, path: str) -> None: ...
+    def extract_markdown(
+        self,
+        first_page: int = 0,
+        page_count: Optional[int] = None,
+        pages: Optional[List[int]] = None,
+        include_headers: bool = False,
+        include_footers: bool = False,
+        page_separators: str = "comment",
+        code: bool = True,
+        quality: str = "fast",
+        model_dir: Optional[str] = None,
+        table_model_dir: Optional[str] = None,
+        keep_furniture: bool = False,
+        ocr: str = "never",
+        ocr_language: str = "eng",
+        ocr_dpi: int = 150,
+        ocr_function: Optional[Callable[..., object]] = None,
+    ) -> str: ...
+    def extract_docling(
+        self,
+        first_page: int = 0,
+        page_count: Optional[int] = None,
+        name: str = "document",
+        pages: Optional[List[int]] = None,
+    ) -> str: ...
+    def extract_blocks(
+        self,
+        first_page: int = 0,
+        page_count: Optional[int] = None,
+        pages: Optional[List[int]] = None,
+        quality: str = "fast",
+        model_dir: Optional[str] = None,
+        table_model_dir: Optional[str] = None,
+    ) -> List[Block]: ...
+    def extract_words(
+        self,
+        first_page: int = 0,
+        page_count: Optional[int] = None,
+        pages: Optional[List[int]] = None,
+    ) -> List[Word]: ...
+    def vision_advice(self) -> List[VisionAdvice]: ...
+    def save(
+        self,
+        filename: str,
+        garbage: int = 3,
+        clean: int = 0,
+        deflate: int = 1,
+        deflate_images: int = 1,
+        deflate_fonts: int = 1,
+        incremental: int = 0,
+        ascii: int = 0,
+        expand: int = 0,
+        linear: int = 0,
+        no_new_id: int = 0,
+        appearance: int = 0,
+        pretty: int = 0,
+        encryption: int = 1,
+        permissions: int = 4095,
+        owner_pw: Optional[str] = None,
+        user_pw: Optional[str] = None,
+        preserve_metadata: int = 1,
+        use_objstms: int = 0,
+        compression_effort: int = 0,
+        raise_on_repair: int = 0,
+        reproducible: int = 0,
+    ) -> None: ...
     def validate_signatures(self) -> List[SignatureResult]: ...
     def verify_signatures(self) -> List[SignatureResult]: ...
     def signatures(self) -> List[SignatureResult]: ...
@@ -137,6 +272,18 @@ class Document:
     ) -> None: ...
 
     def decrypt(self, output_path: str, password: str) -> None: ...
+
+    def page_images(self, page: int) -> List[Dict[str, object]]:
+        """Stored images on one page (0-based), as plain dicts."""
+        ...
+
+    def extract_image_data(self, image_id: int) -> Dict[str, object]:
+        """One stored image's encoded bytes with its header facts."""
+        ...
+
+    def decode_image_pixels(self, image_id: int) -> Dict[str, object]:
+        """One stored image decoded to raw samples, top row first."""
+        ...
 
 # ---------------------------------------------------------------------------
 # Page
@@ -171,6 +318,7 @@ class Page:
     def thumbnail(self, max_dimension: int = 256) -> RenderedImage: ...
     def extract_text(self) -> str: ...
     def extract_text_blocks(self) -> List[TextBlock]: ...
+    def words(self) -> List[Word]: ...
     def __repr__(self) -> str: ...
 
 # ---------------------------------------------------------------------------
@@ -198,6 +346,116 @@ class RenderedImage:
 # TextBlock / TextSpan
 # ---------------------------------------------------------------------------
 
+class VisionAdvice:
+    """Why one page may be worth sending to a vision model (#624)."""
+
+    @property
+    def page(self) -> int: ...
+
+    @property
+    def needs_vision(self) -> bool: ...
+
+    @property
+    def no_text_layer(self) -> bool: ...
+
+    @property
+    def low_confidence_table(self) -> bool: ...
+
+    @property
+    def figure(self) -> bool: ...
+
+class Block:
+    """One block of a document's structure: a paragraph, heading, list item,
+    table cell or running head (#573).
+
+    The attributes that belong to the block's own kind carry a value; the rest
+    are ``None``.
+    """
+
+    @property
+    def kind(self) -> str: ...
+
+    @property
+    def text(self) -> str: ...
+
+    @property
+    def page(self) -> int: ...
+
+    @property
+    def bbox(self) -> List[float]: ...
+
+    @property
+    def index(self) -> int: ...
+
+    @property
+    def continues_previous(self) -> bool: ...
+
+    @property
+    def confidence(self) -> Optional[float]: ...
+
+    @property
+    def grid(self) -> Optional[Tuple[int, float, int, int, int]]: ...
+
+    @property
+    def level(self) -> Optional[int]: ...
+
+    @property
+    def ordinal(self) -> Optional[int]: ...
+
+    @property
+    def row(self) -> Optional[int]: ...
+
+    @property
+    def column(self) -> Optional[int]: ...
+
+    @property
+    def row_span(self) -> Optional[int]: ...
+
+    @property
+    def column_span(self) -> Optional[int]: ...
+
+    @property
+    def header(self) -> Optional[bool]: ...
+
+    def __repr__(self) -> str: ...
+    def __str__(self) -> str: ...
+
+class Word:
+    """One word of a document's text, with the box it was drawn in."""
+
+    @property
+    def text(self) -> str: ...
+
+    @property
+    def page(self) -> int: ...
+
+    @property
+    def bbox(self) -> List[float]: ...
+
+    @property
+    def block(self) -> int: ...
+
+    @property
+    def line(self) -> int: ...
+
+    @property
+    def word(self) -> int: ...
+
+    @property
+    def dir(self) -> float: ...
+
+    @property
+    def bold(self) -> bool: ...
+
+    @property
+    def italic(self) -> bool: ...
+
+    @property
+    def font_size(self) -> float: ...
+
+    def __repr__(self) -> str: ...
+    def __str__(self) -> str: ...
+
 class TextBlock:
     """A block of text from a page (grouped by vertical proximity)."""
 
@@ -211,11 +469,6 @@ class TextBlock:
     def __str__(self) -> str: ...
 
 class TextSpan:
-    """A single text span at a specific position.
-
-    G1 font-metadata fields return ``None`` until the extraction pipeline is
-    upgraded to emit font attributes.
-    """
 
     @property
     def text(self) -> str: ...
@@ -231,22 +484,24 @@ class TextSpan:
 
     @property
     def font_name(self) -> Optional[str]:
-        """Font name, or ``None`` if not yet available (G1)."""
         ...
 
     @property
     def is_bold(self) -> Optional[bool]:
-        """``True`` if bold, ``None`` if not yet available (G1)."""
         ...
 
     @property
     def is_italic(self) -> Optional[bool]:
-        """``True`` if italic, ``None`` if not yet available (G1)."""
         ...
 
     @property
     def color(self) -> Optional[Tuple[float, float, float]]:
         """Foreground color (r, g, b) in 0.0–1.0, or ``None`` (G1)."""
+        ...
+
+    @property
+    def flags(self) -> int:
+        """Style and layout bits: 16 bold, 2 italic, 8 monospace, 32 hidden, 64 non-horizontal."""
         ...
 
     def __repr__(self) -> str: ...
@@ -275,6 +530,28 @@ class DocumentInfo:
 
     @property
     def producer(self) -> Optional[str]: ...
+
+    @property
+    def creation_date(self) -> Optional[str]: ...
+
+    @property
+    def mod_date(self) -> Optional[str]: ...
+
+    @property
+    def format(self) -> Optional[str]: ...
+
+    @property
+    def encryption(self) -> Optional[str]: ...
+
+    @property
+    def trapped(self) -> Optional[str]: ...
+
+    def __getitem__(self, key: str) -> object: ...
+    def __len__(self) -> int: ...
+    def __iter__(self) -> Iterator[str]: ...
+    def __contains__(self, key: str) -> bool: ...
+    def keys(self) -> List[str]: ...
+    def get(self, key: str, default: object = None) -> object: ...
 
     def __repr__(self) -> str: ...
 

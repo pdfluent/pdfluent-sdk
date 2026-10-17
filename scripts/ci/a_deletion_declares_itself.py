@@ -37,6 +37,7 @@ Usage: a_deletion_declares_itself.py [--base github/master] [--head HEAD]
 """
 from __future__ import annotations
 import argparse, os, subprocess, sys
+from pathlib import Path
 
 
 def clean_env() -> dict[str, str]:
@@ -66,6 +67,62 @@ def git(*args: str) -> tuple[int, str]:
         capture_output=True, text=True,
         env=dict(clean_env(), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull))
     return r.returncode, r.stdout
+
+
+LATE_REGISTER = "docs/DELETIONS_DECLARED_LATE.toml"
+# The register is for the past (codex, #1952): a deletion committed after this
+# moment declares itself with a trailer or not at all, so the register cannot
+# become the way round the rule.
+LATE_CUTOFF = "2026-09-23T08:00:00+00:00"
+
+
+def declared_late(candidates: set[str], head: str) -> tuple[set[str], list[str]]:
+    """Paths the register declares after the fact, and the entries that lie."""
+    rc, top = git("rev-parse", "--show-toplevel")
+    register = Path(top.strip()) / LATE_REGISTER if rc == 0 else None
+    if register is None or not register.is_file():
+        return set(), []
+    try:
+        import tomllib
+        entries = tomllib.loads(register.read_text(encoding="utf-8")).get("late", [])
+    except Exception as exc:  # noqa: BLE001 -- an unreadable register is a failure, said so
+        return set(), [f"{LATE_REGISTER} cannot be read: {exc}"]
+    accepted: set[str] = set()
+    errors: list[str] = []
+    for entry in entries:
+        commit = str(entry.get("commit", ""))
+        paths = [str(p) for p in entry.get("paths", [])]
+        if not commit or not paths or not str(entry.get("why", "")).strip():
+            errors.append(f"an entry needs commit, paths and why: {entry!r}")
+            continue
+        if git("merge-base", "--is-ancestor", commit, head)[0] != 0:
+            errors.append(f"{commit} is not in the history of {head}")
+            continue
+        from datetime import datetime
+        stamp = git("log", "-1", "--format=%cI", commit)[1].strip()
+        try:
+            late_enough = datetime.fromisoformat(stamp) > datetime.fromisoformat(LATE_CUTOFF)
+        except ValueError:
+            late_enough = True
+        if late_enough:
+            errors.append(f"{commit} was committed after {LATE_CUTOFF}; a deletion "
+                          "since then carries its own Removes-deliberately trailer")
+            continue
+        _, removed = git("show", "--diff-filter=D", "--name-only", "--format=", "-z",
+                         "--first-parent", "-m", commit)
+        removed_set = {x for x in removed.split("\0") if x.strip()}
+        for path in paths:
+            if path not in removed_set:
+                errors.append(f"{path}: {commit} does not delete it")
+                continue
+            # Only while that deletion is the one that survives (codex, #1952):
+            # a path restored after it and deleted again is a new deletion, and
+            # the old entry must not excuse it.
+            if git("log", "--format=%H", f"{commit}..{head}", "--", path)[1].strip():
+                continue
+            if path in candidates:
+                accepted.add(path)
+    return accepted, errors
 
 
 def main(argv: list[str]) -> int:
@@ -237,6 +294,23 @@ def main(argv: list[str]) -> int:
     undeclared = sorted(deleted - set(declared))
     stale = sorted(set(declared) - deleted)
 
+    # DECLARED LATE (#592). A trailer can only be written by the commit that
+    # deletes, so a deletion that reached master without one stayed undeclared
+    # for good -- and on a push the base is the last green run, so every later
+    # run of this workflow reported the same 34 paths and it had not been green
+    # once since 12-09. docs/DELETIONS_DECLARED_LATE.toml names the commit and
+    # the reason; an entry counts only if that commit is in this history and
+    # really deletes that path, so it cannot excuse anything else.
+    late, late_errors = declared_late(set(undeclared), args.head)
+    undeclared = sorted(set(undeclared) - late)
+    if late_errors:
+        print(f"[deletions] FAIL: {len(late_errors)} entry(ies) in "
+              f"{LATE_REGISTER} do not hold:", file=sys.stderr)
+        for e in late_errors:
+            print(f"    {e}", file=sys.stderr)
+    if late:
+        print(f"[deletions] {len(late)} deletion(s) declared late in {LATE_REGISTER}.")
+
     if undeclared:
         print(f"[deletions] FAIL: {len(undeclared)} file(s) present on "
               f"{args.base} are deleted here and nothing says why:", file=sys.stderr)
@@ -265,7 +339,7 @@ def main(argv: list[str]) -> int:
               "  remove it. A trailer that sits on a different commit is not\n"
               "  travelling with the thing it explains -- and a rebase is exactly\n"
               "  where the two come apart.", file=sys.stderr)
-    if undeclared or stale or misplaced:
+    if undeclared or stale or misplaced or late_errors:
         return 1
 
     if deleted:

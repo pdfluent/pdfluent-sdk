@@ -19,6 +19,31 @@
 *.crate binary
 *.wasm binary
 
+# Byte-compared text goldens: the tests assert produced == committed byte
+# for byte, so a CRLF checkout fails them. Build 6 reddened the Windows
+# natives leg exactly this way (serializers_over_five_documents: the goldens
+# checked out CRLF under autocrlf while the serializers produce LF). eol=lf
+# keeps the checkout LF on every OS; the tests keep comparing byte-for-byte
+# (stripping CR there would hide a real CRLF bug in our own output). Held by
+# scripts/ci/golden_dirs_check_out_lf.py, which fails a golden dir without it.
+crates/pdf-engine/tests/golden/** eol=lf
+
+# Release texts pinned to their tree bytes: fetch_models_release.py pins the
+# models-v1 release's LICENSE, LICENSE-COMMERCIAL, LICENSE-Apache-2.0.txt and
+# MODELS-NOTICE.txt to the size and sha256 of these four tree files, and the
+# release carries the LF bytes. Git for Windows ships core.autocrlf=true in its
+# system config, so the win-x64 release smoke checked them out CRLF and refused
+# a correct release ("LICENSE is 34523 bytes, pin says 35184": 661 lines, one
+# CR each). text eol=lf, not -text: the checkout stays LF on every OS, and a
+# CRLF edit made on Windows is normalised to LF at commit instead of changing
+# the pinned bytes. The pins and their verification stay strict. Held by
+# scripts/release/test_pinned_texts_check_out_lf.py, which takes its list from
+# fetch_models_release.TREE_TEXTS and proves the CRLF checkout both ways.
+/LICENSE text eol=lf
+/LICENSE-COMMERCIAL text eol=lf
+/LICENSE-APACHE text eol=lf
+/scripts/release/models-v1/MODELS-NOTICE.txt text eol=lf
+
 # Git LFS tracking for large test corpus files
 corpus/**/*.pdf filter=lfs diff=lfs merge=lfs -text
 corpus/pdfjs/**/*.pdf filter=lfs diff=lfs merge=lfs -text

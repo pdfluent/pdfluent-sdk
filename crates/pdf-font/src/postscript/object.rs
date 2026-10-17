@@ -19,6 +19,19 @@ pub enum Object<'a> {
 }
 
 pub(crate) fn read<'a>(r: &mut Reader<'a>) -> Result<Object<'a>> {
+    let start = r.offset();
+    let result = read_inner(r);
+
+    // Leave the reader where the token started when we could not type it, so a
+    // caller that wants to step over the token knows exactly what to step over.
+    if result.is_err() {
+        r.jump(start);
+    }
+
+    result
+}
+
+fn read_inner<'a>(r: &mut Reader<'a>) -> Result<Object<'a>> {
     skip_whitespace_and_comments(r);
 
     let b = r.peek_byte().ok_or(Error::SyntaxError)?;
@@ -68,6 +81,28 @@ pub(crate) fn read<'a>(r: &mut Reader<'a>) -> Result<Object<'a>> {
             .map(|s| Object::Name(Name::new(s, false)))
             .ok_or(Error::SyntaxError),
     }
+}
+
+/// Step over the next token without interpreting it.
+///
+/// Returns `false` once the input is exhausted; otherwise the reader always
+/// advances, so a caller can use this to make progress past a token it cannot
+/// parse without ever looping forever.
+pub(crate) fn skip(r: &mut Reader<'_>) -> bool {
+    skip_whitespace_and_comments(r);
+
+    let Some(b) = r.peek_byte() else {
+        return false;
+    };
+
+    if crate::postscript::reader::is_regular(b) {
+        r.forward_while(crate::postscript::reader::is_regular);
+    } else {
+        // A delimiter is a token on its own; one byte is enough to move on.
+        r.forward();
+    }
+
+    true
 }
 
 pub(crate) fn at_end(r: &mut Reader<'_>) -> bool {

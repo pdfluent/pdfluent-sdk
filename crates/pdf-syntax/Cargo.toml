@@ -1,10 +1,10 @@
 [package]
 name = "pdf-syntax"
-version = "0.5.7"
+version = "0.6.0"
 description = "A low-level crate for reading PDF files."
 authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
 edition = "2024"
-repository = "https://pdfluent.com/source"
+repository = "https://github.com/pdfluent/pdfluent-sdk"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 license = "Apache-2.0 OR MIT"
@@ -23,7 +23,7 @@ flate2 = { version = "1", default-features = false, features = ["zlib-rs"], opti
 
 zune-jpeg = { version = "0.5", default-features = false, features = ["neon", "x86"], optional = true }
 hayro-ccitt = { package = "pdfluent-ccitt", path = "../hayro-ccitt", optional = true, version = "=0.2.3" }
-hayro-jbig2 = { package = "pdfluent-jbig2", path = "../hayro-jbig2", optional = true, version = "=0.2.3" }
+hayro-jbig2 = { package = "pdfluent-jbig2", path = "../hayro-jbig2", optional = true, version = "=0.3.0" }
 hayro-jpeg2000 = { package = "pdfluent-jpeg2000", path = "../hayro-jpeg2000", optional = true, version = "=0.4.0" }
 
 [dev-dependencies]

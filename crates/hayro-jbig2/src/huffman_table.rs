@@ -5,7 +5,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::num::NonZeroU32;
 
-use crate::error::{DecodeError, HuffmanError, ParseError, Result, bail};
+#[cfg(test)]
+use crate::error::DecodeError;
+use crate::error::{HuffmanError, ParseError, Result, bail};
 use crate::lazy::Lazy;
 use crate::reader::Reader;
 
@@ -50,10 +52,6 @@ impl HuffmanTable {
 
     /// Build a Huffman table from table line definitions (B.3 "Assigning
     /// the prefix codes").
-    ///
-    /// Returns `Err(HuffmanError::MalformedTable)` if the prefix codes contain
-    /// a collision (a shorter code is a prefix of a longer one), which indicates
-    /// a crafted or corrupt JBIG2 stream (JBIG2-HUF-01).
     pub(crate) fn build(lines: &[TableLine]) -> Result<Self> {
         // `NTEMP` - Number of table lines.
         let line_count = lines.len();
@@ -63,6 +61,11 @@ impl HuffmanTable {
         // that the value I occurs in the array PREFLEN."
         // `LENMAX` - Maximum prefix length.
         let max_prefix_length = lines.iter().map(|l| l.prefix_length).max().unwrap_or(0) as usize;
+
+        if max_prefix_length > 32 {
+            bail!(HuffmanError::PrefixLengthTooLarge);
+        }
+
         // `LENCOUNT` - Histogram of prefix lengths.
         let mut length_counts = vec![0_u32; max_prefix_length + 1];
         for line in lines {
@@ -83,8 +86,10 @@ impl HuffmanTable {
             // a) "Set: FIRSTCODE[CURLEN] = (FIRSTCODE[CURLEN − 1] + LENCOUNT[CURLEN − 1]) × 2
             //         CURCODE = FIRSTCODE[CURLEN]
             //         CURTEMP = 0"
-            first_code_per_length[current_length] =
-                (first_code_per_length[current_length - 1] + length_counts[current_length - 1]) * 2;
+            first_code_per_length[current_length] = (first_code_per_length[current_length - 1]
+                + length_counts[current_length - 1])
+                .checked_mul(2)
+                .ok_or(HuffmanError::InvalidCode)?;
             // `CURCODE` - Current code value being assigned.
             let mut current_code = first_code_per_length[current_length];
 
@@ -96,7 +101,9 @@ impl HuffmanTable {
                 //        CURCODE = CURCODE + 1"
                 if lines[line_index].prefix_length as usize == current_length {
                     assigned_codes[line_index] = current_code;
-                    current_code += 1;
+                    current_code = current_code
+                        .checked_add(1)
+                        .ok_or(HuffmanError::InvalidCode)?;
                 }
                 // ii) "Set CURTEMP = CURTEMP + 1" (implicit in for loop)
             }
@@ -132,12 +139,16 @@ impl HuffmanTable {
     /// This is used for symbol ID encoding (6.5.8.2.3): "For each value of i from
     /// 0 to SDNUMINSYMS + NSYMSDECODED – 1, set SBSYMCODES[i] to the binary
     /// representation of i using a SBSYMCODELEN-bit string."
-    pub(crate) fn build_uniform(num_symbols: u32, code_length: u32) -> Self {
+    pub(crate) fn build_uniform(num_symbols: u32, code_length: u32) -> Result<Self> {
         let lines: Vec<TableLine> = (0..num_symbols)
             .map(|i| TableLine::new(i as i32, code_length as u8, 0))
             .collect();
-        // Uniform tables assign unique, non-overlapping prefix codes; build() cannot fail.
-        Self::build(&lines).expect("build_uniform always generates valid prefix codes")
+        // Uniform tables assign unique, non-overlapping prefix codes, so this
+        // does not fail in practice. It is propagated rather than unwrapped
+        // anyway: `build` became fallible upstream, the input reaching it is a
+        // symbol count out of a JBIG2 stream, and a decoder for untrusted bytes
+        // should not carry a panic that depends on that reasoning staying true.
+        Self::build(&lines)
     }
 
     /// Insert a code into the Huffman tree.
@@ -251,7 +262,9 @@ impl HuffmanTable {
         //         RANGELOW[NTEMP] = HTLOW − 1, NTEMP = NTEMP + 1
         //    This is the lower range table line for this table."
         lines.push(TableLine::lower(
-            minimum_value - 1,
+            minimum_value
+                .checked_sub(1)
+                .ok_or(HuffmanError::InvalidCode)?,
             reader
                 .read_bits(prefix_length_bits)
                 .ok_or(HuffmanError::InvalidCode)? as u8,
@@ -395,11 +408,11 @@ impl HuffmanNode {
     }
 
     /// Set the child index for a given bit (0 or 1).
-    ///
-    /// Returns `Err(HuffmanError::MalformedTable)` if called on a non-Intermediate
-    /// node, which indicates a prefix-code collision in a crafted JBIG2 stream
-    /// (JBIG2-HUF-01).
-    fn set_child(&mut self, child_zero: bool, index: NonZeroU32) -> Result<()> {
+    fn set_child(
+        &mut self,
+        child_zero: bool,
+        index: NonZeroU32,
+    ) -> core::result::Result<(), HuffmanError> {
         match self {
             Self::Intermediate { zero, one } => {
                 if child_zero {
@@ -409,7 +422,7 @@ impl HuffmanNode {
                 }
                 Ok(())
             }
-            _ => Err(DecodeError::Huffman(HuffmanError::MalformedTable)),
+            _ => Err(HuffmanError::ConflictingCodes),
         }
     }
 
@@ -511,6 +524,12 @@ pub(crate) struct StandardHuffmanTables {
     table_m: Lazy<HuffmanTable>,
     table_n: Lazy<HuffmanTable>,
     table_o: Lazy<HuffmanTable>,
+}
+
+impl Default for StandardHuffmanTables {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StandardHuffmanTables {
@@ -615,8 +634,12 @@ impl StandardHuffmanTables {
 mod tests {
     use super::*;
 
-    // Regression: JBIG2-HUF-01 — build() must return Err(MalformedTable) when a
-    // prefix-code collision causes set_child() to be called on a Leaf node.
+    // Regression: JBIG2-HUF-01 -- build() must refuse a prefix-code collision
+    // rather than call set_child() on a Leaf node.
+    //
+    // Our fork raised one `MalformedTable` here; upstream 0.3.0 splits the same
+    // refusal into `ConflictingCodes` and `PrefixLengthTooLarge`, which says more
+    // about which way the table was wrong. This is the collision half.
     //
     // An over-committed Huffman table (more prefix-code lines than the binary tree
     // can hold) triggers this: with two length-1 lines the tree is full ("0" and "1"),
@@ -636,10 +659,9 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(DecodeError::Huffman(HuffmanError::MalformedTable))
+                Err(DecodeError::Huffman(HuffmanError::ConflictingCodes))
             ),
-            "expected MalformedTable, got: {:?}",
-            result
+            "expected ConflictingCodes, got: {result:?}"
         );
     }
 

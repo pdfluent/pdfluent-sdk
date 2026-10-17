@@ -7,12 +7,11 @@ use crate::object::Name;
 use crate::object::Rect;
 use crate::object::Stream;
 use crate::object::dict::keys::*;
-use crate::object::{Object, ObjectIdentifier, ObjectLike};
+use crate::object::{Object, ObjectIdentifier};
 use crate::reader::ReaderContext;
 use crate::sync::OnceLock;
 use crate::util::FloatExt;
 use crate::xref::XRef;
-use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -21,18 +20,20 @@ use log::warn;
 
 /// Attributes that can be inherited.
 #[derive(Debug, Clone)]
-struct PagesContext {
+struct PagesContext<'a> {
     media_box: Option<Rect>,
     crop_box: Option<Rect>,
     rotate: Option<u32>,
+    resources: Dict<'a>,
 }
 
-impl PagesContext {
+impl PagesContext<'_> {
     fn new() -> Self {
         Self {
             media_box: None,
             crop_box: None,
             rotate: None,
+            resources: Dict::empty(),
         }
     }
 }
@@ -52,12 +53,7 @@ impl<'a> Pages<'a> {
     ) -> Option<Self> {
         let mut pages = vec![];
         let pages_ctx = PagesContext::new();
-        resolve_pages(
-            pages_dict,
-            &mut pages,
-            pages_ctx,
-            Resources::new(Dict::empty(), None, ctx),
-        )?;
+        resolve_pages(pages_dict, &mut pages, pages_ctx, ctx)?;
 
         Some(Self { pages, xref })
     }
@@ -71,12 +67,7 @@ impl<'a> Pages<'a> {
 
         for object in xref.objects() {
             if let Some(dict) = object.into_dict()
-                && let Some(page) = Page::new(
-                    &dict,
-                    &PagesContext::new(),
-                    Resources::new(Dict::empty(), None, ctx),
-                    true,
-                )
+                && let Some(page) = Page::new(&dict, &PagesContext::new(), ctx, true)
             {
                 pages.push(page);
             }
@@ -115,11 +106,10 @@ const MAX_PAGE_COUNT: usize = 100_000;
 fn resolve_pages<'a>(
     pages_dict: &Dict<'a>,
     entries: &mut Vec<Page<'a>>,
-    ctx: PagesContext,
-    resources: Resources<'a>,
+    ctx: PagesContext<'a>,
+    reader_ctx: &ReaderContext<'a>,
 ) -> Option<()> {
-    let max_depth = resources
-        .ctx
+    let max_depth = reader_ctx
         .load_limits()
         .object_depth_limit()
         .map(|d| d as usize)
@@ -130,7 +120,7 @@ fn resolve_pages<'a>(
         pages_dict,
         entries,
         ctx,
-        resources,
+        reader_ctx,
         0,
         max_depth,
         &mut visited,
@@ -140,8 +130,8 @@ fn resolve_pages<'a>(
 fn resolve_pages_depth<'a>(
     pages_dict: &Dict<'a>,
     entries: &mut Vec<Page<'a>>,
-    mut ctx: PagesContext,
-    resources: Resources<'a>,
+    mut ctx: PagesContext<'a>,
+    reader_ctx: &ReaderContext<'a>,
     depth: usize,
     max_depth: usize,
     visited: &mut BTreeSet<ObjectIdentifier>,
@@ -176,10 +166,11 @@ fn resolve_pages_depth<'a>(
         ctx.rotate = Some(rotate.rem_euclid(360) as u32);
     }
 
-    let resources = Resources::from_parent(
-        pages_dict.get::<Dict<'_>>(RESOURCES).unwrap_or_default(),
-        resources.clone(),
-    );
+    // Nearest Resources wins: a dict on this node replaces the inherited
+    // one wholesale, it is not merged with it.
+    if let Some(resources) = pages_dict.get::<Dict<'a>>(RESOURCES) {
+        ctx.resources = resources;
+    }
 
     let kids = pages_dict.get::<Array<'a>>(KIDS)?;
 
@@ -195,7 +186,7 @@ fn resolve_pages_depth<'a>(
                     &dict,
                     entries,
                     ctx.clone(),
-                    resources.clone(),
+                    reader_ctx,
                     depth + 1,
                     max_depth,
                     visited,
@@ -204,7 +195,7 @@ fn resolve_pages_depth<'a>(
             // Let's be lenient and assume it's a `Page` in case it's `None` or something else
             // (see corpus test case 0083781).
             _ => {
-                if let Some(page) = Page::new(&dict, &ctx, resources.clone(), false) {
+                if let Some(page) = Page::new(&dict, &ctx, reader_ctx, false) {
                     entries.push(page);
                 }
             }
@@ -241,8 +232,8 @@ pub struct Page<'a> {
 impl<'a> Page<'a> {
     fn new(
         dict: &Dict<'a>,
-        ctx: &PagesContext,
-        resources: Resources<'a>,
+        ctx: &PagesContext<'a>,
+        reader_ctx: &ReaderContext<'a>,
         brute_force: bool,
     ) -> Option<Self> {
         // In general, pages without content are allowed, but in case we are brute-forcing
@@ -274,10 +265,9 @@ impl<'a> Page<'a> {
             _ => Rotation::None,
         };
 
-        let ctx = resources.ctx.clone();
-        let resources = Resources::from_parent(
-            dict.get::<Dict<'_>>(RESOURCES).unwrap_or_default(),
-            resources,
+        let resources = Resources::new(
+            dict.get::<Dict<'a>>(RESOURCES)
+                .unwrap_or_else(|| ctx.resources.clone()),
         );
 
         Some(Self {
@@ -287,7 +277,7 @@ impl<'a> Page<'a> {
             rotation,
             page_streams: OnceLock::new(),
             resources,
-            ctx,
+            ctx: reader_ctx.clone(),
         })
     }
 
@@ -443,8 +433,6 @@ impl<'a> Page<'a> {
 /// A structure keeping track of the resources of a page.
 #[derive(Clone, Debug)]
 pub struct Resources<'a> {
-    parent: Option<Box<Self>>,
-    ctx: ReaderContext<'a>,
     /// The raw dictionary of external graphics states.
     pub ext_g_states: Dict<'a>,
     /// The raw dictionary of fonts.
@@ -462,15 +450,19 @@ pub struct Resources<'a> {
 }
 
 impl<'a> Resources<'a> {
-    /// Create a new `Resources` object from a dictionary with a parent.
-    pub fn from_parent(resources: Dict<'a>, parent: Self) -> Self {
-        let ctx = parent.ctx.clone();
-
-        Self::new(resources, Some(parent), &ctx)
-    }
-
     /// Create a new `Resources` object.
-    pub(crate) fn new(resources: Dict<'a>, parent: Option<Self>, ctx: &ReaderContext<'a>) -> Self {
+    ///
+    /// A single dictionary: the nearest `/Resources` wins and is never
+    /// merged with an ancestor's (LaurenzV/hayro#1387).
+    pub fn new(resources: Dict<'a>) -> Self {
+        // A Resources dict is always an interpret boundary (page content,
+        // form, pattern cell, mask group, glyph), so resolution ancestry
+        // restarts here: without the rebase, cross-construct nesting that
+        // legitimately re-resolves an ancestor's object (pattern -> mask ->
+        // group -> pattern) trips the resolution-cycle guard on the second
+        // visit, and the #318 alternating cycles silently stop nesting
+        // instead of reaching the depth bound.
+        let resources = resources.without_parent_chain();
         let ext_g_states = resources.get::<Dict<'_>>(EXT_G_STATE).unwrap_or_default();
         let fonts = resources.get::<Dict<'_>>(FONT).unwrap_or_default();
         let color_spaces = resources.get::<Dict<'_>>(COLORSPACE).unwrap_or_default();
@@ -479,10 +471,7 @@ impl<'a> Resources<'a> {
         let shadings = resources.get::<Dict<'_>>(SHADING).unwrap_or_default();
         let properties = resources.get::<Dict<'_>>(PROPERTIES).unwrap_or_default();
 
-        let parent = parent.map(Box::new);
-
         Self {
-            parent,
             ext_g_states,
             fonts,
             color_spaces,
@@ -490,53 +479,37 @@ impl<'a> Resources<'a> {
             x_objects,
             patterns,
             shadings,
-            ctx: ctx.clone(),
         }
-    }
-
-    fn get_resource<T: ObjectLike<'a>>(&self, name: Name, dict: &Dict<'a>) -> Option<T> {
-        dict.get::<T>(name.deref())
-    }
-
-    /// Get the parent in the resource, chain, if available.
-    pub fn parent(&self) -> Option<&Self> {
-        self.parent.as_deref()
     }
 
     /// Get an external graphics state by name.
     pub fn get_ext_g_state(&self, name: Name) -> Option<Dict<'a>> {
-        self.get_resource::<Dict<'_>>(name.clone(), &self.ext_g_states)
-            .or_else(|| self.parent.as_ref().and_then(|p| p.get_ext_g_state(name)))
+        self.ext_g_states.get(name.deref())
     }
 
     /// Get a color space by name.
     pub fn get_color_space(&self, name: Name) -> Option<Object<'a>> {
-        self.get_resource::<Object<'_>>(name.clone(), &self.color_spaces)
-            .or_else(|| self.parent.as_ref().and_then(|p| p.get_color_space(name)))
+        self.color_spaces.get(name.deref())
     }
 
     /// Get a font by name.
     pub fn get_font(&self, name: Name) -> Option<Dict<'a>> {
-        self.get_resource::<Dict<'_>>(name.clone(), &self.fonts)
-            .or_else(|| self.parent.as_ref().and_then(|p| p.get_font(name)))
+        self.fonts.get(name.deref())
     }
 
     /// Get a pattern by name.
     pub fn get_pattern(&self, name: Name) -> Option<Object<'a>> {
-        self.get_resource::<Object<'_>>(name.clone(), &self.patterns)
-            .or_else(|| self.parent.as_ref().and_then(|p| p.get_pattern(name)))
+        self.patterns.get(name.deref())
     }
 
     /// Get an x object by name.
     pub fn get_x_object(&self, name: Name) -> Option<Stream<'a>> {
-        self.get_resource::<Stream<'_>>(name.clone(), &self.x_objects)
-            .or_else(|| self.parent.as_ref().and_then(|p| p.get_x_object(name)))
+        self.x_objects.get(name.deref())
     }
 
     /// Get a shading by name.
     pub fn get_shading(&self, name: Name) -> Option<Object<'a>> {
-        self.get_resource::<Object<'_>>(name.clone(), &self.shadings)
-            .or_else(|| self.parent.as_ref().and_then(|p| p.get_shading(name)))
+        self.shadings.get(name.deref())
     }
 }
 

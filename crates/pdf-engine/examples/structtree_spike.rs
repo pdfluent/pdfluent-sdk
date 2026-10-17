@@ -82,7 +82,7 @@ impl Device<'_> for McidTextDevice {
             None => self.untagged.push_str(&text),
         }
     }
-    fn begin_marked_content(&mut self, _tag: &[u8], mcid: Option<i32>) {
+    fn begin_marked_content(&mut self, _tag: &[u8], mcid: Option<i32>, _: Option<&str>) {
         self.mcid_stack.push(mcid);
     }
     fn end_marked_content(&mut self) {

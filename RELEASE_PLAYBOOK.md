@@ -48,7 +48,7 @@ cargo test -p pdfluent --test lifecycle --test processing_limits --test security
 python3 scripts/check_release_consistency.py
 
 # 5. Dry-run all publishable crates
-./scripts/publish_ordered.sh          # dry-run by default
+scripts/release/publish_ordered.sh          # dry-run by default
 
 # 6. Gate CI check (must be green on master)
 gh run list --branch master --limit 5
@@ -86,7 +86,7 @@ xfa-license (publish before pdfluent)
 pdfluent (umbrella — publish last)
 ```
 
-**Use `scripts/publish_ordered.sh --live` to execute.** It handles ordering,
+**Use `scripts/release/publish_ordered.sh --live` to execute.** It handles ordering,
 wait times, and dry-run validation automatically.
 
 ---
@@ -98,13 +98,13 @@ wait times, and dry-run validation automatically.
 cargo login
 
 # 2. Run ordered publish (dry-run by default — safe to run first)
-./scripts/publish_ordered.sh
+scripts/release/publish_ordered.sh
 
 # 3. Inspect dry-run output; if clean, publish for real:
-./scripts/publish_ordered.sh --live
+scripts/release/publish_ordered.sh --live
 
 # 4. If interrupted, resume from last failed crate:
-./scripts/publish_ordered.sh --live --from pdf-engine
+scripts/release/publish_ordered.sh --live --from pdf-engine
 ```
 
 **Do not interrupt a running publish.** If interrupted mid-cascade,
@@ -180,7 +180,7 @@ just ahead of the rest.
 python3 scripts/check_release_consistency.py
 
 # Resume from the first missing crate
-./scripts/publish_ordered.sh --live --from LAST_MISSING_CRATE
+scripts/release/publish_ordered.sh --live --from LAST_MISSING_CRATE
 ```
 
 ### Scenario D: Crate published with wrong license
@@ -210,7 +210,7 @@ sleep 60
 cargo publish -p FAILING_CRATE --allow-dirty
 ```
 
-`scripts/publish_ordered.sh --live` automatically handles this with a 15s
+`scripts/release/publish_ordered.sh --live` automatically handles this with a 15s
 wait between crates. If you encounter lag, pass `--wait 60`.
 
 ---
@@ -300,10 +300,10 @@ to crates.io:
 - [ ] Bump `[workspace.package] version` in `Cargo.toml`
 - [ ] Bump individual version pins in crates that set version explicitly
 - [ ] Run `python3 scripts/check_release_consistency.py`
-- [ ] Run `./scripts/publish_ordered.sh` (dry-run)
+- [ ] Run `scripts/release/publish_ordered.sh` (dry-run)
 - [ ] All dry-runs pass
 - [ ] CI green on master
-- [ ] Run `./scripts/publish_ordered.sh --live`
+- [ ] Run `scripts/release/publish_ordered.sh --live`
 - [ ] Run post-publish verification
 - [ ] Create git tag
 - [ ] Create GitHub release

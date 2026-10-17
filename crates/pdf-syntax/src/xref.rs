@@ -348,16 +348,6 @@ impl XRef {
         Ok(xref)
     }
 
-    fn is_repaired(&self) -> bool {
-        match &self.0 {
-            Inner::Dummy => false,
-            Inner::Some(r) => {
-                let locked = r.map.get();
-                locked.repaired
-            }
-        }
-    }
-
     pub(crate) fn dummy() -> &'static Self {
         &DUMMY_XREF
     }
@@ -466,11 +456,10 @@ impl XRef {
             unreachable!();
         };
 
-        let mut locked = r
-            .map
-            .try_put()
-            .expect("xref repair: map lock not contended");
-        assert!(!locked.repaired);
+        let mut locked = r.map.put();
+        if locked.repaired {
+            return;
+        }
 
         let (xref_map, _) = fallback_xref_map(r.data.get(), &r.password);
         locked.xref_map = xref_map;
@@ -528,16 +517,15 @@ impl XRef {
             return None;
         };
 
-        let locked = repr.map.try_get()?;
-
-        let mut r = Reader::new(repr.data.get().as_ref());
-
-        let entry = *locked.xref_map.get(&id).or({
+        // The flag must describe the map this entry came from.
+        let (entry, was_repaired) = {
+            let locked = repr.map.get();
             // An indirect reference to an undefined object shall not be considered an error by a PDF processor; it
             // shall be treated as a reference to the null object.
-            None
-        })?;
-        drop(locked);
+            (*locked.xref_map.get(&id)?, locked.repaired)
+        };
+
+        let mut r = Reader::new(repr.data.get().as_ref());
 
         let mut ctx = ctx.clone();
         ctx.set_obj_number(id);
@@ -563,7 +551,7 @@ impl XRef {
                 };
 
                 // The xref table is broken, try to repair if not already repaired.
-                if self.is_repaired() {
+                if was_repaired {
                     error!(
                         "attempt was made at repairing xref, but object {id:?} still couldn't be read"
                     );
@@ -582,11 +570,13 @@ impl XRef {
                 // Generation number is implicitly 0.
                 let obj_stream_id = ObjectIdentifier::new(obj_stram_gen_num as i32, 0);
 
-                if obj_stream_id == id {
+                if obj_stream_id == id || ctx.parent_chain_contains(&id) {
                     warn!("cycle detected in object stream");
 
                     return None;
                 }
+
+                ctx.parent_chain_push(id);
 
                 let stream = self.get_with::<Stream<'_>>(obj_stream_id, &ctx)?;
                 let data = repr.data.get_with(obj_stream_id, &ctx)?;
@@ -1355,9 +1345,9 @@ mod qf2b_objectstream_cache_tests {
         // Built from the manifest directory rather than written out as one
         // string. This file ships in the published crate and the repository
         // tree it points at does not, so a literal path into it is a leaked
-        // internal path -- which is what the prepublish audit refuses. It also
-        // makes the benchmark independent of the working directory it is
-        // started from.
+        // internal path -- which is what the prepublish audit refuses, and it
+        // stopped the 1.0.0 publish at crate 8 of 32 (#358). It also makes the
+        // benchmark independent of the working directory it is started from.
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..")
@@ -1488,6 +1478,8 @@ mod qf2b_objectstream_cache_tests {
 #[cfg(test)]
 mod upstream_hardening_tests {
     use super::*;
+    use crate::object::dict::keys::V;
+    use crate::pdf::Pdf;
 
     #[test]
     fn xref_table_trailer_rejects_overflowing_entry_skip() {
@@ -1501,5 +1493,340 @@ mod upstream_hardening_tests {
         let data = b"xref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size 1 >>";
         let mut reader = Reader::new(data);
         assert!(read_xref_table_trailer(&mut reader, &ReaderContext::dummy()).is_some());
+    }
+
+    /// A document whose `/ObjStm` holds an `/Indexed` colour space that names
+    /// itself as its base (`5 0 R` inside object 5), built here rather than
+    /// read from the corpus. Mirrors upstream's `object_stream_cycle.pdf`
+    /// (LaurenzV/hayro#1389) with an uncompressed xref stream, so no
+    /// test-only deflater is needed.
+    fn objstm_cycle_fixture() -> Vec<u8> {
+        use alloc::format;
+
+        let obj2 = b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
+        let obj3 = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] \
+            /Resources << /ColorSpace << /CS0 5 0 R >> >> /Contents 4 0 R >>";
+        let obj5 = b"[/Indexed 5 0 R 0 <00>]";
+        // Offsets count from the first object body, past the `/First` header.
+        let off3 = obj2.len() + 1;
+        let off5 = off3 + obj3.len() + 1;
+        let header = format!("2 0 3 {off3} 5 {off5}\n");
+        let mut payload = header.into_bytes();
+        payload.extend_from_slice(obj2);
+        payload.push(b'\n');
+        payload.extend_from_slice(obj3);
+        payload.push(b'\n');
+        payload.extend_from_slice(obj5);
+        payload.push(b'\n');
+
+        let content = b"0 0 10 10 re f";
+        let catalog = b"<< /Type /Catalog /Pages 2 0 R >>";
+
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let off1 = out.len();
+        out.extend_from_slice(b"1 0 obj\n");
+        out.extend_from_slice(catalog);
+        out.extend_from_slice(b"\nendobj\n");
+        let off4 = out.len();
+        out.extend_from_slice(
+            format!("4 0 obj\n<< /Length {} >>\nstream\n", content.len()).as_bytes(),
+        );
+        out.extend_from_slice(content);
+        out.extend_from_slice(b"\nendstream\nendobj\n");
+        let off6 = out.len();
+        out.extend_from_slice(
+            format!(
+                "6 0 obj\n<< /Type /ObjStm /N 3 /First {} /Length {} >>\nstream\n",
+                payload.len() - (obj2.len() + 1 + obj3.len() + 1 + obj5.len() + 1),
+                payload.len()
+            )
+            .as_bytes(),
+        );
+        out.extend_from_slice(&payload);
+        out.extend_from_slice(b"\nendstream\nendobj\n");
+
+        let off7 = out.len();
+        let entry = |t: u8, a: usize, b: u8| {
+            let mut v = vec![t];
+            v.extend_from_slice(&(a as u16).to_be_bytes());
+            v.push(b);
+            v
+        };
+        let mut rows = Vec::new();
+        rows.extend(entry(0, 0, 255));
+        rows.extend(entry(1, off1, 0));
+        rows.extend(entry(2, 6, 0));
+        rows.extend(entry(2, 6, 1));
+        rows.extend(entry(1, off4, 0));
+        rows.extend(entry(2, 6, 2));
+        rows.extend(entry(1, off6, 0));
+        rows.extend(entry(1, off7, 0));
+        out.extend_from_slice(
+            format!(
+                "7 0 obj\n<< /Type /XRef /Size 8 /W [1 2 1] /Root 1 0 R /Length {} >>\nstream\n",
+                rows.len()
+            )
+            .as_bytes(),
+        );
+        out.extend_from_slice(&rows);
+        out.extend_from_slice(b"\nendstream\nendobj\n");
+        out.extend_from_slice(format!("startxref\n{off7}\n%%EOF\n").as_bytes());
+        out
+    }
+
+    /// Ported from LaurenzV/hayro ced00dd0 (#1389): a cycle that runs through
+    /// a second object stream must resolve to `None`, not recurse. The old
+    /// code only caught an object stream containing itself
+    /// (`obj_stream_id == id`); here object 5 lives in stream 6 and refers
+    /// back to 5, so the base colour space resolved again on every visit.
+    /// Without the fix this fails on the `is_none` (the self-reference
+    /// keeps resolving); through a renderer it overflows the stack.
+    #[test]
+    fn objstm_cycle_through_second_stream_resolves_to_none() {
+        let pdf = Pdf::new(objstm_cycle_fixture()).expect("the cyclic fixture must parse");
+        let xref = pdf.xref();
+        let array: Array<'_> = xref
+            .get(ObjectIdentifier::new(5, 0))
+            .expect("the cyclic array itself must resolve");
+        let mut items = array.flex_iter();
+        assert!(items.next::<Name>().is_some(), "element 0 is /Indexed");
+        assert!(
+            items.next::<Array<'_>>().is_none(),
+            "the self-referential base space (5 0 R) must give up, not resolve again"
+        );
+    }
+
+    /// A document whose xref table points objects 3..=10 at byte 1 (inside
+    /// the `%PDF` header, so no object parses there), while the catalog and
+    /// page tree stay valid. Mirrors upstream's
+    /// `concurrent_xref_repair.pdf`: resolving any of 3..=10 must trigger a
+    /// repair and then read the rebuilt entry.
+    fn broken_xref_fixture() -> Vec<u8> {
+        use alloc::format;
+
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        // Object 1: catalog; object 2: page tree. Both keep valid offsets.
+        let bodies: Vec<Vec<u8>> = (1..=10)
+            .map(|n| {
+                if n == 1 {
+                    b"<< /Type /Catalog /Pages 2 0 R >>".to_vec()
+                } else if n == 2 {
+                    b"<< /Type /Pages /Kids [] /Count 0 >>".to_vec()
+                } else {
+                    format!("<< /V {} >>", 100 + n).into_bytes()
+                }
+            })
+            .collect();
+        for (i, body) in bodies.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            out.extend_from_slice(body);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+
+        let xref_at = out.len();
+        out.extend_from_slice(b"xref\n0 11\n0000000000 65535 f \n");
+        for (i, offset) in offsets.iter().enumerate() {
+            // Objects 3..=10 carry a bogus offset; 1 and 2 stay valid.
+            let recorded = if i < 2 { *offset } else { 1 };
+            out.extend_from_slice(format!("{recorded:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!("trailer\n<< /Size 11 /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n")
+                .as_bytes(),
+        );
+        out
+    }
+
+    /// Ported from LaurenzV/hayro d6fa1180: repairing twice must be a no-op,
+    /// not a panic. The old code asserted the table was not already
+    /// repaired, so any second repair — concurrent or sequential — aborted.
+    #[test]
+    fn xref_repair_is_idempotent() {
+        let pdf = Pdf::new(objstm_cycle_fixture()).expect("the fixture must parse");
+        pdf.xref().repair();
+        pdf.xref().repair();
+    }
+
+    /// Ported from LaurenzV/hayro d6fa1180 + 41d11844: threads that read
+    /// stale entries while another thread repairs must block and retry on
+    /// the rebuilt table, not panic on the lock or give up with `None`.
+    /// Without the fix this panics (`try_put` contention / `assert!`) or
+    /// resolves `None` for objects the repaired table holds.
+    #[test]
+    fn concurrent_xref_repair_resolves_after_repair() {
+        use std::sync::Barrier;
+
+        for _ in 0..16 {
+            let pdf = Pdf::new(broken_xref_fixture()).expect("the broken fixture must load");
+            let barrier = Barrier::new(8);
+
+            std::thread::scope(|scope| {
+                for thread in 0..8 {
+                    let pdf = &pdf;
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        barrier.wait();
+
+                        // Objects 3..=10 have incorrect xref offsets.
+                        for offset in 0..8 {
+                            let number = 3 + (thread + offset) % 8;
+                            let value = pdf
+                                .xref()
+                                .get::<Dict<'_>>(ObjectIdentifier::new(number, 0))
+                                .and_then(|dict| dict.get::<i32>(V));
+                            assert_eq!(value, Some(100 + number));
+                        }
+                    });
+                }
+            });
+        }
+    }
+
+    /// Two compressed object streams holding `<< /V .. >>` dicts 6..=29,
+    /// addressed by an xref stream — the smallest shape that races the
+    /// decoded-bytes publish in `Data::get_with`. Mirrors upstream's
+    /// `concurrent_object_streams.pdf`.
+    fn concurrent_objstm_fixture() -> Vec<u8> {
+        use alloc::format;
+        use std::io::Write;
+
+        fn deflate(data: &[u8]) -> Vec<u8> {
+            let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+            e.write_all(data).expect("in-memory write");
+            e.finish().expect("in-memory finish")
+        }
+
+        /// Pack `count` dicts into one object-stream payload; returns the
+        /// payload and the `/First` header length.
+        fn pack(first_id: i32, count: usize) -> (Vec<u8>, usize) {
+            use alloc::format;
+            use alloc::string::String;
+            use alloc::vec::Vec;
+            use core::fmt::Write;
+
+            let bodies: Vec<Vec<u8>> = (0..count)
+                .map(|i| format!("<< /V {} >>", 100 + first_id + i as i32).into_bytes())
+                .collect();
+            let mut header = String::new();
+            let mut at = 0;
+            for (i, body) in bodies.iter().enumerate() {
+                write!(header, "{} {at} ", first_id + i as i32).expect("in-memory write");
+                at += body.len() + 1;
+            }
+            let first = header.len();
+            let mut payload = header.into_bytes();
+            for body in &bodies {
+                payload.extend_from_slice(body);
+                payload.push(b'\n');
+            }
+            (payload, first)
+        }
+
+        let catalog = b"<< /Type /Catalog /Pages 2 0 R >>";
+        let pages = b"<< /Type /Pages /Kids [] /Count 0 >>";
+        let (payload_a, first_a) = pack(6, 12);
+        let (payload_b, first_b) = pack(18, 12);
+
+        let mut out = b"%PDF-1.5\n".to_vec();
+        let off1 = out.len();
+        out.extend_from_slice(b"1 0 obj\n");
+        out.extend_from_slice(catalog);
+        out.extend_from_slice(b"\nendobj\n");
+        let off2 = out.len();
+        out.extend_from_slice(b"2 0 obj\n");
+        out.extend_from_slice(pages);
+        out.extend_from_slice(b"\nendobj\n");
+        let n_a = deflate(&payload_a);
+        let off3 = out.len();
+        out.extend_from_slice(
+            format!(
+                "3 0 obj\n<< /Type /ObjStm /N 12 /First {first_a} /Length {} /Filter /FlateDecode >>\nstream\n",
+                n_a.len()
+            )
+            .as_bytes(),
+        );
+        out.extend_from_slice(&n_a);
+        out.extend_from_slice(b"\nendstream\nendobj\n");
+        let n_b = deflate(&payload_b);
+        let off4 = out.len();
+        out.extend_from_slice(
+            format!(
+                "4 0 obj\n<< /Type /ObjStm /N 12 /First {first_b} /Length {} /Filter /FlateDecode >>\nstream\n",
+                n_b.len()
+            )
+            .as_bytes(),
+        );
+        out.extend_from_slice(&n_b);
+        out.extend_from_slice(b"\nendstream\nendobj\n");
+
+        let off30 = out.len();
+        let entry = |t: u8, a: usize, b: u8| {
+            let mut v = vec![t];
+            v.extend_from_slice(&(a as u16).to_be_bytes());
+            v.push(b);
+            v
+        };
+        let mut rows = Vec::new();
+        // Size 31: objects 0..=30. 5 and 30's predecessors stay free.
+        for n in 0..31 {
+            match n {
+                0 | 5 => rows.extend(entry(0, 0, 255)),
+                1 => rows.extend(entry(1, off1, 0)),
+                2 => rows.extend(entry(1, off2, 0)),
+                3 => rows.extend(entry(1, off3, 0)),
+                4 => rows.extend(entry(1, off4, 0)),
+                6..=17 => rows.extend(entry(2, 3, (n - 6) as u8)),
+                18..=29 => rows.extend(entry(2, 4, (n - 18) as u8)),
+                30 => rows.extend(entry(1, off30, 0)),
+                _ => unreachable!(),
+            }
+        }
+        out.extend_from_slice(
+            format!(
+                "30 0 obj\n<< /Type /XRef /Size 31 /W [1 2 1] /Root 1 0 R /Length {} >>\nstream\n",
+                rows.len()
+            )
+            .as_bytes(),
+        );
+        out.extend_from_slice(&rows);
+        out.extend_from_slice(b"\nendstream\nendobj\n");
+        out.extend_from_slice(format!("startxref\n{off30}\n%%EOF\n").as_bytes());
+        out
+    }
+
+    /// Ported from LaurenzV/hayro 0829d581: the decoded bytes of an object
+    /// stream must be published atomically. The old code inserted the cache
+    /// index before decoding, so a thread resolving the same stream
+    /// concurrently read an empty slot and resolved `None`.
+    #[test]
+    fn concurrent_objstm_resolution_publishes_atomically() {
+        use std::sync::Barrier;
+
+        for _ in 0..16 {
+            let pdf = Pdf::new(concurrent_objstm_fixture()).expect("the fixture must load");
+            let barrier = Barrier::new(8);
+
+            std::thread::scope(|scope| {
+                for thread in 0..8 {
+                    let pdf = &pdf;
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        barrier.wait();
+
+                        // Objects 6..=29 are split between two compressed streams.
+                        for offset in 0..24 {
+                            let number = 6 + (thread * 12 + offset) % 24;
+                            let value = pdf
+                                .xref()
+                                .get::<Dict<'_>>(ObjectIdentifier::new(number, 0))
+                                .and_then(|dict| dict.get::<i32>(V));
+                            assert_eq!(value, Some(100 + number));
+                        }
+                    });
+                }
+            });
+        }
     }
 }

@@ -1,0 +1,83 @@
+# semver_features.txt — non-default features the semver gate checks (#636).
+#
+# WHY
+#
+# The gate's enum half builds rustdoc JSON with default features, so it is
+# blind to everything behind a feature: a new exhaustive enum in
+# feature-gated code ships unsealed and breaks on its first new variant.
+# cargo-semver-checks has the same blind spot for features that are new
+# since the baseline (it cannot enable on the baseline what the baseline
+# never had). This file closes both: the gate runs a second pass per crate
+# with defaults plus the features listed here, for check-release (via
+# --features) and for the enum check (rustdoc with the same features).
+#
+# FORMAT
+#
+# One line per crate: `<crate>: <feature> <feature> ...`. Blank lines and
+# `#` comments are ignored; an inline `#` ends the line. A crate with no
+# line gets the default pass only. Both passes keep the crate's default
+# features on, so defaults are never listed here.
+#
+# WHAT IS LISTED
+#
+# A declared, non-default feature that builds with cargo alone on the
+# runner: no system libraries, no build-time downloads. `cargo install
+# --locked` on the release runner is the reference; what needs more (a
+# `-sys` crate against a system library, a model download) stays out, with
+# the reason beside the crate below. Implicit per-dependency features
+# (`dep:`-less optional dependencies surfacing as features) are out: they
+# gate no items of their own. So are features that change nothing in the
+# lib (examples-only, or a meta-feature whose leaves are already listed).
+# Never --all-features: the list is explicit so a new feature is a
+# conscious gate decision, not a build break at release time.
+#
+# pdf-ocr: `tesseract-cli` only (std-only: no linked library, nothing
+# downloaded). `tesseract` links the system libtesseract
+# through leptess (absent from the runner); `paddle` downloads the ONNX
+# runtime through ort at build time. The bare `image`, `ndarray`,
+# `dirs-next` and `ureq` are implicit dependency features gating no lib
+# items; bare `ort` and `leptess` need the download and the system library.
+pdf-ocr: tesseract-cli
+#
+# pdf-render: NO feature pass. Its only features are the defaults
+# (`embed-fonts`, `embed-cmaps`), which forward to pdf-interpret and gate
+# no lib items here; the default pass already covers them.
+#
+# pdf-xfa: NO feature pass. Its only non-default feature,
+# `xfa-js-sandboxed`, compiles the vendored QuickJS C sources through
+# rquickjs (a `cc` build, not pure Rust).
+pdf-engine: parallel serde xfa ocr ocr-mistral ocr-google ocr-aws ocr-azure vision ocr-cli corridor-grid ort-layout ort-tables
+# pdf-engine exclusions: `ocr-onnx` enables pdf-ocr's `paddle`, which
+# downloads the ONNX runtime through ort at build time; `full` is the meta
+# over it and stays out for the same reason. `ocr-cloud` is the meta over
+# the four cloud backends, covered by listing its leaves. `xfa-js-sandboxed`
+# forwards to pdf-xfa's rquickjs-gated feature (vendored C, see pdf-xfa)
+# and gates no pdf-engine lib items itself. `spike` gates examples only.
+# `corridor-grid` is listed because it gates lib code (the grid's env
+# override); it adds no public items, so the pass guards the removal.
+# `ort` gates no pdf-engine lib items itself (the round-trip test only).
+# `ort-layout` IS listed: it gates `layout` and `balanced` (the tier's
+# boxes, options and entries), and `ort-tables` IS listed: it gates
+# `learned::tables_tatr`. Both build with cargo alone -- `load-dynamic`,
+# so ort-sys neither links nor downloads at build time.
+#
+# pdf-annot: NO feature pass. `write` is default-on; no non-default features.
+pdf-invoice: serde
+#
+# pdf-substitute-fonts: NO feature pass. `bundled` is default-on; no
+# non-default features.
+pdf-manip: watermark-image
+# pdf-manip: `watermark-image` forwards to `dep:image`, which the default
+# `image-insert` already enables, so the pass adds no new items today; it
+# is listed because it is a declared pure-Rust feature and the line keeps
+# it covered if it ever gates lib code. Defaults (`serde`, `image-insert`,
+# `font-subset`, `pdfa-convert`, `bundled-substitute-fonts`) stay on.
+pdfluent-sign: tsa
+# pdfluent-sign: `tsa` talks HTTP through ureq 2 with its rustls backend
+# (pure Rust, no system TLS). Bare `ureq` is the implicit dependency
+# feature and gates nothing.
+pdfluent: async-tokio tracing vision ocr-tesseract ocr-paddle html-to-pdf docx-export xlsx-export pptx-export xfa-flatten wasm internal-legacy
+# pdfluent: most of these are empty capability markers, so the pass costs
+# one build. `vision` forwards to pdf-engine/vision; `async-tokio` and
+# `tracing` are pure-Rust dependencies. Defaults (`signing`, `pdfa`,
+# `redaction`, `font-subset`) stay on.

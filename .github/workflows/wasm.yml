@@ -1,125 +1,318 @@
-name: WASM Build
+name: wasm-release
+run-name: wasm-release (manual only)
 
-# Branch pushes: build + trigger website rebuild (paths-filtered).
-# Version tags (v*.*.*): build + publish to npm.
+# MANUAL ONLY. Tags start nothing here: publishing @pdfluent/sdk-wasm is a
+# dispatch with publish_npm=true, after the audit in wasm-build and the gate
+# below. (The same shape as node-bindings.yml: the decision and the gate are
+# both in this file, so neither can drift off the publish.)
+# Self-hosted runs never publish: with runner_pool=self and publish_npm=true
+# the first step of every job fails before anything builds.
 on:
-  push:
-    # Tags only. The master-push build moved into ci-ephemeral.yml so that one
-    # push provisions one instance instead of two: this workflow and that one
-    # fired together and each made its own cpx42 (#275).
-    tags:
-      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       publish_npm:
-        description: 'Publish to npm (requires NPM_TOKEN secret)'
+        description: 'Publish to npm (false builds and gates only)'
+        required: false
         default: 'false'
+      runner_pool:
+        description: 'Runner pool: github (hosted) or self (self-hosted GCP/Mac runners)'
+        required: false
+        default: 'github'
         type: choice
-        options: ['true', 'false']
+        options: ['github', 'self']
+
+concurrency:
+  group: wasm-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 env:
-  CARGO_TERM_COLOR: always
+  WASM_CRATE: crates/xfa-wasm
 
 jobs:
   wasm-build:
-    name: Build WASM
-    runs-on: ubuntu-latest
-    env:
-      WEBSITE_DEPLOY_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
+    name: Build and audit the wasm package
+    runs-on: ${{ inputs.runner_pool == 'self' && fromJSON('["self-hosted", "linux", "x64", "pdfluent-release"]') || 'ubuntu-latest' }}
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Self-hosted runs never publish
+        if: inputs.runner_pool == 'self' && inputs.publish_npm == 'true'
+        shell: bash
+        run: |
+          echo "::error::runner_pool=self refuses publish_npm=true: self-hosted runs never publish" >&2
+          exit 1
 
-      # Pinned to rust-toolchain.toml's channel: `@stable` puts the target
-      # on stable, cargo switches to the pinned channel, and there is no
-      # wasm32 std there -- "can't find crate for `core`".
-      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up the self-hosted toolchain
+        if: inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          tools: rust,node,wasm
+          rust-targets: wasm32-unknown-unknown
+          node-version: '24'
+
+      # Missing is red here, in seconds, with the complete list -- before the
+      # build, never an hour in (m482). Read-only: it installs nothing.
+      - name: Preflight the release requirements
+        if: inputs.runner_pool == 'self'
+        shell: bash
+        run: python3 scripts/ci/gate_preflight.py --release-job wasm.yml/wasm-build
+
+      - name: Install Rust toolchain with wasm target
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        if: inputs.runner_pool != 'self'
         with:
           toolchain: '1.94.0'
           targets: wasm32-unknown-unknown
 
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
         with:
-          key: wasm
+          workspaces: ${{ env.WASM_CRATE }}
+          cache-bin: false
 
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        if: inputs.runner_pool != 'self'
+        run: cargo install wasm-pack --locked
 
-      - name: Build WASM package
-        run: wasm-pack build crates/xfa-wasm --target web --release
-
-      - name: Ship the licence files beside the manifest
-        # `license: SEE LICENSE IN LICENSE-OFFER` is a promise about a file, and
-        # LICENSE-OFFER names two more. Without these copies the published
-        # package makes the promise and omits every file it points at.
+      # wasm-pack shells out to wasm-bindgen: a floating installer drifts
+      # off the wasm-bindgen the lockfile resolved (0.2.114 installed
+      # against 0.2.121 locked), so the CLI is installed at the version
+      # read from Cargo.lock. (Single quotes stay out of the one-liner:
+      # the guard executes it to prove it reads the lock.)
+      - name: Install wasm-bindgen-cli at the locked version
+        if: inputs.runner_pool != 'self'
         run: |
-          cp LICENSE-OFFER crates/xfa-wasm/pkg/LICENSE-OFFER
-          cp LICENSE crates/xfa-wasm/pkg/LICENSE
-          cp LICENSE-COMMERCIAL crates/xfa-wasm/pkg/LICENSE-COMMERCIAL
+          VER="$(python3 -c 'import re,pathlib; print(re.search(r"\[\[package\]\]\nname = \"wasm-bindgen\"\nversion = \"([^\"]+)\"", pathlib.Path("Cargo.lock").read_text()).group(1))')"
+          echo "wasm-bindgen-cli $VER (from Cargo.lock)"
+          cargo install wasm-bindgen-cli --version "$VER" --locked
 
-      - name: Patch npm package metadata
-        # wasm-pack regenerates package.json from Cargo.toml metadata.
-        # Post-process to inject correct license, version, and repository URLs.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        if: inputs.runner_pool != 'self'
+        with:
+          node-version: 24
+
+      - name: Build wasm package
+        shell: bash
         run: |
-          PDFLUENT_VER=$(cargo metadata --no-deps --format-version 1 \
-            | python3 -c "import json,sys; pkgs=json.load(sys.stdin)['packages']; \
-              print(next(p['version'] for p in pkgs if p['name']=='pdfluent'))")
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('crates/xfa-wasm/pkg/package.json', 'utf8'));
-            pkg.version = process.env.PDFLUENT_VER;
-            // npm's validate-npm-package-license rejects a LicenseRef expression
-            // (validForNewPackages: false), so the npm channels use npm's own
-            // route for a non-SPDX offer. The compound expression is the first
-            // line of the LICENSE-OFFER file shipped beside it; LICENSE itself
-            // is the AGPL text and nothing else (#349).
-            pkg.license = 'SEE LICENSE IN LICENSE-OFFER';
-            pkg.licenseUrl = 'https://pdfluent.com/terms';
-            pkg.homepage = 'https://pdfluent.com';
-            pkg.repository = { type: 'git', url: 'https://github.com/pdfluent/pdfluent-sdk' };
-            pkg.bugs = { url: 'https://github.com/pdfluent/pdfluent-sdk/issues' };
-            pkg.publishConfig = { access: 'public' };
-            fs.writeFileSync('crates/xfa-wasm/pkg/package.json', JSON.stringify(pkg, null, 2) + '\n');
-            console.log('patched package.json: version=' + pkg.version + ' license=' + pkg.license);
-          " env PDFLUENT_VER=$PDFLUENT_VER
+          # The config's wasm32 block (remaps + simd128) names one Mac; the
+          # helper recomputes both from this runner, since env flags replace
+          # the config outright.
+          source scripts/release/release_rustflags.sh wasm32-unknown-unknown
+          wasm-pack build ${{ env.WASM_CRATE }} --release --target web --out-dir pkg
+          cp LICENSE-OFFER LICENSE LICENSE-COMMERCIAL ${{ env.WASM_CRATE }}/pkg/
 
-      - name: Upload WASM artifact
+      # Its own audit refuses the package if any of that is missing, so a
+      # publish step further down cannot meet a half-transformed directory.
+      # The version comes from the crate's manifest path, not a hard-coded
+      # package name: the crate was renamed and the name lookup matched
+      # nothing (IndexError after a green 17-minute build, run 37451390781).
+      - name: Transform package for publishing
+        run: |
+          VERSION="$(python3 scripts/release/crate_version_from_manifest.py "${{ env.WASM_CRATE }}/Cargo.toml")"
+          bash scripts/release/transform-wasm-pkg.sh ${{ env.WASM_CRATE }}/pkg "$VERSION"
+
+      - name: Upload wasm package artifact
         uses: actions/upload-artifact@v4
         with:
           name: wasm-pkg
-          path: crates/xfa-wasm/pkg/
-          retention-days: 30
+          path: ${{ env.WASM_CRATE }}/pkg/
+          retention-days: 1
 
-      - name: Publish to npm
-        # Publish when: a v* tag is pushed, OR workflow_dispatch with publish_npm=true.
-        # Requires NPM_TOKEN secret set in repository settings.
-        # No token check in the condition. `secrets` is not available in an
-        # `if:` at all -- reading it there does not come out false, it makes the
-        # whole file invalid, which is what stopped this workflow for nine days.
-        # Hoisting the token to the job's `env:` would fix that but hand a
-        # registry-write credential to every step in the job, which Codex
-        # pointed out on #1544 and is right about. So the condition asks only
-        # what it needs to, and the token stays on this one step. A missing
-        # token now fails the publish loudly instead of skipping it in silence,
-        # and a release that quietly does not publish is worse than one that
-        # stops and says so.
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_npm == 'true'
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+  release-gate:
+    name: Gate the packed tarball, smoke the packaged bytes
+    # The gate reads back the artifact wasm-build uploaded: the bytes judged
+    # and the bytes published are the same ones.
+    needs: [wasm-build]
+    # A failed build must not skip this validation in silence: it runs,
+    # names the missing package below, and fails at the end when it is missing.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ inputs.runner_pool == 'self' && fromJSON('["self-hosted", "linux", "x64", "pdfluent-release"]') || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    steps:
+      - name: Self-hosted runs never publish
+        if: inputs.runner_pool == 'self' && inputs.publish_npm == 'true'
+        shell: bash
         run: |
-          if [ -z "${NPM_TOKEN}" ]; then
-            echo "NPM_TOKEN is not set; refusing to pretend this published." >&2
+          echo "::error::runner_pool=self refuses publish_npm=true: self-hosted runs never publish" >&2
+          exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download the packed package
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: gate-pkg
+
+      # wasm-build may have failed: name the missing package instead of
+      # dying on the first absent file in silence.
+      - name: List the expected legs (never silent)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > .missing-legs
+          if [[ -d gate-pkg ]]; then
+            echo "leg wasm-pkg: present"
+          else
+            echo "SKIPPED leg wasm-pkg: build failed"
+            echo "wasm-pkg" >> .missing-legs
+          fi
+
+      - name: Set up the self-hosted toolchain
+        if: inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          tools: node,python
+          node-version: '24'
+
+      # Missing is red here, in seconds, with the complete list (m482).
+      # Read-only: it installs nothing.
+      - name: Preflight the release requirements
+        if: inputs.runner_pool == 'self'
+        shell: bash
+        run: python3 scripts/ci/gate_preflight.py --release-job wasm.yml/release-gate
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        if: inputs.runner_pool != 'self'
+        with:
+          node-version: 24
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        if: inputs.runner_pool != 'self'
+        with:
+          python-version: '3.12'
+
+      # The licence field AND the licence text, on the exact tarball: the
+      # manifest must point at LICENSE-OFFER and the offer must be inside.
+      - name: Pack and audit the exact tarball
+        id: pack-audit
+        continue-on-error: true
+        run: |
+          TARBALL="$(cd gate-pkg && npm pack 2>/dev/null | tail -1)"
+          python3 scripts/release/license_audit.py "gate-pkg/$TARBALL"
+
+      - name: Smoke the packaged bytes
+        id: smoke
+        continue-on-error: true
+        run: bash scripts/release/consumer_smokes/smoke_wasm.sh --pkg-dir gate-pkg
+
+      # Every independent check above ran to the end (continue-on-error):
+      # this is the verdict, naming each check that did not succeed. A
+      # skipped check counts as failed, not as passed.
+      - name: all checks
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          PACK_AUDIT: ${{ steps.pack-audit.outcome }}
+          SMOKE: ${{ steps.smoke.outcome }}
+        run: |
+          fail=0
+          for check in "pack-audit:$PACK_AUDIT" "smoke:$SMOKE"; do
+            name="${check%%:*}"
+            outcome="${check##*:}"
+            if [[ "$outcome" != "success" ]]; then
+              echo "FAILED check $name (outcome: $outcome)"
+              fail=1
+            else
+              echo "check $name: success"
+            fi
+          done
+          exit "$fail"
+
+      # Red when the package was missing: the audit and the smoke above
+      # already failed on it, so this is the verdict made explicit rather
+      # than a second rule. Runs even when they failed.
+      - name: Fail if any leg was skipped
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          if [[ -s .missing-legs ]]; then
+            echo "missing legs:"
+            sed 's/^/  SKIPPED leg /; s/$/: build failed/' .missing-legs
             exit 1
           fi
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
-          cd crates/xfa-wasm/pkg
-          echo "Publishing @pdfluent/wasm $(node -e "console.log(require('./package.json').version)") to npm..."
-          npm publish --access public
-          echo "npm publish complete"
+          echo "no leg skipped"
 
-      - name: Trigger website rebuild
-        if: github.ref == 'refs/heads/master' && env.WEBSITE_DEPLOY_TOKEN != ''
-        uses: peter-evans/repository-dispatch@v3
+  publish-npm:
+    name: Publish @pdfluent/sdk-wasm to npm
+    needs: [wasm-build, release-gate]
+    # The pre-release clause is first, then the tag requirement, then the
+    # dispatch decision: no version tag, however final, can arm this job on
+    # its own — only a human dispatching at the release tag with
+    # publish_npm; a branch dispatch with publish_npm=true publishes
+    # nothing. (The ref_type spelling, as in node-bindings.yml: a
+    # startsWith on github.ref must never appear in this job, so a tag can
+    # never arm the publish even by editing the clause.)
+    if: >-
+      !(github.ref_type == 'tag' && contains(github.ref_name, '-'))
+      && github.ref_type == 'tag'
+      && inputs.publish_npm == 'true'
+    runs-on: ${{ inputs.runner_pool == 'self' && fromJSON('["self-hosted", "linux", "x64", "pdfluent-release"]') || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    steps:
+      - name: Self-hosted runs never publish
+        if: inputs.runner_pool == 'self' && inputs.publish_npm == 'true'
+        shell: bash
+        run: |
+          echo "::error::runner_pool=self refuses publish_npm=true: self-hosted runs never publish" >&2
+          exit 1
+
+      - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
-          repository: pdfluent/pdfluent-playground
-          event-type: wasm-updated
+          fetch-depth: 1
+
+      - name: Download the packed package
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: ${{ env.WASM_CRATE }}/pkg
+
+      - name: Set up the self-hosted toolchain
+        if: inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          tools: node
+          node-version: '24'
+
+      # Missing is red here, in seconds, with the complete list (m482).
+      # Read-only: it installs nothing.
+      - name: Preflight the release requirements
+        if: inputs.runner_pool == 'self'
+        shell: bash
+        run: python3 scripts/ci/gate_preflight.py --release-job wasm.yml/publish-npm
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        if: inputs.runner_pool != 'self'
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Check npm token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN secret is not set; refusing to publish." >&2
+            exit 1
+          fi
+
+      - name: Publish to npm
+        run: npm publish ${{ env.WASM_CRATE }}/pkg --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

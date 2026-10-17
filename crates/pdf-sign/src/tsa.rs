@@ -29,8 +29,10 @@ pub enum TsaError {
     ParseResponse(String),
     /// Nonce mismatch between request and response.
     NonceMismatch,
-    /// Message imprint mismatch.
-    ImprintMismatch,
+    /// The token stamps something other than the signature it was handed.
+    ImprintMismatch(String),
+    /// The bytes handed over are not a parseable RFC 3161 TimeStampToken.
+    NotATimestampToken(String),
     /// Failed to embed timestamp in CMS.
     EmbedFailed(String),
 }
@@ -43,7 +45,8 @@ impl std::fmt::Display for TsaError {
             Self::TsaStatus(code, msg) => write!(f, "TSA returned status {code}: {msg}"),
             Self::ParseResponse(e) => write!(f, "TSA response parse failed: {e}"),
             Self::NonceMismatch => write!(f, "TSA nonce mismatch"),
-            Self::ImprintMismatch => write!(f, "TSA message imprint mismatch"),
+            Self::ImprintMismatch(e) => write!(f, "TSA message imprint mismatch: {e}"),
+            Self::NotATimestampToken(e) => write!(f, "not an RFC 3161 timestamp token: {e}"),
             Self::EmbedFailed(e) => write!(f, "embed timestamp in CMS failed: {e}"),
         }
     }
@@ -97,8 +100,28 @@ const OID_TIMESTAMP_TOKEN: &[u8] = &[
 ];
 
 /// OID 1.2.840.113549.1.7.2 — id-signedData
-#[cfg(test)]
 const OID_SIGNED_DATA: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02];
+
+/// OID 1.2.840.113549.1.9.16.1.4 — id-ct-TSTInfo
+const OID_CT_TST_INFO: &[u8] = &[
+    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x10, 0x01, 0x04,
+];
+
+/// OID 1.2.840.113549.1.9.3 -- id-contentType.
+const OID_CONTENT_TYPE: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x03];
+
+/// OID 1.2.840.113549.1.9.4 -- id-messageDigest.
+const OID_MESSAGE_DIGEST: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x04];
+
+/// OID 1.2.840.113549.1.9.16.2.12 -- id-aa-signingCertificate (RFC 2634).
+const OID_SIGNING_CERTIFICATE: &[u8] = &[
+    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x10, 0x02, 0x0C,
+];
+
+/// OID 1.2.840.113549.1.9.16.2.47 -- id-aa-signingCertificateV2 (RFC 5035).
+const OID_SIGNING_CERTIFICATE_V2: &[u8] = &[
+    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x10, 0x02, 0x2F,
+];
 
 fn digest_oid(algo: DigestAlgorithm) -> &'static [u8] {
     match algo {
@@ -246,6 +269,9 @@ pub fn build_tsa_request(
 /// Send a timestamp request to a TSA endpoint and return the raw
 /// DER-encoded TimeStampToken (CMS ContentInfo).
 ///
+/// `signature_value` is the CMS `SignerInfo` signature the authority is being
+/// asked to stamp -- the bytes, not their digest; the digest is taken here.
+///
 /// **No test reaches this, deliberately.** It posts an RFC 3161 request to a
 /// timestamp authority over HTTP and returns what comes back. A test would
 /// either need a real TSA -- which makes the suite depend on somebody else's
@@ -255,16 +281,16 @@ pub fn build_tsa_request(
 /// What is worth testing here is the parsing of the response, and that lives
 /// in the functions this one calls.
 #[cfg(feature = "tsa")]
-pub fn request_timestamp(config: &TsaConfig, signature_hash: &[u8]) -> Result<Vec<u8>, TsaError> {
+pub fn request_timestamp(config: &TsaConfig, signature_value: &[u8]) -> Result<Vec<u8>, TsaError> {
     use sha2::Digest;
     use std::io::Read;
 
     // Compute the hash of the signature value.
     let hash = match config.hash_algorithm {
-        DigestAlgorithm::Sha256 => sha2::Sha256::digest(signature_hash).to_vec(),
-        DigestAlgorithm::Sha384 => sha2::Sha384::digest(signature_hash).to_vec(),
-        DigestAlgorithm::Sha512 => sha2::Sha512::digest(signature_hash).to_vec(),
-        _ => sha2::Sha256::digest(signature_hash).to_vec(),
+        DigestAlgorithm::Sha256 => sha2::Sha256::digest(signature_value).to_vec(),
+        DigestAlgorithm::Sha384 => sha2::Sha384::digest(signature_value).to_vec(),
+        DigestAlgorithm::Sha512 => sha2::Sha512::digest(signature_value).to_vec(),
+        _ => sha2::Sha256::digest(signature_value).to_vec(),
     };
 
     // Generate nonce from current time.
@@ -313,12 +339,11 @@ pub fn request_timestamp(config: &TsaConfig, signature_hash: &[u8]) -> Result<Ve
         }
     }
 
-    // Verify message imprint matches.
-    if let Some(resp_imprint) = extract_imprint_from_token(&token) {
-        if resp_imprint != hash {
-            return Err(TsaError::ImprintMismatch);
-        }
-    }
+    // Verify the token stamps what we asked to have stamped. Not "if it
+    // parses": a token whose imprint cannot be read is a token that cannot be
+    // shown to cover this signature, and shipping it would put the claim in
+    // the file anyway.
+    token_stamps(&token, signature_value)?;
 
     Ok(token)
 }
@@ -430,7 +455,7 @@ fn parse_der_integer_value(data: &[u8]) -> u64 {
 /// Extract the nonce from a TimeStampToken (TSTInfo within CMS ContentInfo).
 #[cfg(feature = "tsa")]
 fn extract_nonce_from_token(token_der: &[u8]) -> Option<u64> {
-    let tst_info = extract_tst_info(token_der)?;
+    let tst_info = extract_tst_info(token_der).ok()?;
     // TSTInfo ::= SEQUENCE { version, policy, messageImprint, serialNumber,
     //                         genTime, accuracy, ordering, nonce, ... }
     let (_, tst_seq) = cms::parse_tlv(tst_info)?;
@@ -459,54 +484,539 @@ fn extract_nonce_from_token(token_der: &[u8]) -> Option<u64> {
     None
 }
 
-/// Extract the message imprint hash from a TimeStampToken.
-#[cfg(feature = "tsa")]
-fn extract_imprint_from_token(token_der: &[u8]) -> Option<Vec<u8>> {
+/// What a `TimeStampToken` says it stamped: which digest, over which bytes.
+///
+/// An RFC 3161 authority never sees the data itself, only this hash. So the
+/// only question a verifier can ask of a token is whether that hash is the
+/// hash of the signature the file actually carries, and this is the shape of
+/// the answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageImprint {
+    /// The digest the authority was asked to stamp under.
+    pub algorithm: DigestAlgorithm,
+    /// The digest value itself.
+    pub hash: Vec<u8>,
+}
+
+/// Hash `data` the way an RFC 3161 `messageImprint` does.
+///
+/// Returns `None` for [`DigestAlgorithm::Unknown`]: a token naming a digest we
+/// cannot compute is a token we cannot check, and guessing SHA-256 would turn
+/// "unverifiable" into "mismatch", which reads as a different fault.
+pub fn message_imprint(data: &[u8], algorithm: DigestAlgorithm) -> Option<MessageImprint> {
+    use sha2::Digest as _;
+    let hash = match algorithm {
+        DigestAlgorithm::Sha1 => {
+            use sha1::Digest as _;
+            sha1::Sha1::digest(data).to_vec()
+        }
+        DigestAlgorithm::Sha256 => sha2::Sha256::digest(data).to_vec(),
+        DigestAlgorithm::Sha384 => sha2::Sha384::digest(data).to_vec(),
+        DigestAlgorithm::Sha512 => sha2::Sha512::digest(data).to_vec(),
+        DigestAlgorithm::Unknown => return None,
+    };
+    Some(MessageImprint { algorithm, hash })
+}
+
+/// Read the `messageImprint` out of a DER-encoded `TimeStampToken`.
+///
+/// The imprint is the only field that ties a token to a document. Reading it
+/// is what separates "these bytes are shaped like a token" from "this token is
+/// about our signature".
+pub fn token_message_imprint(token_der: &[u8]) -> Result<MessageImprint, TsaError> {
     let tst_info = extract_tst_info(token_der)?;
-    let (_, tst_seq) = cms::parse_tlv(tst_info)?;
-    let mut pos = tst_seq;
+    let (after_tst_info, tst_seq) = tlv(tst_info, TAG_SEQUENCE, "TSTInfo")?;
+    // The eContent is the DER encoding of exactly one TSTInfo. A second TLV
+    // inside that OCTET STRING is covered by the authority's own message digest
+    // and travels with the token, so the imprint can match while the content is
+    // something a conforming decoder refuses to read.
+    if !after_tst_info.is_empty() {
+        return Err(TsaError::NotATimestampToken(format!(
+            "{} bytes follow the TSTInfo inside the encapsulated content, which holds one \
+             TSTInfo and nothing else",
+            after_tst_info.len(),
+        )));
+    }
 
-    // Skip: version, policy
-    let (rest, _) = cms::parse_tlv(pos)?;
-    pos = rest;
-    let (rest, _) = cms::parse_tlv(pos)?;
-    pos = rest;
+    // TSTInfo ::= SEQUENCE { version INTEGER, policy OID, messageImprint, ... }
+    let (rest, _version) = tlv(tst_seq, TAG_INTEGER, "TSTInfo.version")?;
+    let (rest, _policy) = tlv(rest, TAG_OID, "TSTInfo.policy")?;
 
-    // messageImprint SEQUENCE { hashAlgorithm, hashedMessage }
-    let (_, imprint_seq) = cms::parse_tlv(pos)?;
-    let (rest2, _algo) = cms::parse_tlv(imprint_seq)?;
-    let (_, hash_bytes) = cms::parse_tlv(rest2)?;
+    // messageImprint ::= SEQUENCE { hashAlgorithm AlgorithmIdentifier, hashedMessage OCTET STRING }
+    let (after_imprint, imprint) = tlv(rest, TAG_SEQUENCE, "TSTInfo.messageImprint")?;
+    let (rest, algo_id) = tlv(imprint, TAG_SEQUENCE, "messageImprint.hashAlgorithm")?;
+    let (_, algo_oid) = tlv(algo_id, TAG_OID, "hashAlgorithm.algorithm")?;
+    let (_, hash) = tlv(rest, TAG_OCTET_STRING, "messageImprint.hashedMessage")?;
 
-    Some(hash_bytes.to_vec())
+    // The imprint is read, but the fields after it are not optional and a
+    // caller-supplied structure that stops here is not a token. Both are what
+    // says WHEN the stamp was made, which is the only thing a timestamp is
+    // for; a verifier reads them and rejects what does not have them.
+    let (rest, _serial) = tlv(after_imprint, TAG_INTEGER, "TSTInfo.serialNumber")?;
+    let (_, _gen_time) = tlv(rest, TAG_GENERALIZED_TIME, "TSTInfo.genTime")?;
+
+    Ok(MessageImprint {
+        algorithm: DigestAlgorithm::from_oid(algo_oid),
+        hash: hash.to_vec(),
+    })
+}
+
+const TAG_INTEGER: u8 = 0x02;
+const TAG_OCTET_STRING: u8 = 0x04;
+const TAG_OID: u8 = 0x06;
+const TAG_SEQUENCE: u8 = 0x30;
+const TAG_SET: u8 = 0x31;
+const TAG_GENERALIZED_TIME: u8 = 0x18;
+
+/// Parse one TLV and require it to carry `tag`.
+///
+/// The CMS parser this builds on reads any tag it is handed, which is right for
+/// walking a structure whose shape is already known. It is wrong here: the
+/// question these functions answer is whether arbitrary bytes ARE a
+/// TimeStampToken, and a walk that accepts any tag answers "yes" for anything
+/// with the same nesting. Naming the tag turns the walk into a check.
+fn tlv<'a>(data: &'a [u8], tag: u8, what: &str) -> Result<(&'a [u8], &'a [u8]), TsaError> {
+    match data.first() {
+        Some(&found) if found == tag => cms::parse_tlv(data).ok_or_else(|| {
+            TsaError::NotATimestampToken(format!("{what}: truncated or over-long length"))
+        }),
+        Some(&found) => Err(TsaError::NotATimestampToken(format!(
+            "{what}: expected ASN.1 tag 0x{tag:02x}, found 0x{found:02x}"
+        ))),
+        None => Err(TsaError::NotATimestampToken(format!(
+            "{what}: nothing left to read"
+        ))),
+    }
+}
+
+/// Walk the first `SignerInfo` in a `signerInfos` SET.
+///
+/// "Not empty" is not the same as "somebody signed it": a SET holding a NULL,
+/// or any other bytes at all, is non-empty and carries no signature. The fields
+/// are not read for their values -- verifying the authority's signature needs
+/// its certificate and is the verifier's job -- but a structure that does not
+/// have them is not one a verifier will accept, and embedding it would put the
+/// B-T claim in the file regardless.
+fn signer_info_parses(
+    signer_infos: &[u8],
+    tst_info_der: &[u8],
+    digest_algorithms: &[u8],
+) -> Result<(), TsaError> {
+    let (_, si) = tlv(signer_infos, TAG_SEQUENCE, "signerInfos[0]")?;
+
+    // SignerInfo ::= SEQUENCE { version, sid, digestAlgorithm, [0] signedAttrs,
+    //                           signatureAlgorithm, signature, [1] unsignedAttrs }
+    let (rest, _version) = tlv(si, TAG_INTEGER, "SignerInfo.version")?;
+    // sid is a CHOICE, but a CHOICE of exactly two things: an
+    // issuerAndSerialNumber SEQUENCE, or [0] subjectKeyIdentifier. Reading any
+    // tag here would accept a NULL as an identity, which names no signer and
+    // which a conforming verifier rejects -- so the two are named.
+    let (rest, _sid) = match rest.first() {
+        Some(&TAG_SEQUENCE) => {
+            let (after_sid, sid) = tlv(rest, TAG_SEQUENCE, "sid.issuerAndSerialNumber")?;
+            // IssuerAndSerialNumber ::= SEQUENCE { issuer Name, serialNumber
+            // CertificateSerialNumber }. Name is a CHOICE of one arm, an
+            // RDNSequence, so it is a SEQUENCE. A SEQUENCE holding anything
+            // else names no certificate, and accepting the wrapper alone would
+            // leave the arm as unchecked as reading any tag was.
+            let (after_issuer, _issuer) =
+                tlv(sid, TAG_SEQUENCE, "sid.issuerAndSerialNumber.issuer")?;
+            let (_, serial) = tlv(
+                after_issuer,
+                TAG_INTEGER,
+                "sid.issuerAndSerialNumber.serialNumber",
+            )?;
+            if serial.is_empty() {
+                return Err(TsaError::NotATimestampToken(
+                    "sid.issuerAndSerialNumber.serialNumber is empty, so it numbers no \
+                     certificate"
+                        .into(),
+                ));
+            }
+            (after_sid, sid)
+        }
+        // subjectKeyIdentifier is [0] IMPLICIT OCTET STRING, so its tag is the
+        // primitive 0x80; 0xA0 is accepted beside it because encoders in the
+        // wild write the constructed form and the CMS parser takes either.
+        // Accepting only 0xA0 would refuse a real authority's token, which is
+        // the opposite fault to the one this check is here for.
+        Some(0x80 | 0xA0) => cms::parse_context_implicit(rest, 0).ok_or_else(|| {
+            TsaError::NotATimestampToken("sid.subjectKeyIdentifier: truncated".into())
+        })?,
+        Some(&found) => {
+            return Err(TsaError::NotATimestampToken(format!(
+                "SignerInfo.sid: expected an issuerAndSerialNumber SEQUENCE or a [0] \
+                 subjectKeyIdentifier, found ASN.1 tag 0x{found:02x}"
+            )))
+        }
+        None => {
+            return Err(TsaError::NotATimestampToken(
+                "SignerInfo: missing sid".into(),
+            ))
+        }
+    };
+    let (rest, digest_algorithm) = tlv(rest, TAG_SEQUENCE, "SignerInfo.digestAlgorithm")?;
+    let (_, digest_oid) = tlv(digest_algorithm, TAG_OID, "SignerInfo.digestAlgorithm")?;
+    let digest_algorithm = DigestAlgorithm::from_oid(digest_oid);
+    // RFC 5652 §5.1: SignedData.digestAlgorithms collects the digests the
+    // signers used. It may hold more than are used, so it is not compared for
+    // equality -- but a SET that does not contain this signer's own digest
+    // leaves a verifier free to fail the signature, and a token a verifier may
+    // fail is one we should not be embedding.
+    signer_digest_is_listed(digest_algorithms, digest_oid, digest_algorithm)?;
+    // signedAttrs is optional in CMS only while the encapsulated content is
+    // id-data. A timestamp's is id-ct-TSTInfo, so the attributes are required,
+    // and a verifier that does not find them rejects the token.
+    let (rest, signed_attrs) = cms::parse_context_implicit(rest, 0).ok_or_else(|| {
+        TsaError::NotATimestampToken(
+            "SignerInfo.signedAttrs is absent: CMS requires signed attributes when the \
+             encapsulated content is id-ct-TSTInfo rather than id-data"
+                .into(),
+        )
+    })?;
+    signed_attributes_name_a_timestamp(signed_attrs, tst_info_der, digest_algorithm)?;
+    let (rest, _signature_algorithm) = tlv(rest, TAG_SEQUENCE, "SignerInfo.signatureAlgorithm")?;
+    let (_, signature) = tlv(rest, TAG_OCTET_STRING, "SignerInfo.signature")?;
+    if signature.is_empty() {
+        return Err(TsaError::NotATimestampToken(
+            "SignerInfo.signature is empty: nobody signed this time".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Require the signed attributes CMS makes mandatory, and read what they say.
+///
+/// `signedAttrs` is a SET OF Attribute, each a type OID and a SET of values.
+/// Two of them are mandatory whenever the encapsulated content is not id-data
+/// (RFC 5652 §5.3): the content type and the message digest. Without them the
+/// token is not a conforming CMS signature at all, and the B-T/B-LT document it
+/// would be embedded in fails validation -- so a SET that merely holds bytes is
+/// not enough, and this walks it.
+///
+/// The content type is compared, because an attribute that names something
+/// other than id-ct-TSTInfo describes a different signature than the SignedData
+/// around it. The message digest is required to be a non-empty OCTET STRING and
+/// no more: its value is the hash of the eContent under the authority's key, so
+/// checking it means verifying the authority's signature, which needs the
+/// authority's certificate and is the verifier's work, not the signer's.
+///
+/// RFC 3161 §2.4.1 adds a third: the ESS signing-certificate attribute, which
+/// names the certificate the authority signed with. Its contents are the
+/// verifier's business -- checking them needs the certificate -- but a token
+/// without it does not say whose key to check, so its presence is required
+/// here in either the RFC 2634 or the RFC 5035 encoding.
+fn signed_attributes_name_a_timestamp(
+    signed_attrs: &[u8],
+    tst_info_der: &[u8],
+    digest_algorithm: DigestAlgorithm,
+) -> Result<(), TsaError> {
+    let mut rest = signed_attrs;
+    let mut content_types = 0usize;
+    let mut message_digests = 0usize;
+    let mut signing_certificates = 0usize;
+
+    while !rest.is_empty() {
+        let (next, attribute) = tlv(rest, TAG_SEQUENCE, "signedAttrs: Attribute")?;
+        rest = next;
+
+        let (after_type, attr_type) = tlv(attribute, TAG_OID, "signedAttrs: Attribute.attrType")?;
+        let (_, values) = tlv(after_type, TAG_SET, "signedAttrs: Attribute.attrValues")?;
+
+        if attr_type == OID_CONTENT_TYPE {
+            let after_oid = oid_is(
+                values,
+                OID_CT_TST_INFO,
+                "signedAttrs: the content-type attribute",
+            )?;
+            only_one_value(after_oid, "content-type")?;
+            content_types += 1;
+        } else if attr_type == OID_MESSAGE_DIGEST {
+            let (after_digest, digest) =
+                tlv(values, TAG_OCTET_STRING, "signedAttrs: the message digest")?;
+            only_one_value(after_digest, "message-digest")?;
+            if digest.is_empty() {
+                return Err(TsaError::NotATimestampToken(
+                    "signedAttrs: the message-digest attribute is empty, so it digests nothing"
+                        .into(),
+                ));
+            }
+            // The value is the digest of the encapsulated content under the
+            // SignerInfo's own digest algorithm, and both of those are in hand,
+            // so this one attribute can be compared rather than taken on trust.
+            // A token whose message digest is over something else is signed
+            // over a different TSTInfo than the one carrying our imprint --
+            // which is the same fault this whole module exists for, one layer
+            // in. Under a digest we do not know, the comparison is skipped
+            // rather than failed: a hash added after this code was written is
+            // not a reason to refuse an otherwise conforming token.
+            if let Some(expected) = message_imprint(tst_info_der, digest_algorithm) {
+                if digest != expected.hash {
+                    return Err(TsaError::NotATimestampToken(format!(
+                        "signedAttrs: the message-digest attribute is not the {} digest of the \
+                         TSTInfo it is signed over, so the authority signed a different time \
+                         than this token carries",
+                        algorithm_name(digest_algorithm),
+                    )));
+                }
+            }
+            message_digests += 1;
+        } else if attr_type == OID_SIGNING_CERTIFICATE || attr_type == OID_SIGNING_CERTIFICATE_V2 {
+            // RFC 3161 §2.4.1: the TSA names the certificate that made the
+            // token in a signed attribute, so a verifier can tell which key to
+            // check without guessing among the certificates travelling with it.
+            // Both encodings are accepted -- v2 (RFC 5035) is what an authority
+            // on a SHA-2 policy writes, v1 (RFC 2634) what an older one does.
+            // What is inside is the verifier's business, and it needs the
+            // certificate to do anything with it; that it is there, and is a
+            // structure rather than bytes, is checkable here.
+            let (after_certificate, certificate) = tlv(
+                values,
+                TAG_SEQUENCE,
+                "signedAttrs: the signing-certificate attribute",
+            )?;
+            only_one_value(after_certificate, "signing-certificate")?;
+            // SigningCertificate[V2] ::= SEQUENCE { certs SEQUENCE OF ESSCertID
+            // [v2], policies OPTIONAL }. An empty SEQUENCE is the right tag
+            // around nothing, and names no certificate at all -- which is the
+            // whole reason the attribute is required.
+            let (_, certs) = tlv(
+                certificate,
+                TAG_SEQUENCE,
+                "signedAttrs: signing-certificate certs",
+            )?;
+            let (_, _first) = tlv(
+                certs,
+                TAG_SEQUENCE,
+                "signedAttrs: signing-certificate certs[0]",
+            )?;
+            signing_certificates += 1;
+        }
+    }
+
+    if content_types > 1 || message_digests > 1 || signing_certificates > 1 {
+        // RFC 5652 §5.3: a SignerInfo carries at most one of each of these, and
+        // a verifier that sees two has no way to say which one the signature
+        // was computed over.
+        return Err(TsaError::NotATimestampToken(
+            "signedAttrs: the content-type, message-digest and signing-certificate attributes \
+             may each appear once, and one of them appears more than once here"
+                .into(),
+        ));
+    }
+    if content_types == 0 {
+        return Err(TsaError::NotATimestampToken(
+            "signedAttrs: no content-type attribute, which CMS requires when the encapsulated \
+             content is id-ct-TSTInfo"
+                .into(),
+        ));
+    }
+    if message_digests == 0 {
+        return Err(TsaError::NotATimestampToken(
+            "signedAttrs: no message-digest attribute, so nothing ties this signature to the \
+             time it is supposed to carry"
+                .into(),
+        ));
+    }
+    if signing_certificates == 0 {
+        return Err(TsaError::NotATimestampToken(
+            "signedAttrs: no signing-certificate attribute, so the token does not say which \
+             certificate the authority signed it with (RFC 3161 §2.4.1, in either the RFC 2634 \
+             or the RFC 5035 encoding)"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Require `SignedData.digestAlgorithms` to name the digest this signer used.
+fn signer_digest_is_listed(
+    digest_algorithms: &[u8],
+    digest_oid: &[u8],
+    algorithm: DigestAlgorithm,
+) -> Result<(), TsaError> {
+    let mut rest = digest_algorithms;
+    while !rest.is_empty() {
+        let (next, identifier) = tlv(rest, TAG_SEQUENCE, "SignedData.digestAlgorithms entry")?;
+        rest = next;
+        let (_, oid) = tlv(identifier, TAG_OID, "SignedData.digestAlgorithms entry")?;
+        if oid == digest_oid {
+            return Ok(());
+        }
+    }
+    Err(TsaError::NotATimestampToken(format!(
+        "SignedData.digestAlgorithms does not list {}, which is the digest its own SignerInfo \
+         says it used",
+        algorithm_name(algorithm),
+    )))
+}
+
+/// Require a single-valued attribute's SET to hold nothing beyond its value.
+///
+/// Content type and message digest are single-valued in CMS. A SET with a
+/// second value in it leaves a verifier no way to say which one the signature
+/// covers, so it is refused rather than read past.
+fn only_one_value(after_the_value: &[u8], attribute: &str) -> Result<(), TsaError> {
+    if after_the_value.is_empty() {
+        return Ok(());
+    }
+    Err(TsaError::NotATimestampToken(format!(
+        "signedAttrs: the {attribute} attribute carries more than one value, and CMS gives it \
+         exactly one"
+    )))
+}
+
+/// Require an OID TLV to hold exactly `expected`.
+fn oid_is<'a>(data: &'a [u8], expected: &[u8], what: &str) -> Result<&'a [u8], TsaError> {
+    let (rest, oid) = tlv(data, TAG_OID, what)?;
+    if oid != expected {
+        return Err(TsaError::NotATimestampToken(format!(
+            "{what}: not the expected object identifier"
+        )));
+    }
+    Ok(rest)
+}
+
+/// Refuse a token that does not stamp `signature_value`.
+///
+/// This is the check that makes a PAdES B-T claim mean something. A timestamp
+/// token is carried into the CMS as opaque bytes, so without reading its
+/// imprint back nothing distinguishes a token over this signature from a token
+/// over somebody else's, a token over the empty string, or a token fetched
+/// before this signature existed at all -- and the last of those was the
+/// documented way to use the pre-supplied-token API. The file would then
+/// advertise B-T and fail at the first verifier that checked.
+///
+/// `signature_value` is the `signature` field of the CMS `SignerInfo` (the
+/// encrypted digest), which is what CAdES §6.1.1 says a signature timestamp
+/// covers.
+pub fn token_stamps(token_der: &[u8], signature_value: &[u8]) -> Result<(), TsaError> {
+    let stamped = token_message_imprint(token_der)?;
+    let ours = message_imprint(signature_value, stamped.algorithm).ok_or_else(|| {
+        TsaError::ImprintMismatch(
+            "the token names a digest algorithm this build cannot compute, so what it \
+             stamped cannot be compared with the signature in the file"
+                .into(),
+        )
+    })?;
+    if ours.hash == stamped.hash {
+        return Ok(());
+    }
+    Err(TsaError::ImprintMismatch(format!(
+        "the token stamps {} of some other bytes ({}), not the signature in this file ({}). \
+         A token obtained before signing cannot match, because the signature does not exist \
+         yet: sign first, ask the authority for a token over the signature that came out, \
+         then embed it (sign_pdf_pending_timestamp)",
+        algorithm_name(stamped.algorithm),
+        hex_prefix(&stamped.hash),
+        hex_prefix(&ours.hash),
+    )))
+}
+
+/// A short, printable head of a digest, for an error a human has to read.
+fn hex_prefix(hash: &[u8]) -> String {
+    let mut out = String::new();
+    for b in hash.iter().take(8) {
+        out.push_str(&format!("{b:02x}"));
+    }
+    if hash.len() > 8 {
+        out.push('\u{2026}');
+    }
+    out
+}
+
+fn algorithm_name(algorithm: DigestAlgorithm) -> &'static str {
+    match algorithm {
+        DigestAlgorithm::Sha1 => "SHA-1",
+        DigestAlgorithm::Sha256 => "SHA-256",
+        DigestAlgorithm::Sha384 => "SHA-384",
+        DigestAlgorithm::Sha512 => "SHA-512",
+        DigestAlgorithm::Unknown => "an unrecognised digest",
+    }
 }
 
 /// Extract the raw TSTInfo bytes from a ContentInfo wrapping SignedData.
-#[cfg(feature = "tsa")]
-fn extract_tst_info(token_der: &[u8]) -> Option<&[u8]> {
+///
+/// Every step is checked, tag and object identifier alike. Reading the nesting
+/// alone would accept any CMS SignedData whose encapsulated content happens to
+/// parse as a TSTInfo -- and accepting such bytes is how a signature comes to
+/// carry a timestamp attribute that no conforming verifier will accept.
+fn extract_tst_info(token_der: &[u8]) -> Result<&[u8], TsaError> {
     // ContentInfo ::= SEQUENCE { contentType OID, content [0] EXPLICIT }
-    let (_, content_info) = cms::parse_tlv(token_der)?;
-    let (rest, _oid) = cms::parse_tlv(content_info)?;
-    let (_, explicit) = cms::parse_context_explicit(rest, 0)?;
+    let (trailing, content_info) = tlv(token_der, TAG_SEQUENCE, "TimeStampToken")?;
+    // The whole slice has to be the token. `embed_timestamp_in_cms` copies these
+    // bytes verbatim into the attribute-value SET, so anything after the
+    // ContentInfo becomes a second value in that SET -- checked here and
+    // shipped anyway, which a conforming verifier rejects.
+    if !trailing.is_empty() {
+        return Err(TsaError::NotATimestampToken(format!(
+            "{} bytes follow the TimeStampToken; the whole value has to be the token, \
+             because all of it is what gets embedded",
+            trailing.len(),
+        )));
+    }
+    let rest = oid_is(content_info, OID_SIGNED_DATA, "ContentInfo.contentType")?;
+    let (after_content, explicit) = cms::parse_context_explicit(rest, 0).ok_or_else(|| {
+        TsaError::NotATimestampToken("ContentInfo: missing [0] EXPLICIT content".into())
+    })?;
+    // The same rule one level in. ContentInfo is contentType and [0] content
+    // and nothing else, and bytes hiding after the [0] are inside the outer
+    // SEQUENCE, so the check above never sees them -- while all of it is still
+    // what gets embedded.
+    if !after_content.is_empty() {
+        return Err(TsaError::NotATimestampToken(format!(
+            "{} bytes follow ContentInfo's [0] content inside the ContentInfo; it holds a \
+             content type and a content and nothing else",
+            after_content.len(),
+        )));
+    }
 
     // SignedData ::= SEQUENCE { version, digestAlgorithms, encapContentInfo, ... }
-    let (_, signed_data) = cms::parse_tlv(explicit)?;
-    let mut pos = signed_data;
+    let (_, signed_data) = tlv(explicit, TAG_SEQUENCE, "SignedData")?;
+    let (rest, _version) = tlv(signed_data, TAG_INTEGER, "SignedData.version")?;
+    // digestAlgorithms is a SET OF AlgorithmIdentifier. Reading any tag here
+    // takes a NULL for the field and walks on; naming the tag costs nothing and
+    // is one more place a structure that is not a SignedData stops. The SET may
+    // name more digests than are used; what it may not do is leave out the one
+    // its own SignerInfo names, which `signer_digest_is_listed` checks once
+    // that SignerInfo has been read.
+    let (rest, digest_algorithms) = tlv(rest, TAG_SET, "SignedData.digestAlgorithms")?;
+    let (_, _first_algorithm) = tlv(
+        digest_algorithms,
+        TAG_SEQUENCE,
+        "SignedData.digestAlgorithms[0]",
+    )?;
 
-    // Skip version
-    let (rest, _) = cms::parse_tlv(pos)?;
-    pos = rest;
-    // Skip digestAlgorithms
-    let (rest, _) = cms::parse_tlv(pos)?;
-    pos = rest;
-
-    // encapContentInfo ::= SEQUENCE { contentType OID, eContent [0] EXPLICIT }
-    let (_, encap) = cms::parse_tlv(pos)?;
-    let (rest2, _ct_oid) = cms::parse_tlv(encap)?;
-    let (_, explicit2) = cms::parse_context_explicit(rest2, 0)?;
+    // encapContentInfo ::= SEQUENCE { eContentType OID, eContent [0] EXPLICIT }
+    let (after_encap, encap) = tlv(rest, TAG_SEQUENCE, "SignedData.encapContentInfo")?;
+    let rest = oid_is(encap, OID_CT_TST_INFO, "encapContentInfo.eContentType")?;
+    let (_, explicit) = cms::parse_context_explicit(rest, 0).ok_or_else(|| {
+        TsaError::NotATimestampToken("encapContentInfo: missing [0] EXPLICIT eContent".into())
+    })?;
 
     // eContent OCTET STRING containing DER-encoded TSTInfo
-    let (_, tst_info_der) = cms::parse_tlv(explicit2)?;
-    Some(tst_info_der)
+    let (_, tst_info_der) = tlv(explicit, TAG_OCTET_STRING, "encapContentInfo.eContent")?;
+
+    // signerInfos, after the optional certificates [0] and crls [1]. It is the
+    // authority's own signature over the TSTInfo, so a SignedData that stops
+    // before it carries a time nobody vouched for -- which is not a timestamp,
+    // whatever its content types say.
+    let mut rest = after_encap;
+    if let Some((next, _certificates)) = cms::parse_context_implicit(rest, 0) {
+        rest = next;
+    }
+    if let Some((next, _crls)) = cms::parse_context_implicit(rest, 1) {
+        rest = next;
+    }
+    let (_, signer_infos) = tlv(rest, TAG_SET, "SignedData.signerInfos")?;
+    if signer_infos.is_empty() {
+        return Err(TsaError::NotATimestampToken(
+            "SignedData.signerInfos is empty: nobody signed this time".into(),
+        ));
+    }
+    signer_info_parses(signer_infos, tst_info_der, digest_algorithms)?;
+
+    Ok(tst_info_der)
 }
 
 // ---------------------------------------------------------------------------

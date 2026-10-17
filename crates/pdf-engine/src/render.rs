@@ -23,8 +23,8 @@ use pdf_render::vello_cpu::peniko::Fill as PenikoFill;
 use pdf_render::vello_cpu::{
     Level, Pixmap, RenderContext, RenderMode, RenderSettings as CpuRenderSettings,
 };
-pub use pdf_render::RasterQuality;
 use pdf_render::{render, RenderSettings};
+pub use pdf_render::{RasterQuality, DEFAULT_RASTER_QUALITY};
 
 const AXIS_EPSILON: f64 = 1e-5;
 
@@ -102,7 +102,8 @@ pub struct RenderOptions {
     /// is never applied by default and the returned `RenderedPage` reports the
     /// actual `width`/`height` so callers see the applied resolution.
     pub max_pixels: Option<u32>,
-    /// Rasterization precision/speed trade-off (default [`RasterQuality::Quality`]).
+    /// Rasterization precision/speed trade-off (default
+    /// [`DEFAULT_RASTER_QUALITY`], currently [`RasterQuality::Quality`]).
     ///
     /// [`RasterQuality::Quality`] (default) uses the higher-precision f32
     /// compositing pipeline and is **byte-identical** to historical output.
@@ -121,7 +122,7 @@ impl Default for RenderOptions {
             width: None,
             height: None,
             max_pixels: None,
-            quality: RasterQuality::Quality,
+            quality: DEFAULT_RASTER_QUALITY,
         }
     }
 }
@@ -758,6 +759,16 @@ mod tests {
         // Default rasterization mode is Quality (f32 pipeline) — byte-identical
         // to historical output. Speed (u8) is opt-in only.
         assert_eq!(opts.quality, RasterQuality::Quality);
+        assert_eq!(opts.quality, DEFAULT_RASTER_QUALITY);
+    }
+
+    #[test]
+    fn render_options_quality_is_carried() {
+        let opts = RenderOptions {
+            quality: RasterQuality::Speed,
+            ..Default::default()
+        };
+        assert_eq!(opts.quality, RasterQuality::Speed);
     }
 
     #[test]

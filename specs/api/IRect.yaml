@@ -1,0 +1,399 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for IRect, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: IRect
+rust_path: pdfluent::compat::IRect
+names: {python: IRect, node: IRect, java: IRect, dotnet: IRect}
+members:
+  - name: __add__
+    kind: operator
+    signature: "(p)"
+    names: {python: __add__, node: add, java: add, dotnet: Add}
+    rust: "IRect::Add"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-add]
+  - name: __contains__
+    kind: operator
+    signature: "(x)"
+    names: {python: __contains__, node: containsOp, java: containsOp, dotnet: ContainsOp}
+    rust: "IRect::contains_point"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-contains]
+  - name: __eq__
+    kind: operator
+    signature: "(r)"
+    names: {python: __eq__, node: eq, java: eq, dotnet: Eq}
+    rust: "IRect::PartialEq"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-eq]
+  - name: __ge__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ge__, node: ge, java: ge, dotnet: Ge}
+    rust: "IRect::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-ge]
+  - name: __getitem__
+    kind: operator
+    signature: "(i)"
+    names: {python: __getitem__, node: getitem, java: getitem, dotnet: Getitem}
+    rust: "IRect::Index"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-getitem]
+  - name: __gt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __gt__, node: gt, java: gt, dotnet: Gt}
+    rust: "IRect::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-gt]
+  - name: __init__
+    kind: constructor
+    signature: "(*args, p0=None, p1=None, x0=None, y0=None, x1=None, y1=None)"
+    names: {python: __init__, node: IRect, java: IRect, dotnet: IRect}
+    rust: "IRect::new"
+    tier: T2
+    lane: P0
+    status: missing
+    tests: [p0-irect-init]
+  - name: __le__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __le__, node: le, java: le, dotnet: Le}
+    rust: "IRect::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-le]
+  - name: __len__
+    kind: operator
+    signature: "()"
+    names: {python: __len__, node: len, java: len, dotnet: Len}
+    rust: "IRect::len"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-len]
+  - name: __lt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __lt__, node: lt, java: lt, dotnet: Lt}
+    rust: "IRect::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-lt]
+  - name: __mul__
+    kind: operator
+    signature: "(m)"
+    names: {python: __mul__, node: mul, java: mul, dotnet: Mul}
+    rust: "IRect::Mul"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-mul]
+  - name: __ne__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ne__, node: ne, java: ne, dotnet: Ne}
+    rust: "IRect::PartialEq"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-ne]
+  - name: __neg__
+    kind: operator
+    signature: "()"
+    names: {python: __neg__, node: neg, java: neg, dotnet: Neg}
+    rust: "IRect::Neg"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-neg]
+  - name: __pos__
+    kind: operator
+    signature: "()"
+    names: {python: __pos__, node: pos, java: pos, dotnet: Pos}
+    rust: "IRect::pos"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-pos]
+  - name: __setitem__
+    kind: operator
+    signature: "(i, v)"
+    names: {python: __setitem__, node: setitem, java: setitem, dotnet: Setitem}
+    rust: "IRect::IndexMut"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-setitem]
+  - name: __sub__
+    kind: operator
+    signature: "(p)"
+    names: {python: __sub__, node: sub, java: sub, dotnet: Sub}
+    rust: "IRect::Sub"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-sub]
+  - name: __truediv__
+    kind: operator
+    signature: "(m)"
+    names: {python: __truediv__, node: truediv, java: truediv, dotnet: Truediv}
+    rust: "IRect::Div"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-truediv]
+  - name: bl
+    kind: property
+    signature: "()"
+    names: {python: bl, node: bl, java: getBl, dotnet: Bl}
+    rust: "IRect::bl"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-bl]
+  - name: bottom_left
+    kind: property
+    signature: "()"
+    names: {python: bottom_left, node: bottomLeft, java: getBottomLeft, dotnet: BottomLeft}
+    rust: "IRect::bottom_left"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-bottom-left]
+  - name: bottom_right
+    kind: property
+    signature: "()"
+    names: {python: bottom_right, node: bottomRight, java: getBottomRight, dotnet: BottomRight}
+    rust: "IRect::bottom_right"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-bottom-right]
+  - name: br
+    kind: property
+    signature: "()"
+    names: {python: br, node: br, java: getBr, dotnet: Br}
+    rust: "IRect::br"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-br]
+  - name: contains
+    kind: method
+    signature: "(x)"
+    names: {python: contains, node: contains, java: contains, dotnet: Contains}
+    rust: "IRect::contains_rect"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-contains-2]
+  - name: get_area
+    kind: method
+    signature: "(*args) -> 'float'"
+    names: {python: get_area, node: getArea, java: getArea, dotnet: GetArea}
+    rust: "IRect::get_area"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-get-area]
+  - name: height
+    kind: property
+    signature: "()"
+    names: {python: height, node: height, java: getHeight, dotnet: Height}
+    rust: "IRect::height"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-height]
+  - name: include_point
+    kind: method
+    signature: "(p)"
+    names: {python: include_point, node: includePoint, java: includePoint, dotnet: IncludePoint}
+    rust: "IRect::include_point"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-include-point]
+  - name: include_rect
+    kind: method
+    signature: "(r)"
+    names: {python: include_rect, node: includeRect, java: includeRect, dotnet: IncludeRect}
+    rust: "IRect::include_rect"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-include-rect]
+  - name: intersect
+    kind: method
+    signature: "(r)"
+    names: {python: intersect, node: intersect, java: intersect, dotnet: Intersect}
+    rust: "IRect::intersect"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-intersect]
+  - name: intersects
+    kind: method
+    signature: "(x)"
+    names: {python: intersects, node: intersects, java: intersects, dotnet: Intersects}
+    rust: "IRect::intersects"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-intersects]
+  - name: is_empty
+    kind: property
+    signature: "()"
+    names: {python: is_empty, node: isEmpty, java: isEmpty, dotnet: IsEmpty}
+    rust: "IRect::is_empty"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-is-empty]
+  - name: is_infinite
+    kind: property
+    signature: "()"
+    names: {python: is_infinite, node: isInfinite, java: isInfinite, dotnet: IsInfinite}
+    rust: "IRect::is_infinite"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-is-infinite]
+  - name: is_valid
+    kind: property
+    signature: "()"
+    names: {python: is_valid, node: isValid, java: isValid, dotnet: IsValid}
+    rust: "IRect::is_valid"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-is-valid]
+  - name: morph
+    kind: method
+    signature: "(p, m)"
+    names: {python: morph, node: morph, java: morph, dotnet: Morph}
+    rust: "IRect::morph"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-morph]
+  - name: norm
+    kind: method
+    signature: "()"
+    names: {python: norm, node: norm, java: norm, dotnet: Norm}
+    rust: "IRect::norm"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-norm]
+  - name: normalize
+    kind: method
+    signature: "()"
+    names: {python: normalize, node: normalize, java: normalize, dotnet: Normalize}
+    rust: "IRect::normalize"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-normalize]
+  - name: quad
+    kind: property
+    signature: "()"
+    names: {python: quad, node: quad, java: getQuad, dotnet: Quad}
+    rust: "IRect::quad"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-quad]
+  - name: rect
+    kind: property
+    signature: "()"
+    names: {python: rect, node: rect, java: getRect, dotnet: Rect}
+    rust: "IRect::rect"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-rect]
+  - name: tl
+    kind: property
+    signature: "()"
+    names: {python: tl, node: tl, java: getTl, dotnet: Tl}
+    rust: "IRect::tl"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-tl]
+  - name: top_left
+    kind: property
+    signature: "()"
+    names: {python: top_left, node: topLeft, java: getTopLeft, dotnet: TopLeft}
+    rust: "IRect::top_left"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-top-left]
+  - name: top_right
+    kind: property
+    signature: "()"
+    names: {python: top_right, node: topRight, java: getTopRight, dotnet: TopRight}
+    rust: "IRect::top_right"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-top-right]
+  - name: torect
+    kind: method
+    signature: "(r)"
+    names: {python: torect, node: torect, java: torect, dotnet: Torect}
+    rust: "IRect::torect"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-torect]
+  - name: tr
+    kind: property
+    signature: "()"
+    names: {python: tr, node: tr, java: getTr, dotnet: Tr}
+    rust: "IRect::tr"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-tr]
+  - name: transform
+    kind: method
+    signature: "(m)"
+    names: {python: transform, node: transform, java: transform, dotnet: Transform}
+    rust: "IRect::transform"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-transform]
+  - name: width
+    kind: property
+    signature: "()"
+    names: {python: width, node: width, java: getWidth, dotnet: Width}
+    rust: "IRect::width"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-irect-width]

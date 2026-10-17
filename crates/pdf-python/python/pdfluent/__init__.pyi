@@ -9,7 +9,6 @@ precisely.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterator, List, Optional, Tuple, Type, Union
 
 __version__: str
 
@@ -35,7 +34,7 @@ class PdfluentValidationError(PdfluentError):
     """Raised when a document fails schema or compliance validation."""
 
 class PdfluentRenderError(PdfluentError):
-    """Raised when page rendering or XFA flattening fails."""
+    """Raised when a page cannot be rendered."""
 
 class PdfluentEncryptedError(PdfluentError):
     """Raised when an operation is blocked by PDF encryption."""
@@ -139,6 +138,45 @@ def decrypt_pdf(input_path: str, output_path: str, password: str) -> None:
     """
     ...
 
+def extract_office(
+    source: Union[str, bytes], format: str = "markdown", name: str = "document"
+) -> str:
+    """Extract an Office file (``.docx``, ``.pptx``, ``.xlsx``) to Markdown or Docling JSON.
+
+    The reverse of :meth:`Document.to_docx` and friends: an Office file in,
+    the same structured output the engine produces for PDFs out. Routing is
+    by the container's content types, not by the file extension.
+
+    Parameters
+    ----------
+    source:
+        File path (str) or raw file bytes.
+    format:
+        ``"markdown"`` (default) for the engine's Markdown, ``"docling"``
+        for a Docling ``DoclingDocument`` as JSON.
+    name:
+        ``DoclingDocument.name`` for ``format="docling"``; ignored otherwise.
+
+    Raises
+    ------
+    PdfluentParseError
+        If the bytes are not an Office file, or the Office file is broken.
+    PdfluentValidationError
+        If ``format`` is neither ``"markdown"`` nor ``"docling"``.
+    PdfluentIoError
+        If a file path is given and the file cannot be read.
+    """
+    ...
+
+def render_markdown(blocks: List[Block]) -> str:
+    """Render blocks as markdown, the module-level renderer.
+
+    Takes the blocks :meth:`Document.extract_blocks` hands back and
+    returns the same markdown :meth:`Document.extract_markdown` would
+    write for them.
+    """
+    ...
+
 # ---------------------------------------------------------------------------
 # Document
 # ---------------------------------------------------------------------------
@@ -173,7 +211,15 @@ class Document:
     """
 
     def __init__(
-        self, source: Union[str, bytes], password: Optional[str] = None
+        self,
+        source: Union[str, bytes, None] = None,
+        password: Optional[str] = None,
+        *,
+        stream: Optional[bytes] = None,
+        filetype: Optional[str] = None,
+        rect: Optional[object] = None,
+        width: float = 0.0,
+        height: float = 0.0,
     ) -> None: ...
 
     @property
@@ -191,7 +237,10 @@ class Document:
         """Document outline / bookmarks."""
         ...
 
+    @overload
     def __getitem__(self, index: int) -> Page: ...
+    @overload
+    def __getitem__(self, index: slice) -> List[Page]: ...
     def __len__(self) -> int: ...
     def __iter__(self) -> Iterator[Page]: ...
     def __enter__(self) -> Document: ...
@@ -220,17 +269,157 @@ class Document:
         """
         ...
 
-    def extract_text(self, page_num: int) -> str:
-        """Extract all text from a specific page (0-based index).
+    def extract_markdown(
+        self,
+        first_page: int = 0,
+        page_count: Optional[int] = None,
+        pages: Optional[List[int]] = None,
+        include_headers: bool = False,
+        include_footers: bool = False,
+        page_separators: str = "comment",
+        code: bool = True,
+        quality: str = "fast",
+        model_dir: Optional[str] = None,
+        table_model_dir: Optional[str] = None,
+        keep_furniture: bool = False,
+        ocr: str = "never",
+        ocr_language: str = "eng",
+        ocr_dpi: int = 150,
+        ocr_function: Optional[Callable[..., object]] = None,
+    ) -> str:
+        """The document as markdown, in reading order.
 
-        Raises
-        ------
-        PdfluentPageRangeError
-            If ``page_num`` is out of range.
+        Headings become ``#`` to ``###``, list items ``-`` and ``1.``, a table
+        a pipe table or an HTML one where markdown cannot hold its shape, and a
+        change of page an HTML comment. The running heads a document repeats
+        are not in it unless ``include_headers`` or ``include_footers`` is
+        set; they are in :meth:`extract_blocks`.
+
+        Parameters
+        ----------
+        first_page:
+            First page of the window, counted from zero.
+        page_count:
+            How many pages from ``first_page``; ``None`` for the rest of the
+            document.
+        pages:
+            An explicit list of 0-based page indices instead of the window.
+            Blocks come back in reading order whatever order lists them.
+        include_headers:
+            Write the running heads as plain paragraphs at their
+            reading-order position. Default ``False``.
+        include_footers:
+            Write the page numbers and running footers as plain paragraphs
+            at their reading-order position. Default ``False``.
+        page_separators:
+            ``"comment"`` (default: ``<!-- page N -->`` where the page
+            changes) or ``"none"``: no marker, paragraphs separated by a
+            blank line.
+        quality:
+            ``"fast"`` (default: the shipping engine) or ``"balanced"``
+            (the layout model tier); anything else raises
+            :class:`PdfluentValidationError` naming the value.
+        model_dir:
+            Where the balanced tier looks for its weights; ``None``
+            resolves through ``PDFLUENT_MODEL_DIR`` to the per-user model
+            dir. Read only with ``quality="balanced"``.
+        table_model_dir:
+            Where the TATR table model lives: a directory opts the
+            balanced tier's table regions into TATR structure first,
+            ``None`` (default) leaves TATR off.
+        keep_furniture:
+            Keep the balanced tier's running heads and feet as
+            paragraphs instead of dropping them. Default ``False``.
+            Read only with ``quality="balanced"``.
         """
         ...
 
-    def save(self, path: str) -> None:
+    def extract_docling(
+        self,
+        first_page: int = 0,
+        page_count: Optional[int] = None,
+        name: str = "document",
+        pages: Optional[List[int]] = None,
+    ) -> str:
+        """The document as a Docling ``DoclingDocument``, as JSON.
+
+        Load it with ``DoclingDocument.model_validate_json(...)`` from
+        docling-core; the schema version is pinned by the engine. ``name`` is
+        ``DoclingDocument.name``, which Docling fills with the file's stem.
+        """
+        ...
+
+    def extract_blocks(
+        self,
+        first_page: int = 0,
+        page_count: Optional[int] = None,
+        pages: Optional[List[int]] = None,
+        quality: str = "fast",
+        model_dir: Optional[str] = None,
+        table_model_dir: Optional[str] = None,
+    ) -> List[Block]:
+        """The document's blocks, in reading order.
+
+        One :class:`Block` per paragraph, heading, list item, table cell and
+        running head, each with the page and the box it was drawn in.
+
+        Takes the same ``quality``, ``model_dir`` and ``table_model_dir``
+        as :meth:`extract_markdown`, but the balanced tier assembles
+        markdown: ``quality="balanced"`` raises the engine's markdown-only
+        error.
+        """
+        ...
+
+    def extract_words(
+        self,
+        first_page: int = 0,
+        page_count: Optional[int] = None,
+        pages: Optional[List[int]] = None,
+    ) -> List[Word]:
+        """Every word of the document, with the box it was drawn in.
+
+        Preview: output quality is still improving and the API may change in a minor release.
+
+        One :class:`Word` per word, in reading order, block by block and line
+        by line. Built from the blocks :meth:`extract_blocks` returns under
+        """
+        ...
+
+    def vision_advice(self) -> List[VisionAdvice]:
+        """Which pages are worth sending to a vision model, and why.
+
+        One :class:`VisionAdvice` per page, in page order. ``needs_vision`` is
+        the flag to route on. Only ``no_text_layer`` is measured today -- a page
+        that draws ink and yields no text, a scan; ``low_confidence_table`` and
+        ``figure`` are always ``False`` until the engine can measure them.
+        """
+        ...
+
+    def save(
+        self,
+        filename: str,
+        garbage: int = 3,
+        clean: int = 0,
+        deflate: int = 1,
+        deflate_images: int = 1,
+        deflate_fonts: int = 1,
+        incremental: int = 0,
+        ascii: int = 0,
+        expand: int = 0,
+        linear: int = 0,
+        no_new_id: int = 0,
+        appearance: int = 0,
+        pretty: int = 0,
+        encryption: int = 1,
+        permissions: int = 4095,
+        owner_pw: Optional[str] = None,
+        user_pw: Optional[str] = None,
+        preserve_metadata: int = 1,
+        use_objstms: int = 0,
+        compression_effort: int = 0,
+        raise_on_repair: int = 0,
+        reproducible: int = 0,
+    ) -> None:
         """Save the PDF to a file path.
 
         If the document has been mutated (form fill, annotations, redactions)
@@ -518,6 +707,10 @@ class Page:
         """Extract structured text blocks with position information."""
         ...
 
+    def words(self) -> List[Word]:
+        """This page's words, with the box each one was drawn in."""
+        ...
+
     def __repr__(self) -> str: ...
 
 # ---------------------------------------------------------------------------
@@ -572,6 +765,204 @@ class RenderedImage:
     def __repr__(self) -> str: ...
 
 # ---------------------------------------------------------------------------
+# Block
+# ---------------------------------------------------------------------------
+
+class VisionAdvice:
+    """Why one page may be worth sending to a vision model (#624).
+
+    ``needs_vision`` is true when any reason holds.
+    """
+
+    @property
+    def page(self) -> int:
+        """The page, 0-based."""
+        ...
+
+    @property
+    def needs_vision(self) -> bool:
+        """Whether any reason holds."""
+        ...
+
+    @property
+    def no_text_layer(self) -> bool:
+        """The page draws ink but yields no text: a scan, or text drawn as curves."""
+        ...
+
+    @property
+    def low_confidence_table(self) -> bool:
+        """A table the table model is unsure of. Always ``False`` today."""
+        ...
+
+    @property
+    def figure(self) -> bool:
+        """A chart or figure whose content is not text. Always ``False`` today."""
+        ...
+
+
+class Block:
+    """One block of a document's structure (#573).
+
+    A paragraph, a heading, a list item, a table cell or a running head. The
+    attributes that belong to the block's own ``kind`` carry a value; the rest
+    are ``None``.
+    """
+
+    @property
+    def kind(self) -> str:
+        """``paragraph``, ``heading``, ``list_item``, ``table_cell``,
+        ``header`` or ``footer``."""
+        ...
+
+    @property
+    def text(self) -> str:
+        """The block's text, the line breaks of the measure taken out."""
+        ...
+
+    @property
+    def page(self) -> int:
+        """0-based page index the block was drawn on."""
+        ...
+
+    @property
+    def bbox(self) -> List[float]:
+        """``[x0, y0, x1, y1]`` in PDF user space, y up."""
+        ...
+
+    @property
+    def index(self) -> int:
+        """Place in the document's reading order, counted from the first block
+        of the first page."""
+        ...
+
+    @property
+    def continues_previous(self) -> bool:
+        """Whether the block continues the one before it, because the page
+        broke a paragraph in two."""
+        ...
+
+    @property
+    def confidence(self) -> Optional[float]:
+        """How sure the learned model is of ``kind``, between 0 and 1, or None
+        where no model spoke about this block.
+
+        None is not low confidence: it means nobody measured this block, so
+        code that routes the doubtful cases must treat it as unknown rather
+        than as zero."""
+        ...
+
+    @property
+    def grid(self) -> Optional[Tuple[int, float, int, int, int]]:
+        """What the builder had to go on when it found this cell's table, as
+        (thin_rows, fill, retried_from, full_rows, columns), or None for a block
+        that is not a table cell.
+
+        Five facts and not a score, so each can be weighed on its own. A property
+        of the table: every cell of one table returns the same tuple."""
+        ...
+
+    @property
+    def level(self) -> Optional[int]:
+        """A heading's level (1, 2 or 3) or a list item's nesting depth."""
+        ...
+
+    @property
+    def ordinal(self) -> Optional[int]:
+        """The number the document wrote on a list item, or ``None`` for a
+        bullet."""
+        ...
+
+    @property
+    def row(self) -> Optional[int]:
+        """A table cell's 0-based row."""
+        ...
+
+    @property
+    def column(self) -> Optional[int]:
+        """A table cell's 0-based column, counted across the whole table."""
+        ...
+
+    @property
+    def row_span(self) -> Optional[int]:
+        """How many rows a table cell covers."""
+        ...
+
+    @property
+    def column_span(self) -> Optional[int]:
+        """How many columns a table cell covers."""
+        ...
+
+    @property
+    def header(self) -> Optional[bool]:
+        """Whether a table cell is in the table's header row."""
+        ...
+
+    def __repr__(self) -> str: ...
+    def __str__(self) -> str: ...
+
+
+class Word:
+    """One word of a document's text, with the box it was drawn in.
+
+    ``block`` is the position in the list :meth:`Document.extract_blocks`
+    returns under the same window -- the window's numbering, not the
+    document's -- and ``line`` the 0-based line within that block.
+    """
+
+    @property
+    def text(self) -> str:
+        """The word, without surrounding whitespace."""
+        ...
+
+    @property
+    def page(self) -> int:
+        """0-based page index the word was drawn on."""
+        ...
+
+    @property
+    def bbox(self) -> List[float]:
+        """``[x0, y0, x1, y1]`` in PDF user space, y up."""
+        ...
+
+    @property
+    def block(self) -> int:
+        """Position of the word's block in the ``extract_blocks`` answer."""
+        ...
+
+    @property
+    def line(self) -> int:
+        """0-based line within the word's block."""
+        ...
+
+    @property
+    def word(self) -> int:
+        """0-based word within the word's line, in the order the line reads."""
+        ...
+
+    @property
+    def dir(self) -> float:
+        """Baseline angle in degrees, counter-clockwise from +x; 0 upright."""
+        ...
+
+    @property
+    def bold(self) -> bool:
+        """Whether the word's span is set bold."""
+        ...
+
+    @property
+    def italic(self) -> bool:
+        """Whether the word's span is set italic."""
+        ...
+
+    @property
+    def font_size(self) -> float:
+        """Font size of the word's span, in points."""
+        ...
+
+    def __repr__(self) -> str: ...
+    def __str__(self) -> str: ...
+
+# ---------------------------------------------------------------------------
 # TextBlock / TextSpan
 # ---------------------------------------------------------------------------
 
@@ -594,9 +985,6 @@ class TextBlock:
 class TextSpan:
     """A single text span at a specific position.
 
-    G1 font-metadata fields (``font_name``, ``is_bold``, ``is_italic``,
-    ``color``) return ``None`` until the text-extraction pipeline is upgraded
-    to emit font attributes.  Always check for ``None`` before using.
     """
 
     @property
@@ -621,22 +1009,23 @@ class TextSpan:
 
     @property
     def font_name(self) -> Optional[str]:
-        """Font name (e.g. ``"Helvetica"``), or ``None`` if not yet available (G1)."""
         ...
 
     @property
     def is_bold(self) -> Optional[bool]:
-        """``True`` if the span is bold, ``None`` if not yet available (G1)."""
         ...
 
     @property
     def is_italic(self) -> Optional[bool]:
-        """``True`` if the span is italic, ``None`` if not yet available (G1)."""
         ...
 
     @property
     def color(self) -> Optional[Tuple[float, float, float]]:
-        """Foreground color as ``(r, g, b)`` floats 0.0–1.0, or ``None`` (G1)."""
+        ...
+
+    @property
+    def flags(self) -> int:
+        """Style and layout bits: 16 bold, 2 italic, 8 monospace, 32 hidden, 64 non-horizontal."""
         ...
 
     def __repr__(self) -> str: ...
@@ -665,6 +1054,28 @@ class DocumentInfo:
 
     @property
     def producer(self) -> Optional[str]: ...
+
+    @property
+    def creation_date(self) -> Optional[str]: ...
+
+    @property
+    def mod_date(self) -> Optional[str]: ...
+
+    @property
+    def format(self) -> Optional[str]: ...
+
+    @property
+    def encryption(self) -> Optional[str]: ...
+
+    @property
+    def trapped(self) -> Optional[str]: ...
+
+    def __getitem__(self, key: str) -> object: ...
+    def __len__(self) -> int: ...
+    def __iter__(self) -> Iterator[str]: ...
+    def __contains__(self, key: str) -> bool: ...
+    def keys(self) -> List[str]: ...
+    def get(self, key: str, default: object = None) -> object: ...
 
     def __repr__(self) -> str: ...
 

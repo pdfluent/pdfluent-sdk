@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime
 import importlib.util
 import io
+import os
 import pathlib
 import sys
 from contextlib import redirect_stderr, redirect_stdout
@@ -141,6 +142,29 @@ def main() -> int:
         stuk.append("an incomplete runner list was treated as authoritative")
     if "SKIPPED (not a pass)" not in tekst:
         stuk.append("an incomplete runner list was not announced as a skipped check")
+
+    # A MACHINE WITH NEITHER TOOL still has to file a report. This runs on a
+    # throwaway gate instance now (#474), where there is no `gh` and no keychain
+    # -- and it died there on FileNotFoundError before printing a line, so every
+    # remote run showed no advisory output at all. An advisory line that is
+    # absent reads exactly like one that found nothing.
+    mod = laad()
+    def weg(*_a, **_k):
+        raise FileNotFoundError(2, "No such file or directory: 'gh'")
+    mod.subprocess.run = weg
+    os.environ.pop("HCLOUD_TOKEN", None)
+    uit = io.StringIO()
+    fouten = io.StringIO()
+    with redirect_stdout(uit), redirect_stderr(fouten):
+        try:
+            mod.main()
+        except OSError as f:
+            stuk.append(f"a machine without gh or a keychain crashed the report: {f}")
+    samen = uit.getvalue() + fouten.getvalue()
+    if "[infra]" not in samen:
+        stuk.append("a machine without gh or a keychain filed no report at all")
+    if "SKIPPED (not a pass)" not in samen:
+        stuk.append("a machine without a Hetzner token did not say the check was skipped")
 
     # And a young idle machine is not yet a leak.
     _, tekst = draai(busy=False, minuten=5)

@@ -50,6 +50,17 @@ impl<'a> Dict<'a> {
         self.0.data
     }
 
+    /// Clone with the resolution-ancestry chain cleared (see
+    /// `ReaderContext::without_parent_chain`). Used where a nested
+    /// interpretation restarts with this dict as its resource root.
+    pub(crate) fn without_parent_chain(&self) -> Self {
+        Self(Arc::new(Repr {
+            data: self.0.data,
+            offsets: self.0.offsets.clone(),
+            ctx: self.0.ctx.without_parent_chain(),
+        }))
+    }
+
     /// Returns the number of entries in the dictionary.
     pub fn len(&self) -> usize {
         self.0.offsets.len()

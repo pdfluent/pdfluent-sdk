@@ -1,7 +1,7 @@
 name: Java Bindings
 
-# The JNI binding's JUnit suite, on a real document, on every pull request and
-# every push to master.
+# The JNI binding's JUnit suite, on a real document, on every wave of the
+# ephemeral lane.
 #
 # Until 02-09-2026 nothing ran `mvn test` for crates/pdf-java. bindings.yml has
 # a Java job, but it fires on release tags only and runs `cargo test`, which
@@ -12,39 +12,35 @@ name: Java Bindings
 # repository writes down -- a binding's test calls the method on a real
 # document AND runs in CI -- was met on the first half only.
 #
-# ubuntu-latest on both events, unconditionally: nothing here may touch the
-# persistent desktop runner on a pull request (pr_code_stays_off_the_desktop.py),
-# and a push to master is cheap Linux minutes, which
-# no_hosted_minutes_on_a_push.py counts rather than refuses.
-#
 # Debug rather than --release: the suite asks whether the binding loads and
-# answers, not how fast, and a debug build shares the cache with ci.yml's
-# check job. The pom defaults to target/release for a local release build; the
-# override below points Surefire's forked JVM at target/debug instead.
+# answers, not how fast. The pom defaults to target/release for a local release
+# build; the override below points Surefire's forked JVM at target/debug
+# instead.
 
-# PUSH ON MASTER ONLY, AND THAT IS THE WHOLE COST DECISION.
+# CALLED, NOT TRIGGERED (#350).
 #
-# This job is a cargo build plus a Maven run -- one of the more expensive things
-# this repository can ask of a runner. On `pull_request` it would bill hosted
-# minutes on every push to every branch, and on 04-09-2026 the account stood at
-# 90% of its allowance. A pull_request trigger here is the single most expensive
-# line this file could carry.
+# It ran on every push to master, on the desktop. That was the cheap answer
+# while the alternative was hosted minutes -- and it stopped being cheap when
+# five suites made the same choice: measured 06-09-2026 at 14:00Z, twenty-nine
+# runs queued or running on one four-core machine and the queue cancelled by
+# hand. A cargo build plus a Maven run is not a thing to do forty to ninety
+# times a day next to four other suites doing the same.
 #
-# What master takes is a fast-forward of a commit whose content the landing
-# script has already patch-id checked, so verifying on master verifies the thing
-# that ships. (#1672)
+# So this is a reusable workflow now. `ci-ephemeral.yml` calls it on a
+# two-hourly wave, on the throwaway instance that wave buys. `runner_label` has
+# no default: the only label to hand would be the desktop's, and that is what
+# this change is about.
+#
+# The concurrency block went with the trigger. A reusable workflow inherits the
+# caller's, and ci-ephemeral's is the one that decides whether a wave supersedes
+# the one before it.
 on:
-  push:
-    branches: [master]
-
-concurrency:
-  # Same shape as ci.yml: a pull request supersedes itself, a push to master
-  # gets its own group per commit and is never cancelled by the next merge.
-  # One group per commit, and never cancelled: with only a push trigger there is
-  # no pull request to supersede itself, and a merge must not cancel the run that
-  # is checking the merge before it.
-  group: java-bindings-${{ github.sha }}
-  cancel-in-progress: false
+  workflow_call:
+    inputs:
+      runner_label:
+        description: The throwaway instance to run on, from the create-runner job of ci-ephemeral.
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -53,64 +49,68 @@ env:
 jobs:
   jni-tests:
     name: JNI tests (mvn test)
-    # Hosted minutes are for pull requests only. A push to master repeats work a
-    # pull request has already done, and this job is a cargo build plus a Maven
-    # run -- one of the more expensive things this repository asks a hosted
-    # runner for. The desktop runner carries it instead. (#1672)
-    # Plain, not the per-event expression the guard jobs use: this workflow has
-    # one trigger, so a conditional would name a branch that cannot be reached.
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ inputs.runner_label }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
-      # First, and before any cargo call. The desktop keeps its build directory
-      # between jobs, so this job lands in whatever the previous one left --
-      # which is the whole reason persistent_builds_check_their_build_dir.py
-      # requires this step of every compiling job on this runner. (#264)
-      - name: Check persistent build directory
-        run: bash scripts/ci/cargo_target_health.sh
-
-      # Not dtolnay/rust-toolchain and not Swatinem/rust-cache. Both are for a
-      # hosted runner that starts empty: one installs a toolchain, the other
-      # restores a target directory. This machine has its own toolchain and its
-      # own warm target directory, and restoring a cache over it is the state
-      # cargo_target_health.sh exists to catch.
+      # THE TOOLCHAIN, INSTALLED BY THE JOB THAT NEEDS IT (#495).
       #
-      # What it does need is the same step ci.yml carries, for a reason measured
-      # today: visual-regression.yml runs on this runner without it and every run
-      # since 04-09-2026 has died on `cargo: command not found`, exit 127. The
-      # runner service's PATH does not carry ~/.cargo/bin. (#292)
-      - name: Cargo on PATH
+      # This job used to take cargo from the image's PATH, and said so. On
+      # 09-09-2026 the wave's instance was created from the sealed warm image
+      # (#482) and three reusable jobs died within minutes of each other on
+      # `cargo: command not found` -- this one after `Command failed: rustc -vV`
+      # from the cache action, which needs the compiler before it can key
+      # anything (wave 34365955374). `workspace`, on the same instance and the
+      # same image, compiled: it installs a toolchain of its own.
+      #
+      # So the image's PATH stops being a contract these jobs rely on. It is
+      # still repaired on the image side -- the seal writes /etc/profile.d and
+      # refuses to photograph a machine where `cargo --version` fails
+      # non-interactively -- but a job that compiles now carries its own
+      # toolchain, because an image is a thing that changes overnight and a
+      # step is a thing that is read in review.
+      #
+      # BEFORE the cache action, not after: `rustc -vV` is the first thing it
+      # runs. And the bin directory is put on PATH by hand for the reason
+      # ci-ephemeral's workspace job does it -- /usr/local/bin/cargo on this
+      # image is a plain binary that shadows rustup's shims, so `rustup which
+      # cargo` is the only answer that is about the toolchain just installed.
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        with:
+          toolchain: stable
+      - name: Put the pinned toolchain's bin directory on PATH
         run: |
-          # `$HOME` for the runner service is not necessarily where cargo was
-          # installed, so adding the directory is not the same as making cargo
-          # runnable. Source the env file when it is there, and then CHECK.
           set -euo pipefail
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
-          export PATH="$HOME/.cargo/bin:$PATH"
-          if ! command -v cargo >/dev/null 2>&1; then
-            echo "::error::cargo is not runnable on this runner. \$HOME is $HOME; \$HOME/.cargo/bin is $([ -d "$HOME/.cargo/bin" ] && echo present || echo absent). Every step below that needs the toolchain will fail with a FileNotFoundError that says nothing about this." >&2
-            exit 1
-          fi
-          # Status-checked, not `echo $(...)`: if cargo resolves but cannot run --
-          # a rustup shim with no toolchain installed -- the substitution fails,
-          # `echo` still returns 0, `set -e` sees nothing, and the step reports
-          # success with an empty version.
-          cargo --version || {
-            echo "::error::cargo is on PATH but does not run. A rustup shim without an installed toolchain does this: command -v cargo succeeds and every build fails." >&2
-            exit 1
-          }
+          toolchain_bin="$(dirname "$(rustup which cargo)")"
+          echo "$toolchain_bin" >> "$GITHUB_PATH"
+          echo "cargo comes from $toolchain_bin"
+          "$toolchain_bin/cargo" --version
 
-      # No actions/setup-java here. The desktop has its own JDK and Maven, and
-      # installing a second toolchain over them would test something other than
-      # what a developer on that machine runs.
-      # NOT an assumption. On 04-09-2026 the desktop carried openjdk 17.0.20 and
-      # Apache Maven 3.9.12, measured rather than expected -- but a runner is a
-      # machine somebody maintains, and a job that silently does something else
-      # after a reinstall is worse than one that stops. This says which of the
-      # two is missing instead of failing later inside `mvn`.
+      # The desktop had its own JDK and Maven and this workflow deliberately used
+      # them. A throwaway instance has neither: the snapshot is a Rust CI image.
+      # So the JDK is installed here, and Maven comes from apt -- both on a
+      # machine that is deleted afterwards, which is why installing over it
+      # costs nothing and hides nothing.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Maven on the instance
+        run: |
+          set -euo pipefail
+          if ! command -v mvn >/dev/null 2>&1; then
+            # The runner user on this image may already be root, in which case
+            # there is no sudo to call and asking for one fails the step for the
+            # wrong reason. Same shape as ci-ephemeral's veraPDF install.
+            bash scripts/ci/apt_get.sh update -qq
+            bash scripts/ci/apt_get.sh install -y -qq maven
+          fi
+
+      # Kept from the desktop version, and it is not a formality here either: a
+      # job that silently does something else after an install failure is worse
+      # than one that stops, and `mvn` reporting nothing is how an
+      # UnsatisfiedLinkError three steps later gets blamed on the binding.
       - name: The runner has a JDK and Maven
         run: |
           set -euo pipefail
@@ -118,7 +118,7 @@ jobs:
           command -v java >/dev/null 2>&1 || missing="java"
           command -v mvn  >/dev/null 2>&1 || missing="${missing:+$missing and }mvn"
           if [ -n "$missing" ]; then
-            echo "::error::$missing not on PATH for this runner. The JNI suite needs a JDK 17+ and Maven; install them or point this job back at a hosted runner." >&2
+            echo "::error::$missing not on PATH for this instance. The JNI suite needs a JDK 17+ and Maven; the steps above are what installs them, so this is an install that failed rather than a machine that lacks them." >&2
             exit 1
           fi
           java -version
@@ -152,9 +152,19 @@ jobs:
           # grep would call it wrong when it is right.
           mapfile -t loaders < <(grep -rl 'System\.loadLibrary' crates/pdf-java --include='*.java' | sort)
           # A floor: an empty glob would walk the loop below zero times and pass
-          # without reading a single file.
-          if [ "${#loaders[@]}" -lt 5 ]; then
-            echo "::error::found ${#loaders[@]} System.loadLibrary caller(s) under crates/pdf-java, expected at least 5; the search is broken, not the tree" >&2
+          # without reading a single file. It is also a ratchet -- a caller that
+          # disappears takes the count below the floor and is reported.
+          #
+          # FOUR, measured 07-09-2026, and it was five. The fifth was
+          # crates/pdf-java/src/test/java/com/pdfluent/PdfluentLicensing.java,
+          # deleted on purpose in f9ae3a1d7 with the licence key and every check
+          # that read one (#226). So the caller was not lost; the number was
+          # stale, and it had been red on master and in the wave ever since --
+          # a ratchet reporting a deletion that was the point of the change.
+          # Lowered with the measurement rather than removed: the empty-glob
+          # case is still the reason this line exists. (#361)
+          if [ "${#loaders[@]}" -lt 4 ]; then
+            echo "::error::found ${#loaders[@]} System.loadLibrary caller(s) under crates/pdf-java, expected at least 4; either the search is broken or a caller was deleted -- say which in the commit that lowers this number" >&2
             exit 1
           fi
           for f in "${loaders[@]}"; do
@@ -178,9 +188,22 @@ jobs:
 
       # Surefire's own XML is the record. Two floors, not one sum: a total of 5
       # was satisfied by the licence suite alone (12), so deleting the document
-      # suite -- the one this workflow exists for -- stayed green. Now the
-      # document report must be present with its 6 tests, and the total must be
-      # the 18 the two suites add up to. (review of #1672)
+      # suite -- the one this workflow exists for -- stayed green. The document
+      # report must therefore be present with its 6 tests. (review of #1672)
+      #
+      # The total was 18, the two suites added up. There is one suite now: the
+      # licence suite was removed on purpose by f9ae3a1d7 (#199, "remove the
+      # licence key, and every check that read one"), and the floor kept
+      # counting it. Wave 34386968239 was the first since #350 to get this job
+      # past the compiler, and it failed on a suite nobody deleted by accident.
+      #
+      # So the total is 6, which is what runs. It carries no independent weight
+      # while there is one suite -- the per-suite floor above is the real guard
+      # -- and it is here to be RAISED by whoever adds the second suite, the way
+      # this one should have been LOWERED by whoever removed it. A floor that
+      # names a suite that no longer exists reports a deletion that never
+      # happened, which costs a wave to read and teaches everyone to distrust
+      # the next one. (#495)
       - name: The document suite ran, and so did the rest
         run: |
           set -euo pipefail
@@ -199,8 +222,8 @@ jobs:
               bad.append(f"{doc.rsplit('/', 1)[-1]} is missing: the document suite did not run")
           elif per[doc] < 6:
               bad.append(f"the document suite ran {per[doc]} test(s), floor is 6")
-          if total < 18:
-              bad.append(f"{total} test(s) in total, floor is 18")
+          if total < 6:
+              bad.append(f"{total} test(s) in total, floor is 6")
           for b in bad:
               print(f"::error::{b}", file=sys.stderr)
           sys.exit(1 if bad else 0)

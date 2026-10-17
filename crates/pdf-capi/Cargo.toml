@@ -1,6 +1,6 @@
 [package]
 name = "pdf-capi"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 # publish = false: the C ABI is distributed as a tarball via
 # scripts/release/package_cabi.sh (with the bundled commercial LICENSE), not via
@@ -14,22 +14,29 @@ description = "C-compatible API for the PDF engine (PDFium-compatible interface)
 crate-type = ["cdylib", "staticlib", "lib"]
 
 [dependencies]
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0" }
-pdf-manip = { path = "../pdf-manip", version = "=1.0.0" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0" }
-pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0" }
-pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0" }
-pdfluent = { path = "../pdfluent", version = "=1.0.0" }
+pdf-engine = { path = "../pdf-engine", version = "=1.1.0" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.1.0" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.1.0" }
+pdf-manip = { path = "../pdf-manip", version = "=1.1.0" }
+pdf-redact = { path = "../pdf-redact", version = "=1.1.0" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.1.0" }
+pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.1.0" }
+pdfluent = { path = "../pdfluent", version = "=1.1.0" }
 # Office export. The conversion crates themselves, not via the facade: the C ABI
 # wraps `pdf_engine::PdfDocument`, which has no `to_docx_bytes`. The capability
 # check still comes from the facade (`pdfluent::require_capability`) so the tier
 # rule lives in one place.
-pdf-docx = { path = "../pdf-docx", version = "=1.0.0" }
-pdf-xlsx = { path = "../pdf-xlsx", version = "=1.0.0" }
-pdf-pptx = { path = "../pdf-pptx", version = "=1.0.0" }
+pdf-docx = { path = "../pdf-docx", version = "=1.1.0" }
+pdf-xlsx = { path = "../pdf-xlsx", version = "=1.1.0" }
+pdf-pptx = { path = "../pdf-pptx", version = "=1.1.0" }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.5" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.6" }
+
+[dev-dependencies]
+# Shared-fixture image tests hash decoded pixels with SHA-256.
+sha2 = "0.10"
+# Compat file tests decode the extracted payload with an independent
+# third-party PNG decoder (MIT/Apache-2.0), never the crate itself.
+png = "0.17"

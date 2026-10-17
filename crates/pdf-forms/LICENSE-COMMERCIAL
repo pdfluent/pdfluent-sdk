@@ -98,6 +98,14 @@ to relicense and need no licence from PDFluent. `NOTICE` records which they are;
 
 This licence covers the components on PDFluent's side of that boundary.
 
+Optional model files and runtime libraries that the software downloads on
+your explicit request (for example with `pdfluent models install`) are
+licensed as follows. Model files trained by PDFluent are licensed under
+the same terms as the software. Third-party model files and runtime
+libraries are licensed to you under their own terms, listed in the notice
+that accompanies them, and are provided as-is; PDFluent gives no warranty
+or indemnity for them.
+
 
 4. Attribution
 --------------

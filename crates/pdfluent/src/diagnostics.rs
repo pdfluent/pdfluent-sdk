@@ -111,6 +111,8 @@ impl Diagnostic {
     pub const CODE_INDIRECT_CYCLE: &'static str = "INDIRECT_CYCLE";
     /// Stable code for indirect object resolution depth exceeding 512.
     pub const CODE_INDIRECT_DEPTH_EXCEEDED: &'static str = "INDIRECT_DEPTH_EXCEEDED";
+    /// Stable code for an annotation whose appearance could not be resolved.
+    pub const CODE_ANNOT_APPEARANCE_UNRESOLVED: &'static str = "ANNOT_APPEARANCE_UNRESOLVED";
 
     /// Diagnostic for a cross-reference table rebuilt during load.
     pub(crate) fn xref_rebuilt() -> Self {
@@ -199,6 +201,18 @@ impl Diagnostic {
                 page: None,
                 object: None,
                 source: Some(format!("limit={limit}")),
+            },
+            InterpreterWarning::UnresolvedAnnotationAppearance => Diagnostic {
+                severity: Severity::Warning,
+                category: DiagnosticCategory::Other,
+                code: Self::CODE_ANNOT_APPEARANCE_UNRESOLVED,
+                message: "An annotation has an appearance dictionary, but its \
+                          normal appearance could not be selected or loaded, so \
+                          the annotation was not drawn."
+                    .to_string(),
+                page: None,
+                object: None,
+                source: None,
             },
         }
     }

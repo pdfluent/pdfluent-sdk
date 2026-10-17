@@ -84,6 +84,27 @@ WORKSPACE_WIDE = re.compile(
     r"^(Cargo\.toml|Cargo\.lock|rust-toolchain(\.toml)?|\.cargo/config(\.toml)?)$"
 )
 
+# FILES OUTSIDE A CRATE THAT ITS TESTS READ, with the crate that reads them
+# (#574, parity audit). A learned model's `parity.json` and `manifest.json` live
+# beside its trainer in scripts/extraction/learned/models/, and
+# pdf-engine's `learned_list_models_reproduce_lightgbm.rs` holds the engine to
+# them: a change to them alone mapped to no crate, and the landing lane printed
+# SKIPPED for the one test that says whether Rust still reproduces the model.
+# `docs/cli/` is generated from the CLI's own `--help` and held current by
+# pdfluent-cli's `cli_docs.rs`: a change to it alone mapped to no crate, and
+# the landing lane printed SKIPPED for the suite that says whether the docs
+# still match the binary.
+# `man/` and the generator sit beside `docs/cli/`: all three are produced
+# from the CLI's own `--help` by `scripts/ci/generate_cli_docs.sh` and held
+# current by pdfluent-cli's `cli_docs.rs`. A change to any of them alone is
+# a change to what that suite says.
+READ_BY = (
+    ("scripts/extraction/learned/models/", "pdf-engine"),
+    ("docs/cli/", "pdfluent-cli"),
+    ("man/", "pdfluent-cli"),
+    ("scripts/ci/generate_cli_docs.sh", "pdfluent-cli"),
+)
+
 # The crates CI does not build, spelled here because the scoped lane cannot use
 # `--exclude`: it names its packages with `-p`, and a `-p` list that includes
 # these would build what the workspace lane deliberately leaves out.
@@ -96,6 +117,16 @@ WORKSPACE_WIDE = re.compile(
 EXCLUDED = ("pdf-desktop", "xfa-wasm")
 
 RUN_SCRIPTS = ("run_build.sh", "run_clippy.sh", "run_test.sh")
+
+# EXCLUDED, BUT CHECKED WHEN A LANDING REACHES THEM (#623, COS 27-09-2026).
+# xfa-wasm is left out of the native workspace build as a whole, and so a change
+# to one of its dependencies was never compiled or tested against it: my landing
+# of structured_batch.rs (f6f5f1ffc) put an `Instant::now()` in pdf-engine, and
+# xfa-wasm's own guard test -- a native test, source-level -- went red on master
+# where no landing had run it. It checks and tests natively in under a minute on
+# a warm target, so a landing whose closure reaches it runs it. pdf-desktop stays
+# out: it needs the desktop toolchain the rig does not carry.
+CHECKED_WHEN_REACHED = ("xfa-wasm",)
 
 
 def metadata(cwd: pathlib.Path | None = None) -> dict | None:
@@ -188,6 +219,9 @@ def select(changed: list[str], dirs: dict[str, str],
         if WORKSPACE_WIDE.match(path):
             return ALL
         name = crate_of(path, dirs)
+        if name is None:
+            name = next((crate for prefix, crate in READ_BY
+                         if path.startswith(prefix) and crate in dirs), None)
         if name is not None:
             direct.add(name)
         elif path.split("/")[0] in roots:
@@ -196,7 +230,12 @@ def select(changed: list[str], dirs: dict[str, str],
             # older than the tree. Both mean the map cannot answer.
             return ALL
 
-    # Transitive closure over the reverse graph.
+    reachable = closure(direct, dependents)
+    return sorted(reachable - set(excluded))
+
+
+def closure(direct: set[str], dependents: dict[str, set[str]]) -> set[str]:
+    """Every crate that depends on one of `direct`, transitively, and `direct`."""
     reachable = set(direct)
     queue = list(direct)
     while queue:
@@ -205,7 +244,17 @@ def select(changed: list[str], dirs: dict[str, str],
             if dependent not in reachable:
                 reachable.add(dependent)
                 queue.append(dependent)
-    return sorted(reachable - set(excluded))
+    return reachable
+
+
+def excluded_reached(changed: list[str], dirs: dict[str, str],
+                     dependents: dict[str, set[str]]) -> list[str]:
+    """The CHECKED_WHEN_REACHED crates these changed files reach -- all of them
+    when the answer for the workspace is ALL."""
+    chosen = select(changed, dirs, dependents, excluded=())
+    if chosen == ALL:
+        return sorted(CHECKED_WHEN_REACHED)
+    return sorted(set(chosen) & set(CHECKED_WHEN_REACHED))
 
 
 def excludes_agree(ci: pathlib.Path | None = None) -> list[str]:
@@ -253,6 +302,9 @@ def main() -> int:
                          "github/master, origin/master that exists")
     ap.add_argument("--file", action="append", default=[], metavar="PATH",
                     help="judge these paths instead of asking git (for tests)")
+    ap.add_argument("--excluded-reached", action="store_true",
+                    help="print the excluded crates this change reaches that a landing "
+                         "still checks and tests (CHECKED_WHEN_REACHED), one per line")
     ap.add_argument("--check-excludes", action="store_true",
                     help="only report whether EXCLUDED still matches the run scripts")
     args = ap.parse_args()
@@ -301,6 +353,13 @@ def main() -> int:
     if changed is None:
         return 3
 
+    if args.excluded_reached:
+        reached = excluded_reached(changed, dirs, dependents)
+        for name in reached:
+            print(name)
+        print(f"[touched-crates] {len(changed)} changed file(s) reach "
+              f"{len(reached)} excluded crate(s) checked anyway", file=sys.stderr)
+        return 0
     chosen = select(changed, dirs, dependents)
     if chosen == ALL:
         print(ALL)

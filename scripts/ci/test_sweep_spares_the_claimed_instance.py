@@ -26,8 +26,12 @@ def draai(behoud: str, busy_namen: set[str], in_de_lucht: int = 0,
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
+    # 115 minutes: past its hour AND inside the window in which a machine is
+    # deleted at all -- the last minutes of the hour it is in (#517). Ninety
+    # minutes is minute 30 of the second hour, which is an hour Hetzner has
+    # already billed and nothing is deleted in.
     oud = (datetime.datetime.now(datetime.timezone.utc)
-           - datetime.timedelta(minutes=90)).isoformat()
+           - datetime.timedelta(minutes=115)).isoformat()
     vast = (datetime.datetime.now(datetime.timezone.utc)
             - datetime.timedelta(hours=9)).isoformat()
     namen = ["gh-runner-geclaimd", "gh-runner-oud", "gh-runner-bezig"]
@@ -73,6 +77,12 @@ def draai(behoud: str, busy_namen: set[str], in_de_lucht: int = 0,
     os.environ["HCLOUD_TOKEN"] = "stub"
     os.environ["GH_RUNNER_PAT"] = "stub"
     os.environ["GITHUB_REPOSITORY"] = "stub/stub"
+    # A LEDGER OF ITS OWN (#517): the sweep books the hour of every machine it
+    # deletes, and the machines here do not exist. On 10-09-2026 these cases put
+    # EUR 2.2 of them into the operator's ledger, over the day's cap, and every
+    # gate on that Mac fell back to compiling locally.
+    os.environ["HETZNER_LEDGER"] = str(pathlib.Path(
+        os.environ.get("TMPDIR", "/tmp")) / f"sweep-fixture-ledger-{os.getpid()}.jsonl")
     os.environ["SWEEP_BEHOUD"] = behoud
     os.environ["GITHUB_RUN_ID"] = "ONS"
     # Already inside the lock: the unit test must not re-exec under flock.
@@ -87,8 +97,12 @@ def laat_geclaimd() -> list[str]:
     spec = importlib.util.spec_from_file_location("sweep2", HIER / "sweep_idle_instances.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    # 115 minutes: past its hour AND inside the window in which a machine is
+    # deleted at all -- the last minutes of the hour it is in (#517). Ninety
+    # minutes is minute 30 of the second hour, which is an hour Hetzner has
+    # already billed and nothing is deleted in.
     oud = (datetime.datetime.now(datetime.timezone.utc)
-           - datetime.timedelta(minutes=90)).isoformat()
+           - datetime.timedelta(minutes=115)).isoformat()
     beurt = {"n": 0}
     gewist: list[str] = []
 

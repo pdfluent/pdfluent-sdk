@@ -18,7 +18,7 @@ Provides the font-handling layer used by both rendering and text extraction: par
 
 ## Status
 
-Beta. Production-grade for common PDF font configurations. Coverage of edge-case CFF and Type 1 variants is being improved continuously.
+Covers the common PDF font configurations. Coverage of edge-case CFF and Type 1 variants is being improved continuously.
 
 ## Usage
 

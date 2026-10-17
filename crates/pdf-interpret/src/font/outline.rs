@@ -120,6 +120,18 @@ pub(crate) enum OutlineFont {
     Type0(Rc<Type0Font>),
 }
 
+impl OutlineFont {
+    /// Whether `self` and `other` are the same font, not merely equal ones.
+    pub(crate) fn is_same(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Type1(a), Self::Type1(b)) => Rc::ptr_eq(a, b),
+            (Self::TrueType(a), Self::TrueType(b)) => Rc::ptr_eq(a, b),
+            (Self::Type0(a), Self::Type0(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
 impl CacheKey for OutlineFont {
     fn cache_key(&self) -> u128 {
         match self {
@@ -175,6 +187,27 @@ impl OutlineFont {
         }
     }
 
+    /// The name the page gave the font, where it differs from
+    /// [`Self::postscript_name`] (#623): a Type1 or CFF font that stands on
+    /// a standard face. TrueType and Type0 report their /BaseFont already.
+    pub(crate) fn declared_name(&self) -> Option<String> {
+        match self {
+            Self::Type1(t) => t.declared_name().map(|s| s.to_string()),
+            Self::TrueType(_) | Self::Type0(_) => self.postscript_name(),
+        }
+    }
+
+    /// The name text extraction reports for a span: the document's name for
+    /// an embedded font, the substitute face otherwise. TrueType and Type0
+    /// already report the document's name through
+    /// [`Self::postscript_name`]; only Type1 answers differently here.
+    pub(crate) fn document_name(&self) -> Option<String> {
+        match self {
+            Self::Type1(t) => t.document_name().map(|s| s.to_string()),
+            Self::TrueType(_) | Self::Type0(_) => self.postscript_name(),
+        }
+    }
+
     /// Get raw font bytes and metadata.
     ///
     /// Returns None for Type1 fonts and non-embedded TrueType fonts.
@@ -221,6 +254,18 @@ impl OutlineFont {
     pub(crate) fn font_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
         match self {
             Self::Type1(t) => t.font_metrics(),
+            Self::TrueType(t) => t.font_metrics(),
+            Self::Type0(t) => t.font_metrics(),
+        }
+    }
+
+    /// The substitute face's AFM pair for Type1/CFF, ignoring the
+    /// descriptor: the pre-E4 answer, kept for the default extraction path
+    /// (#643 follow-up). TrueType and Type0 never changed, so they answer
+    /// as [`Self::font_metrics`] does.
+    pub(crate) fn substitute_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+        match self {
+            Self::Type1(t) => t.substitute_metrics(),
             Self::TrueType(t) => t.font_metrics(),
             Self::Type0(t) => t.font_metrics(),
         }

@@ -1,17 +1,17 @@
 [package]
 name = "pdf-render"
-version = "1.0.0"
+version = "1.1.0"
 description = "A PDF rasterizer in pure Rust."
 edition = "2024"
 license = "Apache-2.0 OR MIT"
 readme = "README.md"
 authors = ["PDFluent Contributors <team@pdfluent.com>", "Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
-repository = "https://pdfluent.com/source"
+repository = "https://github.com/pdfluent/pdfluent-sdk"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 
 [dependencies]
-pdf-interpret = { path = "../pdf-interpret", version = "=0.5.9" }
+pdf-interpret = { path = "../pdf-interpret", version = "=0.6.0" }
 kurbo = "0.13.0"
 image = { version = "0.25", features = ["png"] }
 bytemuck = { version = "1", features = ["bytemuck_derive"] }
@@ -24,10 +24,13 @@ fast_image_resize = { version = "6.0", default-features = false, features = ["st
 # (deterministic tiled raster) — verified by a byte-equality fidelity test.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 vello_cpu = { version = "0.0.6", default-features = false, features = ["std", "png", "u8_pipeline", "f32_pipeline", "multithreading"] }
+# Detect rayon workers so a page rendered from inside another pool stays on the
+# single-threaded path instead of waiting on vello's own pool (#636).
+rayon = "1"
 
 [dev-dependencies]
 log = "0.4"
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.5" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.6" }
 
 [features]
 default = ["embed-fonts", "embed-cmaps"]

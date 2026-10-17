@@ -11,8 +11,8 @@ embedded determines the glyph widths the output declares.
 
 Resolving that from the host filesystem makes the output depend on what happens
 to be installed. Measured on 300 real-world documents, the same code scored
-286/300 on macOS and 275/300 on Debian, purely because the substitute font
-differed. This crate removes that variable.
+286/300 on macOS and 300/300 on Linux, purely because the substitute font
+differed (claim A15). This crate removes that variable.
 
 ## Why these particular fonts
 
@@ -26,7 +26,7 @@ through no fault of its own.
 
 ## Format
 
-Bare CFF, 14–29 KB per face, 259 KB for the set. Embed as `/FontFile3` with
+Bare CFF, a few hundred kilobytes for the whole set. Embed as `/FontFile3` with
 `/Subtype /Type1C`. There is no OpenType wrapper, so `/Subtype /OpenType` would
 be incorrect.
 
@@ -51,3 +51,13 @@ The font programs come from PDFium, © 2014 Foxit Software Inc., under the
 BSD-3-Clause licence reproduced in `LICENSE-FOXIT`. That licence requires the
 copyright notice to accompany binary redistributions, so it ships inside the
 crate. The Rust code around them is under the licence in `LICENSE`.
+
+## Licence
+
+AGPL-3.0 or a commercial licence, at your option. The AGPL is the default and
+the complete product: there is no licence key, no activation call and no tier,
+and every feature works in every build. If you cannot accept the copyleft
+obligation, the commercial licence is sold yearly and self-service at
+[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing), in four options: Commercial (per
+organisation), OEM Startup and OEM (per product), and Priority support (an
+add-on). The two texts are `LICENSE` and `LICENSE-COMMERCIAL` in this crate.

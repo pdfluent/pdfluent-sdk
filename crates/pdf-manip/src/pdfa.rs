@@ -149,6 +149,8 @@ impl PdfAConvertOptions<'_> {
 /// question after a batch run is which *kind* of repair a document needed.
 #[derive(Debug, Clone, Default)]
 pub struct PdfAConvertReport {
+    /// Content streams adjusted to retain source advances after font width repair.
+    pub text_streams_repositioned: usize,
     /// Pages in the converted document.
     pub page_count: usize,
     /// What cleanup removed or normalized.
@@ -173,7 +175,7 @@ pub struct PdfAConvertReport {
 ///
 /// This does not validate that the result conforms to PDF/A. Use
 /// [`convert_bytes_with_report`] for repair diagnostics and validate the output
-/// separately. Repeated Free Tier conversions can add another watermark.
+/// separately. Conversion does not add a licence notice or watermark.
 pub fn convert_bytes(
     data: &[u8],
     opts: &PdfAConvertOptions<'_>,
@@ -340,7 +342,11 @@ pub fn convert_document(
     let is_pdfa1 = opts.conformance.part() == 1;
 
     opts.step("join_content_fragments");
-    report.warnings.extend(join_content_fragments(doc));
+    report.warnings.extend(join_content_fragments(
+        doc,
+        std::env::var_os("PDFA_JOIN_ALL_FRAGMENTS_OFF").is_none(),
+    ));
+    let text_geometry = crate::pdfa_text_geometry::Snapshot::capture(doc);
 
     opts.step("cleanup");
     let cleanup = required(opts, "cleanup_for_pdfa", || {
@@ -409,6 +415,9 @@ pub fn convert_document(
         crate::pdfa_fonts::fix_blank_cid_zero(doc)
     });
 
+    opts.step("preserve_text_advances");
+    report.text_streams_repositioned = text_geometry.restore(doc);
+
     // Repairs can replace streams or leave newly embedded programs raw. Do
     // this last: later font passes must never mutate a program we just shared.
     opts.step("compact_storage");
@@ -419,6 +428,17 @@ pub fn convert_document(
         report.subsets = crate::pdfa_subset::subset_fonts(doc);
         // Different source programs may now contain the same retained glyphs.
         compact_storage(doc);
+        // A subset is a different program, and §6.2.11.5 compares /W against
+        // the program that ships. The CID width pass ran before this one, on
+        // the face `embed_fonts` had substituted, whose metric table is not
+        // the embedded program's: pdf.js `bug898853` ends up declaring Arial's
+        // 278 for a space its own program draws at 222. §6.2.11.5 only
+        // examines the glyphs a page *uses*, so the mismatch stayed invisible
+        // while the conversion deleted every code on that page; keeping the
+        // word separators (#485) is what surfaced it. The pass recomputes the
+        // same array where the program did not move.
+        opts.step("cid_widths_after_subset");
+        crate::pdfa_fonts::fix_cff_widths(doc);
     }
     if !is_pdfa1 {
         for obj in doc.objects.values_mut() {
@@ -448,7 +468,25 @@ pub fn convert_document(
 /// array, dictionary or operand sequence between streams; parsing each fragment
 /// independently can drop delimiters and text. Join only arrays containing a
 /// fragment that is not a complete standalone content program.
-fn join_content_fragments(doc: &mut Document) -> Vec<String> {
+///
+/// `join_every_split` widens that to every split page, and it is ON. A
+/// well-formed split carries text state across the fragment boundary (`Tf`,
+/// `Tm`, `Tz` in one fragment, the show operators in the next), so every pass
+/// that reads one fragment at a time is blind to it -- `pdfa_text_geometry`
+/// among them, which is why the width compensation never ran on documents like
+/// govdocs `001_001392`, 28 of whose 30 pages are content-split.
+///
+/// It shipped as a measurement lever because the cost was unknown: joining
+/// rewrites content streams for documents that asked for nothing. Two runs of
+/// the pinned 300 answered that (#380, runs 34255047940 and 34264549403), and
+/// the cost is negative -- the output got 0.31% SMALLER, because one joined
+/// stream compresses better than three separate ones and two stream headers
+/// stop being written. Nothing lost retention or conformance; eleven documents
+/// gained retention, nine rendered closer to their source.
+///
+/// `PDFA_JOIN_ALL_FRAGMENTS_OFF` turns it back off. That is an escape hatch for
+/// a document this reasoning did not foresee, not a supported mode.
+fn join_content_fragments(doc: &mut Document, join_every_split: bool) -> Vec<String> {
     use lopdf::{Object, Stream};
     let mut warnings = Vec::new();
     let pages: Vec<_> = doc.get_pages().values().copied().collect();
@@ -515,7 +553,7 @@ fn join_content_fragments(doc: &mut Document) -> Vec<String> {
             ));
             continue;
         }
-        if !incomplete {
+        if !incomplete && !join_every_split {
             continue;
         }
         let joined = doc.add_object(
@@ -605,6 +643,40 @@ pub(crate) fn compact_storage(doc: &mut Document) {
         let _ = s.compress();
     }
 
+    // ICCBased profiles can be shared just like output profiles. Only the
+    // profile operand is rewritten: surrounding colour-space arrays, alternate
+    // spaces and resource dictionaries retain their independent identities.
+    fn visit_icc(obj: &mut Object, visit: &mut impl FnMut(&mut Object)) {
+        match obj {
+            Object::Array(a) => {
+                if a.len() == 2 && a[0].as_name().ok() == Some(b"ICCBased") {
+                    visit(&mut a[1]);
+                }
+                for v in a {
+                    visit_icc(v, visit);
+                }
+            }
+            Object::Dictionary(d) => {
+                for (_, v) in d.iter_mut() {
+                    visit_icc(v, visit);
+                }
+            }
+            Object::Stream(s) => {
+                for (_, v) in s.dict.iter_mut() {
+                    visit_icc(v, visit);
+                }
+            }
+            _ => {}
+        }
+    }
+    for obj in doc.objects.values_mut() {
+        visit_icc(obj, &mut |operand| {
+            if let Ok(id) = operand.as_reference() {
+                programs.insert(id);
+            }
+        });
+    }
+
     // Scope sharing to immutable font programs, ToUnicode and output profiles.
     // Content/Form/Image streams can carry context-dependent semantics or be
     // edited independently on subsequent conversion. Equal bytes alone are not
@@ -621,7 +693,11 @@ pub(crate) fn compact_storage(doc: &mut Document) {
         if let Some(canonical) = bucket.iter().copied().find(|other| {
             doc.get_object(*other)
                 .and_then(Object::as_stream)
-                .is_ok_and(|s| s.dict == stream.dict && s.content == stream.content)
+                .is_ok_and(|s| {
+                    s.dict == stream.dict
+                        && s.content == stream.content
+                        && s.allows_compression == stream.allows_compression
+                })
         }) {
             replacements.insert(id, canonical);
         } else {
@@ -635,6 +711,15 @@ pub(crate) fn compact_storage(doc: &mut Document) {
                     if let Some(&canonical) = replacements.get(&old) {
                         d.set(key, Object::Reference(canonical));
                     }
+                }
+            }
+        });
+    }
+    for obj in doc.objects.values_mut() {
+        visit_icc(obj, &mut |operand| {
+            if let Ok(id) = operand.as_reference() {
+                if let Some(&canonical) = replacements.get(&id) {
+                    *operand = canonical.into();
                 }
             }
         });
@@ -677,6 +762,16 @@ fn run_font_steps(
         crate::pdfa_fonts::preserve_symbolic_text_mapping(doc)
     );
 
+    // Recorded before the embedding that makes it true: a Type0 font under a
+    // predefined UCS-2 CMap that has no program of its own is about to get a
+    // substitute the CMap cannot address. See
+    // `reencode_substituted_ucs2_type0_fonts`.
+    let ucs2_substitutions = crate::pdfa_fonts::plan_ucs2_type0_substitutions(doc);
+    // And the CJK half of the same sentence: a predefined CMap whose CIDs the
+    // substitute cannot be indexed by. See
+    // `aim_substituted_registry_cid_fonts`.
+    let registry_substitutions = crate::pdfa_fonts::plan_registry_cid_substitutions(doc);
+
     opts.step("font_embed");
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         crate::pdfa_fonts::embed_fonts(doc)
@@ -698,6 +793,17 @@ fn run_font_steps(
         Ok(Err(e)) => report.warnings.push(format!("font embedding failed: {e}")),
         Err(_) => report.warnings.push("font embedding panicked".into()),
     }
+
+    // The substitute is in place, and nothing has read the encoding yet: the
+    // width, /ToUnicode and .notdef passes below all resolve codes through it.
+    font_step!(
+        "ucs2_reencode",
+        crate::pdfa_fonts::reencode_substituted_ucs2_type0_fonts(doc, &ucs2_substitutions)
+    );
+    font_step!(
+        "registry_cid_aim",
+        crate::pdfa_fonts::aim_substituted_registry_cid_fonts(doc, &registry_substitutions)
+    );
 
     font_step!("pfb_streams", crate::pdfa_fonts::fix_pfb_font_streams(doc));
     font_step!(
@@ -765,6 +871,28 @@ fn run_font_steps(
     font_step!(
         "tounicode_forbidden",
         crate::pdfa_fonts::fix_tounicode_forbidden_values(doc)
+    );
+
+    // Restate a classic symbolic face's built-in encoding *before* anything
+    // decides which of its codes resolve to a glyph.
+    //
+    // The passes below condemn a code by resolving it through the /Encoding
+    // as it stands and then rewrite the content stream -- `symbolic_notdef`
+    // writes 0x20 over the byte. On a bundled Symbol/ZapfDingbats substitute
+    // whose /Encoding is nothing but the author's `[240 /apple]`, every other
+    // code still resolved through the substitute program's StandardEncoding,
+    // i.e. to nothing, so the repair ran against a state in which the whole
+    // font was `.notdef`. `(\256)Tj` left as `( )Tj`, and by the time the
+    // encoding was restated the byte was gone from the page (govdocs
+    // 002_002183, 000_000153, 001_001799). A content rewrite that removes
+    // what it cannot yet resolve is data loss no validator ever sees.
+    //
+    // The pass is idempotent and runs again below, after the passes that add
+    // /Differences entries of their own -- same reason `width_mismatches`
+    // runs twice.
+    font_step!(
+        "classic_symbolic_encoding_pre",
+        crate::pdfa_fonts::fix_classic_symbolic_base14_encoding(doc)
     );
 
     font_step!("notdef_refs", crate::pdfa_fonts::fix_notdef_glyph_refs(doc));
@@ -921,6 +1049,137 @@ mod tests {
     }
 
     #[test]
+    fn luminosity_mask_keeps_its_blending_components_and_backdrop() {
+        for gray in [true, false] {
+            let mut doc = Document::load_mem(&minimal_pdf()).unwrap();
+            let page_id = doc.get_pages()[&1];
+            let source_cs = doc.add_object(lopdf::Object::Name(
+                if gray {
+                    b"DeviceGray".as_slice()
+                } else {
+                    b"DeviceCMYK".as_slice()
+                }
+                .to_vec(),
+            ));
+            let group = doc.add_object(dictionary! {"S"=>"Transparency", "I"=>true,
+            "K"=>false, "CS"=>source_cs});
+            let data = if gray {
+                b"0.5 g 0 0 50 50 re f".as_slice()
+            } else {
+                b"0 0 0 0.5 k 0 0 50 50 re f".as_slice()
+            };
+            let form = doc.add_object(lopdf::Stream::new(
+                dictionary! {"Type"=>"XObject",
+                "Subtype"=>"Form", "BBox"=>vec![0.into(),0.into(),50.into(),50.into()],
+                "Group"=>group, "Resources"=>dictionary! {}},
+                data.to_vec(),
+            ));
+            let backdrop: Vec<lopdf::Object> = vec![0.into(); if gray { 1 } else { 4 }];
+            let mask =
+                doc.add_object(dictionary! {"S"=>"Luminosity", "G"=>form, "BC"=>backdrop.clone()});
+            let state = doc.add_object(dictionary! {"Type"=>"ExtGState", "SMask"=>mask});
+            let content = doc.add_object(lopdf::Stream::new(
+                dictionary! {},
+                b"q /Mask gs 0 0 50 50 re f Q".to_vec(),
+            ));
+            let page = doc.get_object_mut(page_id).unwrap().as_dict_mut().unwrap();
+            page.set(
+                "Resources",
+                dictionary! {"ExtGState"=>dictionary! {"Mask"=>state}},
+            );
+            page.set("Contents", content);
+            convert_document(&mut doc, &PdfAConvertOptions::default()).unwrap();
+            let group = doc.get_dictionary(group).unwrap();
+            assert!(group.get(b"I").unwrap().as_bool().unwrap());
+            assert!(!group.get(b"K").unwrap().as_bool().unwrap());
+            let cs = doc.dereference(group.get(b"CS").unwrap()).unwrap().1;
+            if gray {
+                assert_eq!(cs.as_name().unwrap(), b"DeviceGray");
+            } else {
+                let cs = cs.as_array().unwrap();
+                assert_eq!(cs[0].as_name().unwrap(), b"ICCBased");
+                let profile = doc.dereference(&cs[1]).unwrap().1.as_stream().unwrap();
+                assert_eq!(profile.dict.get(b"N").unwrap().as_i64().unwrap(), 4);
+            }
+            assert_eq!(
+                doc.get_dictionary(mask)
+                    .unwrap()
+                    .get(b"BC")
+                    .unwrap()
+                    .as_array()
+                    .unwrap(),
+                &backdrop
+            );
+        }
+    }
+
+    #[test]
+    fn image_opacity_samples_survive_the_full_pdfa2_pipeline() {
+        let mut doc = Document::load_mem(&minimal_pdf()).unwrap();
+        let page = doc.get_pages()[&1];
+        let mask = doc.add_object(lopdf::Stream::new(
+            dictionary! {"Type"=>"XObject", "Subtype"=>"Image", "Width"=>3,
+            "Height"=>1, "BitsPerComponent"=>8, "ColorSpace"=>"DeviceGray"},
+            vec![0, 128, 255],
+        ));
+        let image = doc.add_object(lopdf::Stream::new(
+            dictionary! {"Type"=>"XObject", "Subtype"=>"Image", "Width"=>3,
+            "Height"=>1, "BitsPerComponent"=>8, "ColorSpace"=>"DeviceRGB", "SMask"=>mask},
+            vec![0; 9],
+        ));
+        let contents = doc.add_object(lopdf::Stream::new(
+            dictionary! {},
+            b"q 90 0 0 30 10 10 cm /Image Do Q".to_vec(),
+        ));
+        let page = doc.get_object_mut(page).unwrap().as_dict_mut().unwrap();
+        page.set(
+            "Resources",
+            dictionary! {"XObject"=>dictionary! {"Image"=>image}},
+        );
+        page.set("Contents", contents);
+
+        let mut pdfa1 = doc.clone();
+        crate::pdfa_cleanup::cleanup_for_pdfa(&mut pdfa1, true).unwrap();
+        assert!(!pdfa1
+            .get_object(image)
+            .unwrap()
+            .as_stream()
+            .unwrap()
+            .dict
+            .has(b"SMask"));
+
+        let mut input = Vec::new();
+        doc.save_to(&mut input).unwrap();
+        for _ in 0..2 {
+            input = convert_bytes(&input, &PdfAConvertOptions::default()).unwrap();
+            let converted = Document::load_mem(&input).unwrap();
+            let masked: Vec<_> = converted
+                .objects
+                .values()
+                .filter_map(|o| o.as_stream().ok())
+                .filter(|s| s.dict.has(b"SMask"))
+                .collect();
+            assert_eq!(
+                masked.len(),
+                1,
+                "image mask must remain reachable after save"
+            );
+            assert_eq!(masked[0].get_plain_content().unwrap(), vec![0; 9]);
+            let mask = converted
+                .dereference(masked[0].dict.get(b"SMask").unwrap())
+                .unwrap()
+                .1
+                .as_stream()
+                .unwrap();
+            assert_eq!(mask.get_plain_content().unwrap(), vec![0, 128, 255]);
+            assert_eq!(
+                mask.dict.get(b"ColorSpace").unwrap().as_name().unwrap(),
+                b"DeviceGray"
+            );
+        }
+    }
+
+    #[test]
     fn split_content_arrays_and_dictionaries_are_joined_before_individual_stream_repairs() {
         let mut doc = lopdf::Document::with_version("1.7");
         let first = b"/Span << /MCID ".to_vec();
@@ -941,7 +1200,7 @@ mod tests {
         doc.objects.insert(pages,lopdf::Object::Dictionary(dictionary! {"Type"=>"Pages","Kids"=>vec![lopdf::Object::Reference(page),lopdf::Object::Reference(other)],"Count"=>2}));
         let root = doc.add_object(dictionary! {"Type"=>"Catalog","Pages"=>pages});
         doc.trailer.set("Root", root);
-        assert!(join_content_fragments(&mut doc).is_empty());
+        assert!(join_content_fragments(&mut doc, false).is_empty());
         let joined = doc
             .get_object(page)
             .unwrap()
@@ -985,7 +1244,148 @@ mod tests {
             doc.get_object(ids[0]).unwrap().as_stream().unwrap().content,
             first
         );
-        assert!(join_content_fragments(&mut doc).is_empty());
+        assert!(join_content_fragments(&mut doc, false).is_empty());
+    }
+
+    #[test]
+    fn a_well_formed_split_stays_split_until_the_measurement_lever_is_pulled() {
+        // Both fragments parse standalone, so nothing is broken -- and yet the
+        // text state that governs the second lives in the first. This is the
+        // shape #380 is measuring: the default must leave it alone, and the
+        // lever must join it.
+        let first = b"BT /F 12 Tf 50 Tz 10 700 Td ET".to_vec();
+        let second = b"BT (measured) Tj ET".to_vec();
+
+        let build = || {
+            let mut doc = lopdf::Document::with_version("1.7");
+            let ids: Vec<_> = [first.clone(), second.clone()]
+                .into_iter()
+                .map(|data| {
+                    doc.add_object(lopdf::Stream::new(dictionary! {}, data).with_compression(false))
+                })
+                .collect();
+            let array = doc.add_object(lopdf::Object::Array(
+                ids.iter().copied().map(lopdf::Object::Reference).collect(),
+            ));
+            let pages = doc.new_object_id();
+            let page =
+                doc.add_object(dictionary! {"Type"=>"Page","Parent"=>pages,"Contents"=>array});
+            doc.objects.insert(
+                pages,
+                lopdf::Object::Dictionary(
+                    dictionary! {"Type"=>"Pages","Kids"=>vec![lopdf::Object::Reference(page)],"Count"=>1},
+                ),
+            );
+            let root = doc.add_object(dictionary! {"Type"=>"Catalog","Pages"=>pages});
+            doc.trailer.set("Root", root);
+            (doc, page, array)
+        };
+
+        let (mut doc, page, array) = build();
+        assert!(join_content_fragments(&mut doc, false).is_empty());
+        assert_eq!(
+            doc.get_object(page)
+                .unwrap()
+                .as_dict()
+                .unwrap()
+                .get(b"Contents")
+                .unwrap()
+                .as_reference()
+                .unwrap(),
+            array,
+            "a page whose fragments all parse must keep them by default"
+        );
+
+        let (mut doc, page, array) = build();
+        assert!(join_content_fragments(&mut doc, true).is_empty());
+        let joined = doc
+            .get_object(page)
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"Contents")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        assert_ne!(joined, array, "the lever must join a well-formed split");
+        let content = doc
+            .get_object(joined)
+            .unwrap()
+            .as_stream()
+            .unwrap()
+            .content
+            .clone();
+        assert_eq!(content, [first.clone(), second.clone()].join(&b'\n'));
+        // The point of joining: one program in which the horizontal scaling and
+        // the string it scales are visible together.
+        let parsed = lopdf::content::Content::decode_strict(&content).unwrap();
+        let operators: Vec<_> = parsed
+            .operations
+            .iter()
+            .map(|o| o.operator.as_str())
+            .collect();
+        assert!(
+            operators.contains(&"Tz") && operators.contains(&"Tj"),
+            "joined program lost an operator: {operators:?}"
+        );
+    }
+
+    #[test]
+    fn a_conversion_joins_a_well_formed_split_page_without_being_asked() {
+        // The parameter test above proves the lever moves. This proves the
+        // pipeline pulls it: #380 measured that joining every split page is
+        // better on every axis, so a plain conversion must do it, with no
+        // variable set and nobody remembering to ask.
+        let mut doc = Document::with_version("1.4");
+        let pages_id = doc.new_object_id();
+        // Two fragments that each parse standalone. The text state that governs
+        // the second lives in the first -- the shape that used to stay split.
+        let ids: Vec<_> = [
+            b"BT /F1 12 Tf 50 Tz 72 700 Td ET".to_vec(),
+            b"BT (joined) Tj ET".to_vec(),
+        ]
+        .into_iter()
+        .map(|data| doc.add_object(lopdf::Stream::new(lopdf::Dictionary::new(), data)))
+        .collect();
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Resources" => lopdf::Dictionary::new(),
+            "Contents" => lopdf::Object::Array(
+                ids.iter().copied().map(lopdf::Object::Reference).collect(),
+            ),
+        });
+        doc.objects.insert(
+            pages_id,
+            lopdf::Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        let mut raw = Vec::new();
+        doc.save_to(&mut raw).unwrap();
+
+        let output = convert_bytes(&raw, &PdfAConvertOptions::default()).unwrap();
+        let parsed = Document::load_mem(&output).unwrap();
+        let page = *parsed.get_pages().values().next().unwrap();
+        let contents = parsed
+            .get_object(page)
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"Contents")
+            .unwrap();
+        assert!(
+            contents.as_reference().is_ok(),
+            "the page still carries its fragments: {contents:?}"
+        );
     }
 
     #[test]
@@ -1044,9 +1444,21 @@ mod tests {
         assert!(stream.content.len() < tokens.len() / 10);
     }
 
+    fn minimal_with_output_intent() -> Vec<u8> {
+        let mut doc = Document::load_mem(&minimal_pdf()).unwrap();
+        crate::pdfa_colorspace::add_srgb_output_intent(&mut doc).unwrap();
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
     #[test]
     fn converted_icc_and_pdfa2_metadata_are_compressed() {
-        let converted = convert_bytes(&minimal_pdf(), &PdfAConvertOptions::default()).unwrap();
+        let converted = convert_bytes(
+            &minimal_with_output_intent(),
+            &PdfAConvertOptions::default(),
+        )
+        .unwrap();
         let output = Document::load_mem(&converted).unwrap();
         let intent = output
             .catalog()
@@ -1145,6 +1557,22 @@ mod tests {
     }
 
     #[test]
+    fn shipping_conversion_keeps_an_unmarked_page_unmarked_on_repeated_calls() {
+        let mut bytes = minimal_pdf();
+        for _ in 0..2 {
+            bytes = convert_bytes(&bytes, &PdfAConvertOptions::default()).unwrap();
+            let doc = Document::load_mem(&bytes).unwrap();
+            let page = *doc.get_pages().values().next().unwrap();
+            let content = doc.get_page_content(page);
+            let operations = lopdf::content::Content::decode(&content).unwrap();
+            assert!(
+                operations.operations.is_empty(),
+                "conversion drew on a blank page"
+            );
+        }
+    }
+
+    #[test]
     fn conversion_drops_unreachable_cycles_and_old_metadata() {
         let mut doc = Document::load_mem(&minimal_pdf()).unwrap();
         let a = doc.new_object_id();
@@ -1161,13 +1589,47 @@ mod tests {
         assert!(!output.objects.contains_key(&a));
         assert!(!output.objects.contains_key(&b));
         assert!(
-            // Free-tier conversion adds another watermark on every call. That
-            // pre-existing behaviour is separate from unreachable storage.
+            // Serialization and metadata can vary slightly on a second pass.
             twice.len() <= once.len() + 1024,
             "second conversion accumulated storage: {} -> {}",
             once.len(),
             twice.len()
         );
+    }
+
+    #[test]
+    fn identical_iccbased_profiles_share_storage_but_component_counts_do_not() {
+        let mut doc = Document::load_mem(&minimal_pdf()).unwrap();
+        let page = *doc.get_pages().values().next().unwrap();
+        let profile = lopdf::Stream::new(dictionary! {"N"=>3}, vec![5; 2048]);
+        let first = doc.add_object(profile.clone());
+        let duplicate = doc.add_object(profile.clone());
+        let mut different = profile;
+        different.dict.set("N", 4);
+        let other = doc.add_object(different);
+        let cs = |id| {
+            lopdf::Object::Array(vec![
+                lopdf::Object::Name(b"ICCBased".to_vec()),
+                lopdf::Object::Reference(id),
+            ])
+        };
+        doc.get_dictionary_mut(page).unwrap().set("Resources",dictionary! {"ColorSpace"=>dictionary! {"A"=>cs(first),"B"=>cs(duplicate),"C"=>cs(other)}});
+        compact_storage(&mut doc);
+        let d = doc
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"Resources")
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"ColorSpace")
+            .unwrap()
+            .as_dict()
+            .unwrap();
+        assert_eq!(d.get(b"A").unwrap(), d.get(b"B").unwrap());
+        assert_ne!(d.get(b"A").unwrap(), d.get(b"C").unwrap());
+        assert!(!doc.objects.contains_key(&duplicate));
+        assert!(doc.objects.contains_key(&other));
     }
 
     #[test]
@@ -1205,9 +1667,7 @@ mod tests {
             lopdf::Object::Array(vec![head.into(), tail.into()]),
         );
         convert_document(&mut doc, &PdfAConvertOptions::default()).unwrap();
-        // Free Tier appends its watermark as a further stream, so the page
-        // legitimately keeps an array. What matters is that the two halves of
-        // the instruction ended up in ONE stream, not two.
+        // The two halves must end up in one complete instruction stream.
         let bytes: Vec<Vec<u8>> = crate::content_editor::get_content_stream_ids(&doc, page)
             .into_iter()
             .map(|id| {
@@ -1272,16 +1732,10 @@ mod tests {
         let out = convert_bytes(&minimal_pdf(), &PdfAConvertOptions::default())
             .expect("minimal PDF should convert");
         assert!(out.starts_with(b"%PDF-"));
-        // XMP metadata and an OutputIntent are the two things every PDF/A file
-        // must carry; both are absent from the input.
+        // The default conversion characterizes colors and identifies its archival level.
         let doc = Document::load_mem(&out).unwrap();
         let catalog = doc.catalog().unwrap();
-        assert!(!catalog
-            .get(b"OutputIntents")
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .is_empty());
+        assert!(catalog.has(b"OutputIntents"));
         let id = catalog.get(b"Metadata").unwrap().as_reference().unwrap();
         let xml = doc
             .get_object(id)
@@ -1295,7 +1749,11 @@ mod tests {
 
     #[test]
     fn repeated_conversion_keeps_one_output_profile() {
-        let once = convert_bytes(&minimal_pdf(), &PdfAConvertOptions::default()).unwrap();
+        let once = convert_bytes(
+            &minimal_with_output_intent(),
+            &PdfAConvertOptions::default(),
+        )
+        .unwrap();
         let twice = convert_bytes(&once, &PdfAConvertOptions::default()).unwrap();
         assert!(twice.starts_with(b"%PDF-"));
 

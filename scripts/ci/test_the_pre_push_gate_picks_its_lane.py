@@ -68,7 +68,9 @@ def expect(what: str, ok: bool, detail: str = "") -> None:
 
 def hook_met(stdin: str, gate_exit: int = 0, tmp: pathlib.Path | None = None,
              message_guard: bool = False,
-             extra_env: dict[str, str] | None = None) -> tuple[int, str, str]:
+             extra_env: dict[str, str] | None = None,
+             remote_gate: int | None = None,
+             keep_repo: bool = False) -> tuple[int, str, str]:
     """Run the real hook in a sandbox whose local_ci_gate.sh is a stub.
 
     The stub writes its argument to a file and exits with `gate_exit`, so the
@@ -95,6 +97,23 @@ def hook_met(stdin: str, gate_exit: int = 0, tmp: pathlib.Path | None = None,
         f'printf "%s" "${{LANDING_BASE:-<none>}}" > "{tmp}/basis.txt"\n'
         f"exit {gate_exit}\n"
     )
+    # THE OTHER PLACE THE GATE CAN RUN (#474). With the remote lane present the
+    # hook must call it and not the local gate, and with XFA_GATE_REMOTE=0 it
+    # must call the local one even though the script is right there. Both are
+    # stubs writing which of them ran, because a hook that computes the choice
+    # correctly and then calls the other one is exactly the silent failure this
+    # file exists for -- and the wrong direction here spends money on every push
+    # or takes the lock on every push, and neither announces itself.
+    if remote_gate is not None:
+        (tmp / "scripts" / "cos").mkdir(parents=True, exist_ok=True)
+        op_afstand = tmp / "scripts" / "cos" / "remote_gate_lane.sh"
+        op_afstand.write_text(
+            "#!/usr/bin/env bash\n"
+            f'printf "%s" "${{1:-<geen>}}" > "{tmp}/afstand.txt"\n'
+            f"exit {remote_gate}\n"
+        )
+        op_afstand.chmod(0o755)
+
     # The guard the hook runs before the gate reads a revision range against an
     # upstream. There is none here, and the hook says so itself: without one it
     # skips that half. Removing the file keeps this test on its own subject.
@@ -105,10 +124,21 @@ def hook_met(stdin: str, gate_exit: int = 0, tmp: pathlib.Path | None = None,
     # shell rather than the hook: a run started with LANDING_BASE already set
     # made "the hook exported nothing" indistinguishable from "the hook exported
     # the right thing", which is how this pair of cases first went red.
-    for leaked in ("LANDING_BASE", "LANE"):
+    # XFA_GATE_REMOTE joins them, and it arrived here the hard way: the gate now
+    # runs ON an instance, where remote_gate_lane.sh exports XFA_GATE_REMOTE=0 so
+    # that a gate cannot buy a second instance to gate itself. Inherited, that
+    # made every case below take the local branch and four of them fail there
+    # while passing on the Mac -- green here and red there, from the caller's
+    # shell rather than from the hook.
+    # GATE_LOCAL_OK joins them for the same reason (#591), and then is SET: the
+    # cases about lanes run the local stub on purpose, and the cases about the
+    # refusal take it away themselves.
+    for leaked in ("LANDING_BASE", "LANE", "XFA_GATE_REMOTE", "GATE_LOCAL_OK"):
         env.pop(leaked, None)
+    env["GATE_LOCAL_OK"] = "1"
     env.update(extra_env or {})
-    subprocess.run(["git", "init", "-q", "."], cwd=tmp, env=env, check=True)
+    if not keep_repo:
+        subprocess.run(["git", "init", "-q", "."], cwd=tmp, env=env, check=True)
     if message_guard:
         (tmp / "scripts" / "ci" / "geen_interne_zaken.py").write_text(
             "import pathlib, sys\n"
@@ -134,6 +164,12 @@ def hook_met(stdin: str, gate_exit: int = 0, tmp: pathlib.Path | None = None,
     )
     baan = (tmp / "baan.txt").read_text() if (tmp / "baan.txt").exists() else NOT_CALLED
     return r.returncode, baan, r.stdout + r.stderr
+
+
+def op_afstand(tmp: pathlib.Path) -> str:
+    """The lane the remote gate was asked for, or NOT_CALLED."""
+    pad = tmp / "afstand.txt"
+    return pad.read_text() if pad.exists() else NOT_CALLED
 
 
 def basis(tmp: pathlib.Path) -> str:
@@ -243,6 +279,64 @@ def main() -> int:
             f"(delete) {ZERO} refs/heads/a {SHA}\n"
             f"refs/heads/b {SHA} refs/heads/b {SHA}\n", tmp=tmp / "j")
         expect("a deletion mixed with an update is not delete-only", baan == "--fast", baan)
+
+        # A TAG ON A COMMIT MASTER ALREADY HAS STARTS NOTHING EITHER (#541).
+        # A release tag publishes no commit, and the commit-message guard reads
+        # an empty range for it and refuses -- so `git push --tags` could not
+        # pass the gate at all until this branch existed. HEAD is used as the
+        # tagged object: it is on this sandbox's master by construction, which
+        # is the case the branch is about.
+        def met_master(waar: pathlib.Path) -> str:
+            """A sandbox whose `github/master` exists, and the commit it names.
+
+            The hook asks whether the tagged object is already on the remote's
+            master, and it can only answer that in a repository that has one.
+            """
+            waar.mkdir(parents=True, exist_ok=True)
+            omgeving = sealed_env(cwd=waar)
+            omgeving["PATH"] = os.environ["PATH"]
+            def g(*a: str) -> str:
+                return subprocess.run(["git", *a], cwd=waar, env=omgeving, check=True,
+                                      capture_output=True, text=True).stdout.strip()
+            g("init", "-q", ".")
+            g("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+              "commit", "-q", "--allow-empty", "-m", "base")
+            sha = g("rev-parse", "HEAD")
+            g("update-ref", "refs/remotes/github/master", sha)
+            return sha
+
+        kop = met_master(tmp / "t1")
+        rc, baan, uit = hook_met(
+            f"refs/tags/v9.9.9 {kop} refs/tags/v9.9.9 {ZERO}\n", tmp=tmp / "t1")
+        expect("a tag on a commit master has does not start the gate",
+               baan == NOT_CALLED, baan)
+        expect("and the push goes through", rc == 0, str(rc))
+        expect("and it says nothing is added", "tags only" in uit, uit[:200])
+
+        # And the direction where a mistake would let code out: a tag on a
+        # commit master does NOT have is a way to publish work that never
+        # landed, so it takes the whole lane.
+        met_master(tmp / "t2")
+        rc, baan, uit = hook_met(
+            f"refs/tags/v9.9.9 {SHA} refs/tags/v9.9.9 {ZERO}\n", tmp=tmp / "t2")
+        expect("a tag on a commit that is not on master runs the gate",
+               baan == "--fast", baan)
+
+        # A tag beside a branch update is not a tag-only push.
+        # AND WITHOUT A MASTER TO COMPARE WITH, THE ANSWER IS NOT YES (codex,
+        # #1896). A fresh clone, or one whose remote is called something else,
+        # has no refs/remotes/github/master; falling back to HEAD there made a
+        # tag on the current unlanded commit its own ancestor.
+        (tmp / "t4").mkdir(parents=True, exist_ok=True)
+        rc, baan, uit = hook_met(
+            f"refs/tags/v9.9.9 {kop} refs/tags/v9.9.9 {ZERO}\n", tmp=tmp / "t4")
+        expect("no github/master to compare with runs the gate", baan == "--fast", baan)
+
+        kop3 = met_master(tmp / "t3")
+        rc, baan, uit = hook_met(
+            f"refs/tags/v9.9.9 {kop3} refs/tags/v9.9.9 {ZERO}\n"
+            f"refs/heads/b {SHA} refs/heads/b {SHA}\n", tmp=tmp / "t3")
+        expect("a tag mixed with a branch update runs the gate", baan == "--fast", baan)
         rc, baan, uit = hook_met(
             f"refs/heads/b {SHA} refs/heads/b {SHA}\n"
             f"(delete) {ZERO} refs/heads/a {SHA}\n", tmp=tmp / "k")
@@ -360,14 +454,128 @@ def main() -> int:
             i = None
         expect("the never-green guard refuses in neither local lane",
                i is None, f"regel {i}")
-        expect("and warns in both lanes instead",
-               "advisory in both local lanes" in tekst
+        expect("operational history is advisory and only fetched in the full lane",
+               'if [ "$PLAATS" != machine ] && [ "$FULL" = 1 ]; then\necho "--- groen' in tekst
                and any(r.startswith("python3 scripts/ci/a_gate_that_never_went_green.py")
                        and r.rstrip().endswith("|| true") for r in regels))
         # Its test is not advisory anywhere: it is local and deterministic, it
         # asks no API, and it is what proves the guard can go red at all.
         expect("its own test stays blocking in both lanes",
                any(r.startswith("run groentest") for r in regels))
+
+    # WHERE THE GATE RUNS (#474). Four cases, because each direction is wrong in
+    # a way nobody would notice from a green push: a hook that always goes
+    # remote spends money on a machine that is already idle, and one that never
+    # does puts every push back in the queue that cost 2-3.5 hours a day.
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        rc, baan, uit = hook_met(f"refs/heads/x {SHA} refs/heads/x {ZERO}\n",
+                                 tmp=tmp, remote_gate=0, extra_env={"GATE_LOCAL_OK": ""})
+        # THE SILENT FALLBACK (#591). Two landings ran their lane on the Mac for
+        # fifty-four minutes each because nothing set XFA_GATE_REMOTE and the
+        # hook took that as "run it here". Unasked, it must run nothing and say so.
+        expect("with no choice made, no gate runs on this machine",
+               op_afstand(tmp) == NOT_CALLED and baan == NOT_CALLED,
+               f"remote={op_afstand(tmp)!r} local={baan!r}")
+        expect("and the push is refused", rc != 0, str(rc))
+        expect("with the reason and the two ways out",
+               "REFUSED TO RUN ON THIS MAC" in uit and "XFA_GATE_REMOTE is" in uit
+               and "GATE_LOCAL_OK=1" in uit and "NOTHING WAS CHECKED" in uit, uit[-300:])
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        rc, baan, uit = hook_met(f"refs/heads/x {SHA} refs/heads/x {ZERO}\n",
+                                 tmp=tmp, remote_gate=0)
+        expect("GATE_LOCAL_OK=1 runs the gate here, and says so",
+               baan == "--fast" and op_afstand(tmp) == NOT_CALLED and rc == 0
+               and "GATE ON THIS MAC, as asked" in uit,
+               f"rc={rc} local={baan!r} remote={op_afstand(tmp)!r}")
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        hook_met(f"refs/heads/master {SHA} refs/heads/master {ZERO}\n",
+                 tmp=tmp, remote_gate=0, extra_env={"XFA_GATE_REMOTE": "1"})
+        expect("an explicit remote landing uses the landing lane", op_afstand(tmp) == "--landing",
+               repr(op_afstand(tmp)))
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        rc, baan, _uit = hook_met(f"refs/heads/x {SHA} refs/heads/x {ZERO}\n",
+                                  tmp=tmp, remote_gate=0,
+                                  extra_env={"XFA_GATE_REMOTE": "0"})
+        expect("XFA_GATE_REMOTE=0 keeps the gate on this machine",
+               baan == "--fast" and op_afstand(tmp) == NOT_CALLED,
+               f"local={baan!r} remote={op_afstand(tmp)!r}")
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        rc, baan, uit = hook_met(f"refs/heads/master {SHA} refs/heads/master {ZERO}\n",
+                                 tmp=tmp, remote_gate=0,
+                                 extra_env={"XFA_GATE_REMOTE": "0", "GATE_LOCAL_OK": "0"})
+        expect("XFA_GATE_REMOTE=0 without GATE_LOCAL_OK=1 refuses a landing too",
+               rc != 0 and baan == NOT_CALLED and op_afstand(tmp) == NOT_CALLED
+               and "REFUSED TO RUN ON THIS MAC" in uit,
+               f"rc={rc} local={baan!r} remote={op_afstand(tmp)!r}")
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        # A remote gate that could not run is not a pass, and the hook must not
+        # let the push through on it. 76 is "no evidence the command ran", 75 is
+        # "no instance and no fallback"; both mean nothing was checked.
+        rc, _baan, uit = hook_met(f"refs/heads/x {SHA} refs/heads/x {ZERO}\n",
+                                  tmp=tmp, remote_gate=75, extra_env={"XFA_GATE_REMOTE": "1"})
+        expect("a remote gate that bought nothing blocks the push", rc != 0, str(rc))
+        expect("and says nothing was checked", "NOTHING WAS CHECKED" in uit, uit[-200:])
+
+    # A PUSH THAT TOUCHES NO CRATE NEVER BUYS A MACHINE (owner, 23-09-2026).
+    # A real repository here, because the rule reads a real diff: a base
+    # commit that github/master points at, and one commit on top.
+    def no_crate_case(changed: str, also: str | None = None) -> tuple[int, str, str, str]:
+        with tempfile.TemporaryDirectory() as d:
+            tmp = pathlib.Path(d)
+            env = sealed_env(cwd=tmp)
+            env["PATH"] = os.environ["PATH"]
+            for leaked in ("LANDING_BASE", "LANE", "XFA_GATE_REMOTE", "GATE_LOCAL_OK"):
+                env.pop(leaked, None)
+            def g(*a: str) -> str:
+                return subprocess.run(["git", "-c", "user.name=f", "-c", "user.email=f@example.invalid", *a],
+                                      cwd=tmp, env=env, check=True, capture_output=True,
+                                      text=True).stdout.strip()
+            g("init", "-q", ".")
+            (tmp / "README.md").write_text("base\n")
+            g("add", "-A"); g("commit", "-q", "-m", "base")
+            g("update-ref", "refs/remotes/github/master", "HEAD")
+            target = tmp / changed
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("changed\n")
+            g("add", "-A"); g("commit", "-q", "-m", "the change")
+            head = g("rev-parse", "HEAD")
+            lines = f"refs/heads/x {head} refs/heads/x {ZERO}\n"
+            if also is not None:
+                (tmp / "docs").mkdir(exist_ok=True)
+                (tmp / "docs" / "note.md").write_text("docs\n")
+                g("checkout", "-q", "-b", "docs-only", "refs/remotes/github/master")
+                g("add", "-A"); g("commit", "-q", "-m", "docs only")
+                other = g("rev-parse", "HEAD")
+                lines = (f"refs/heads/x {head} refs/heads/x {ZERO}\n"
+                         f"refs/heads/docs-only {other} refs/heads/docs-only {ZERO}\n")
+            rc, baan, uit = hook_met(lines,
+                                     tmp=tmp, remote_gate=0,
+                                     extra_env={"XFA_GATE_REMOTE": "1", "GATE_LOCAL_OK": ""},
+                                     keep_repo=True)
+            return rc, baan, op_afstand(tmp), uit
+    rc, baan, afstand, uit = no_crate_case("scripts/ci/some_guard.py")
+    expect("a push that touches no crate gates here and buys nothing, though XFA_GATE_REMOTE=1",
+           rc == 0 and baan == "--fast" and afstand == NOT_CALLED and "buys nothing" in uit,
+           f"rc={rc} local={baan!r} remote={afstand!r}")
+    rc, baan, afstand, uit = no_crate_case("crates/pdf-engine/src/lib.rs")
+    expect("a push that touches a crate still takes the instance",
+           afstand == "--fast" and baan == NOT_CALLED, f"local={baan!r} remote={afstand!r}")
+    rc, baan, afstand, uit = no_crate_case("Cargo.lock")
+    expect("and so does one that moves the lock file", afstand == "--fast",
+           f"local={baan!r} remote={afstand!r}")
+    rc, baan, afstand, uit = no_crate_case("tools/pdfluent-snippet-extract/src/main.rs")
+    expect("and one that changes a workspace member under tools/ (codex, #1954)",
+           afstand == "--fast", f"local={baan!r} remote={afstand!r}")
+
+    rc, baan, afstand, uit = no_crate_case("crates/pdf-engine/src/lib.rs", also="docs")
+    expect("a crate on one ref and docs on another still takes the instance (codex, #1954)",
+           afstand == "--fast", f"local={baan!r} remote={afstand!r}")
 
     print(f"[test-lane] {ran - len(fails)}/{ran} case(s) ok")
     if fails:

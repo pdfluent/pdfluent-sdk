@@ -316,6 +316,57 @@ def the_wrapper(sbc) -> list[tuple[str, bool, str]]:
     return out
 
 
+def the_compiler_wrapper(sbc) -> list[tuple[str, bool, str]]:
+    """The count may not depend on who is measuring.
+
+    Measured 09-09-2026 on one commit: 87 non-compiling programs on the
+    operator's Mac, 97 on a bare Linux instance -- same rustc 1.94.0, same
+    lockfile, same blocks. The Mac's cargo config sets sccache as RUSTC_WRAPPER;
+    sccache invokes rustc with `-o`, and that run stops after name resolution,
+    so every E0599 and E0277 in the same crate was never emitted. Ten programs
+    calling methods that exist nowhere in this workspace were counted as
+    compiling, and the recorded ratchet was ten too low for as long as the
+    baseline had been taken on a machine with a cache.
+
+    So `build()` clears the wrapper, and this asserts it does, by running the
+    real function against a fake `cargo` that reports the environment it was
+    given. Reading the source for `RUSTC_WRAPPER` would pass a function that
+    computes the right environment and then hands cargo another one -- and a
+    cache that can change a measurement is precisely the thing that looks fine
+    until two machines disagree. (#474)
+    """
+    out = []
+    with tempfile.TemporaryDirectory() as d:
+        work = Path(d)
+        (work / "src").mkdir()
+        nep = work / "bin"
+        nep.mkdir()
+        (nep / "cargo").write_text(
+            "#!/usr/bin/env bash\n"
+            'printf "wrapper=[%s] build_wrapper=[%s]\\n" '
+            '"${RUSTC_WRAPPER-UNSET}" "${CARGO_BUILD_RUSTC_WRAPPER-UNSET}" >&2\n'
+            "exit 1\n"
+        )
+        (nep / "cargo").chmod(0o755)
+        pad, wrapper = os.environ.get("PATH", ""), os.environ.get("RUSTC_WRAPPER")
+        os.environ["PATH"] = f"{nep}:{pad}"
+        os.environ["RUSTC_WRAPPER"] = "sccache"
+        try:
+            _code, stderr = sbc.build(work, ["fn f() {}\n"])
+        finally:
+            os.environ["PATH"] = pad
+            if wrapper is None:
+                os.environ.pop("RUSTC_WRAPPER", None)
+            else:
+                os.environ["RUSTC_WRAPPER"] = wrapper
+    out.append(("a compiler wrapper in the environment does not reach cargo",
+                "wrapper=[UNSET]" in stderr, stderr.strip()[:160]))
+    out.append(("and neither does cargo's own spelling of it",
+                "build_wrapper=[]" in stderr or "build_wrapper=[UNSET]" in stderr,
+                stderr.strip()[:160]))
+    return out
+
+
 def the_build_directory(sbc) -> list[tuple[str, bool, str]]:
     """Where this gate builds, and what it leaves behind.
 
@@ -542,7 +593,19 @@ def the_handover(sbc) -> list[tuple[str, bool, str]]:
         f"{sbc.digest_of([a])[:12]} vs {sbc.digest_of([a, b])[:12]}",
     ))
 
-    # 4. Fields the site adds later must not count. The export carries
+    # 4. The page's status is not bookkeeping, and it is in the digest. It
+    #    decides whether a failing program is refused outright or counted as
+    #    debt, so publishing a hidden page after the hand-over would switch the
+    #    strict half off with nothing hashing differently (#499).
+    published = {**a, "status": None}
+    hidden = {**a, "status": "hidden"}
+    out.append((
+        "publishing a page changes the digest",
+        sbc.digest_of([published, b]) != sbc.digest_of([hidden, b]),
+        f"{sbc.digest_of([published, b])[:12]} vs {sbc.digest_of([hidden, b])[:12]}",
+    ))
+
+    # 5. Fields the site adds later must not count. The export carries
     #    `onderdelen` (which source blocks a section was assembled from) and
     #    that is bookkeeping, not example text.
     with_extra = {**a, "onderdelen": [".x"]}
@@ -564,7 +627,7 @@ def the_handover(sbc) -> list[tuple[str, bool, str]]:
     blocks = raw["blocks"] if isinstance(raw, dict) else raw
     recorded = raw.get("handover") if isinstance(raw, dict) else None
 
-    # 5. The checked-in copy has to carry one at all. Without it the gate falls
+    # 6. The checked-in copy has to carry one at all. Without it the gate falls
     #    back to compiling whatever is in the file, which is the state this
     #    whole mechanism exists to leave behind.
     out.append((
@@ -575,7 +638,7 @@ def the_handover(sbc) -> list[tuple[str, bool, str]]:
     if not recorded:
         return out
 
-    # 6. And it has to describe this file. A hand-edited block here is the quiet
+    # 7. And it has to describe this file. A hand-edited block here is the quiet
     #    way to make the ratchet green over code no visitor is shown.
     actual = sbc.digest_of(blocks)
     out.append((
@@ -591,6 +654,275 @@ def the_handover(sbc) -> list[tuple[str, bool, str]]:
     return out
 
 
+
+GUIDE = "public/content/en/how-to-guides/pdfa.json"
+OTHER_GUIDE = "public/content/en/how-to/split-pdf-rust.json"
+ERROR_PAGE = "public/content/en/errors/itext-out-of-memory.json"
+NOT_A_GUIDE = "public/content/en/solutions/pdf-a-conversion.json"
+
+DEBT_ENTRY = 'file  = "{f}"\npath  = "{p}"\nerror = "{e}"\n'
+
+
+def debt_from(sbc, entries: list[tuple[str, str, str]]):
+    """Write a debt list and read it back through the real parser."""
+    text = "\n".join("[[program]]\n" + DEBT_ENTRY.format(f=f, p=p, e=e)
+                     for f, p, e in entries)
+    with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as fh:
+        fh.write(text)
+        path = Path(fh.name)
+    try:
+        return sbc.read_debt(path)
+    finally:
+        path.unlink()
+
+
+def the_published_guides(sbc) -> list[tuple[str, bool, str]]:
+    """A broken example on a served how-to page is refused, not counted.
+
+    The ratchet holds one ceiling over the whole site, and a ceiling cannot see
+    who carries the damage. `how-to-guides/pdfa.json` showed `fix_pdf_a_errors`
+    and `PdfAFixOptions` -- neither exists in any crate -- for months on a page
+    that was in the sitemap. Three broken programs inside a ceiling of 97: fix
+    something anywhere else and there is room for a new invented API here, so
+    the number never moved and nothing was ever red (#499).
+
+    The judgement is in `judge_guides`, apart from the build, for the same
+    reason as `judge`: compiling five hundred programs takes three quarters of
+    an hour and runs on one runner, so a rule that only exists inside that build
+    is a rule nobody has tried to defeat. All four of its directions are
+    exercised here on synthetic input.
+    """
+    out = []
+    every = {(GUIDE, ".x"), (OTHER_GUIDE, ".y"), (NOT_A_GUIDE, ".z")}
+    published = {(GUIDE, ".x"), (OTHER_GUIDE, ".y")}
+
+    # 1. THE POINT OF THE FILE: a published guide program that does not compile
+    #    and is not written down. This is the case that was green for months.
+    debt, form = debt_from(sbc, [])
+    said = sbc.judge_guides(every, published, {(GUIDE, ".x")}, debt)
+    out.append((
+        "a broken example on a published how-to page is refused outright",
+        not form and len(said) == 1 and "published" in said[0] and GUIDE in said[0],
+        f"form={form} said={said}",
+    ))
+
+    # 2. The same failure on a page nobody is served costs a reader nothing.
+    #    That is debt, and the ratchet is the right instrument for it -- a
+    #    complaint here would push whoever reads it towards hiding pages.
+    said = sbc.judge_guides(every, published, {(NOT_A_GUIDE, ".z")}, debt)
+    out.append((
+        "the same failure outside the published guides is left to the ratchet",
+        said == [],
+        f"said={said}",
+    ))
+
+    # 3. Written down, and it compiles: the entry has lapsed. Without this the
+    #    list only grows, and a list that only grows is the ceiling again.
+    debt, _ = debt_from(sbc, [(GUIDE, ".x", "no method named `fix_pdf_a_errors`")])
+    said = sbc.judge_guides(every, published, set(), debt)
+    out.append((
+        "an entry for a program that compiles is an error",
+        len(said) == 1 and "compiles" in said[0],
+        f"said={said}",
+    ))
+
+    # 4. Written down, and the page is no longer published. Hiding the page is
+    #    a repair the gate accepts -- it costs the page -- but the entry has to
+    #    go with it, or the next broken example there is waved through.
+    said = sbc.judge_guides(every, {(OTHER_GUIDE, ".y")}, {(GUIDE, ".x")}, debt)
+    out.append((
+        "an entry for a page that is no longer published is an error",
+        len(said) == 1 and "published guide" in said[0],
+        f"said={said}",
+    ))
+
+    # 5. Written down, and gone from the export.
+    debt, _ = debt_from(sbc, [("public/content/en/how-to/gone.json", ".x", "e")])
+    said = sbc.judge_guides(every, published, set(), debt)
+    out.append((
+        "an entry for a program the export no longer carries is an error",
+        len(said) == 1 and "no longer in the export" in said[0],
+        f"said={said}",
+    ))
+
+    # 6. An entry has to say what went wrong, or the list cannot be read by the
+    #    next person and gets renewed on autopilot.
+    _, form = debt_from(sbc, [(GUIDE, ".x", "")])
+    out.append((
+        "an entry without the compiler's complaint is refused",
+        len(form) == 1 and "error" in form[0],
+        f"form={form}",
+    ))
+
+    # 7. The same program twice is how a list silently disagrees with itself.
+    _, form = debt_from(sbc, [(GUIDE, ".x", "e"), (GUIDE, ".x", "e")])
+    out.append((
+        "the same program twice is refused",
+        len(form) == 1 and "twice" in form[0],
+        f"form={form}",
+    ))
+
+    # 8-10. Which programs the rule applies to. `hidden` is the website's own
+    #       word for "not in the sitemap and not routed"; every other status,
+    #       and no status at all, means served.
+    out.append((
+        "a page under how-to-guides with no status is a published guide",
+        sbc.is_published_guide({"bestand": GUIDE, "pad": ".x", "status": None}),
+        "",
+    ))
+    out.append((
+        "a hidden page is not a published guide",
+        not sbc.is_published_guide(
+            {"bestand": OTHER_GUIDE, "pad": ".x", "status": "hidden"}),
+        "",
+    ))
+    out.append((
+        "a page outside the two guide trees is not a published guide",
+        not sbc.is_published_guide(
+            {"bestand": NOT_A_GUIDE, "pad": ".x", "status": "core-1.0"}),
+        "",
+    ))
+
+    # 11. The floor under the whole rule. Lose the status field, move the
+    #     directories, and the set goes empty: every entry then reads as "no
+    #     longer published", the strict half has nothing to refuse, and the gate
+    #     says green while checking nothing.
+    out.append((
+        "there is a floor under the number of published guide programs",
+        getattr(sbc, "MIN_PUBLISHED_GUIDE_PROGRAMS", 0) >= 50,
+        str(getattr(sbc, "MIN_PUBLISHED_GUIDE_PROGRAMS", None)),
+    ))
+
+    # 16. The error tree has a floor of its own, because the one over both
+    #     trees cannot see it: the how-to trees alone clear 110, so an export
+    #     that stops emitting error pages passes the combined floor. The real
+    #     export is checked against both floors in the_real_debt below; this
+    #     case is the arithmetic that makes the second one necessary.
+    out.append((
+        "the combined floor cannot see the error tree disappear",
+        (getattr(sbc, "MIN_PUBLISHED_ERROR_PROGRAMS", 0) >= 5
+         and sbc.MIN_PUBLISHED_GUIDE_PROGRAMS
+         < 121 + sbc.MIN_PUBLISHED_ERROR_PROGRAMS),
+        f"guides={sbc.MIN_PUBLISHED_GUIDE_PROGRAMS} "
+        f"errors={getattr(sbc, 'MIN_PUBLISHED_ERROR_PROGRAMS', None)}",
+    ))
+
+    # 15. The list may only shrink, and until #1885's review nothing said so:
+    #     the four directions above all pass on an entry added in the same
+    #     commit that breaks the program, and the site-wide ratchet can stay
+    #     level because something else was repaired. The ceiling is a number in
+    #     site_blocks_compile.py, so growing the list means editing that line
+    #     where a reviewer sees it.
+    many = [(f"public/content/en/errors/p{i}.json", "(page) (1 blokken)", "e")
+            for i in range(sbc.MAX_DEBT_ENTRIES + 1)]
+    big, _ = debt_from(sbc, many)
+    said = sbc.judge_guides(set(big), set(), set(), big)
+    out.append((
+        "a debt list over the ceiling is refused",
+        any("ceiling" in s for s in said),
+        f"entries={len(big)} ceiling={sbc.MAX_DEBT_ENTRIES}",
+    ))
+
+    # 12-14. The error pages are judged the same way (#476).
+    #
+    #        A reader arrives on one of them with a stack trace and pastes the
+    #        fix; `errors/itext-out-of-memory.json` and
+    #        `errors/pdfbox-slow-performance.json` both applied `?` to a `Page`,
+    #        which is not a `Result`, and both sat inside the ceiling from the
+    #        day it was drawn -- repair a how-to elsewhere and there was room
+    #        for them.
+    #
+    #        Drop `errors/` out of the trees above and 12 and 13 go red, which
+    #        is the point of writing them down here rather than trusting the
+    #        tuple to stay as it is.
+    out.append((
+        "a page under errors/ is judged like a how-to",
+        sbc.is_published_guide(
+            {"bestand": ERROR_PAGE, "pad": ".fixes[2].code", "status": "core-1.0"}),
+        "",
+    ))
+    # The published set is derived the way `main` derives it -- through
+    # `is_published_guide` -- so that this case is about the trees and not
+    # about a set written out by hand here.
+    export = [
+        {"bestand": GUIDE, "pad": ".x", "status": None},
+        {"bestand": ERROR_PAGE, "pad": ".fixes[2].code", "status": "core-1.0"},
+    ]
+    every_with_error = {(b["bestand"], b["pad"]) for b in export}
+    published_with_error = {
+        (b["bestand"], b["pad"]) for b in export if sbc.is_published_guide(b)}
+    debt, _ = debt_from(sbc, [])
+    said = sbc.judge_guides(
+        every_with_error, published_with_error, {(ERROR_PAGE, ".fixes[2].code")}, debt)
+    out.append((
+        "a broken fix on a published error page is refused outright",
+        len(said) == 1 and ERROR_PAGE in said[0] and "published" in said[0],
+        f"said={said}",
+    ))
+    out.append((
+        "a hidden error page is left to the ratchet",
+        not sbc.is_published_guide(
+            {"bestand": ERROR_PAGE, "pad": ".fixes[2].code", "status": "hidden"}),
+        "",
+    ))
+    return out
+
+
+def the_real_debt(sbc) -> list[tuple[str, bool, str]]:
+    """The debt list as it is checked in, against the export as it is checked in.
+
+    Two of the four directions need no compiler -- an entry naming a program the
+    export lost, and an entry naming a page that is no longer published -- so
+    they run on every pull request here instead of in the three-quarter-hour
+    job. The third (it compiles now) is the job's half.
+    """
+    out = []
+    debt, form = sbc.read_debt(sbc.GUIDES_DEBT)
+    out.append((
+        "the checked-in debt list is well-formed",
+        not form,
+        "; ".join(form) or "no complaints",
+    ))
+
+    if not EXPORT.exists():
+        out.append((
+            "the checked-in debt list points at published guide programs",
+            False,
+            f"SKIPPED (not a pass): {EXPORT} is missing, so nothing was compared",
+        ))
+        return out
+
+    raw = json.loads(EXPORT.read_text(encoding="utf-8"))
+    blocks = raw["blocks"] if isinstance(raw, dict) else raw
+    every = {sbc.key(b) for b in blocks}
+    published = {sbc.key(b) for b in blocks if sbc.is_published_guide(b)}
+
+    out.append((
+        "the export carries enough published guide programs to judge",
+        len(published) >= sbc.MIN_PUBLISHED_GUIDE_PROGRAMS,  # FLOOR
+        f"{len(published)} of {len(blocks)}",
+    ))
+
+    # Nothing in the export may be counted twice: a program excused as a cloud
+    # recipe in blocks_exceptions.toml is not debt, and an entry in both files
+    # would leave one of them stale as soon as the other is repaired.
+    register, _ = sbc.read_register(sbc.EXCEPTIONS)
+    both = sorted(f"{k[0]} {k[1]}" for k in set(debt) & set(register))
+    out.append((
+        "no program is in the exception register and the debt list at once",
+        not both,
+        "; ".join(both) or "none",
+    ))
+
+    said = [c for c in sbc.judge_guides(every, published, set(debt), debt)]
+    out.append((
+        "every entry names a published guide program the export still carries",
+        not said,
+        "; ".join(said) or "none stale",
+    ))
+    return out
+
+
 def main() -> int:
     if not GATE.exists():
         print(f"SKIPPED (not a pass): {GATE} is missing", file=sys.stderr)
@@ -598,13 +930,15 @@ def main() -> int:
 
     sbc = load()
     results = (cases(sbc) + the_ratchet(sbc) + the_wrapper(sbc)
+               + the_compiler_wrapper(sbc)
                + the_build_directory(sbc) + the_real_register(sbc)
+               + the_published_guides(sbc) + the_real_debt(sbc)
                + the_handover(sbc))
 
-    # FLOOR: cases >= 20 -- this file builds its own cases, so an empty or
+    # FLOOR: cases >= 35 -- this file builds its own cases, so an empty or
     # halved list is not a clean tree but a gutted file, and zero cases that
     # all pass reads as green.
-    if len(results) < 20:
+    if len(results) < 35:
         print(
             f"[site-blocks-register] only {len(results)} cases. This file "
             f"builds them itself, so that is not a clean tree.",

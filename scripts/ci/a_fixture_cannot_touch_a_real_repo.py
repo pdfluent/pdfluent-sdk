@@ -33,7 +33,10 @@ and forget one call. That is what test_no_test_can_touch_the_real_repo.py's
 per-call `env=` rule covers, and what the fixtures' own runs demonstrate.
 """
 from __future__ import annotations
-import ast, pathlib, sys
+import ast
+import pathlib
+import re
+import sys
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 MAP = REPO / "scripts" / "ci"
@@ -64,6 +67,13 @@ ALLOWED: dict[str, str] = {
         "builds nothing: one `config --get`, one `fetch`, no init and no commit, "
         "and it already drops every GIT_* variable so a hook's GIT_DIR cannot "
         "redirect it (#231)"
+    ),
+    "every_worktree_runs_the_tracked_hooks.py": (
+        "its subject IS this clone's worktrees: it asks each one what git will "
+        "use as its hooks directory. A sandbox check would refuse the only "
+        "repository it has any reason to look at, and it never writes -- one "
+        "`git worktree list` and one `git config --get` per worktree, no init "
+        "and no commit (#454)"
     ),
     "the_commit_msg_hook_is_wired.py": (
         "its subject IS this clone: it asks whether core.hooksPath points at "
@@ -147,6 +157,12 @@ def names_used(tree: ast.AST) -> set[str]:
     return out
 
 
+# What a shell fixture has to call, by path, so a rename of the helper is a
+# failure here rather than a lint that silently stops asking.
+SENTINEL = "scripts/ci/_the_checkout_is_unchanged.sh"
+SEAL = "_a_fixture_inherits_no_git_env.sh"
+
+
 def main() -> int:
     files = sorted(MAP.glob("*.py"))
     if len(files) < MINIMUM_FILES:  # FLOOR
@@ -212,6 +228,63 @@ def main() -> int:
               "This lint has a population of zero and cannot report a clean "
               "result.", file=sys.stderr)
         return 2
+
+    # THE SHELL FIXTURES, which this lint globbed past until 09-09-2026 (#495).
+    #
+    # A fixture written in bash reaches the real checkout through the same two
+    # doors as one written in python -- a `cd` that failed and a git call with
+    # no `-C` -- and it cannot be sealed the way a python one is: it drives
+    # scripts that take their repository from the current directory, so the
+    # environment has to stay real. What it can do is say afterwards whether the
+    # checkout it started in still has the configuration it had at the start.
+    #
+    # That is what happened here twice in one afternoon: `core.bare = true` in
+    # the main checkout, which broke `git rev-parse` in every one of its
+    # worktrees, and then its `github` remote pointing at a URL that exists in
+    # exactly one place in this repository -- a shell fixture's own throwaway
+    # case. Neither could be reproduced by running the suspect on its own, and
+    # neither fixture said anything at all.
+    shell_problems: list[str] = []
+    shell_checked = 0
+    for path in sorted(MAP.glob("test_*.sh")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        code = "\n".join(line for line in text.splitlines()
+                         if not line.lstrip().startswith("#"))
+        if not re.search(r"(?:^|[;&|(`$]|\s)git\s+(?:-C\s+\S+\s+)?"
+                         r"(?:init|config|remote|update-ref|checkout|commit)\b", code):
+            continue
+        shell_checked += 1
+        # AND SEALED AGAINST THE ENVIRONMENT IT IS STARTED IN (#454). The
+        # sentinel below says afterwards that the checkout was damaged; this
+        # says the fixture cannot damage it. A git hook exports GIT_DIR, the
+        # gate runs from the pre-push hook, and GIT_DIR outranks `-C`: every
+        # `git -C /tmp/fixture …` then reads and writes the repository GIT_DIR
+        # names, and `git -C /tmp/fixture init` under it re-initialises that
+        # repository WITHOUT a work tree, which is written down as
+        # `core.bare = true`. That one variable produced all four leaks of
+        # 09-09-2026 -- bare twice, the master ref moved, the remote at
+        # example.invalid, the identity at gate@invalid -- and the sentinel
+        # reported none of them, because the fixtures that did it were not the
+        # ones that carried the sentinel.
+        # SOURCED, NOT MENTIONED. The same defect this repository has now found in
+        # four guards: a plain substring search is satisfied by the prose that
+        # explains the call -- and this file's own refusal message names the seal,
+        # so deleting the line and keeping the message passed. Measured.
+        if not re.search(r"^\s*(?:\.|source)\s+.*" + re.escape(SEAL), code, re.M):
+            shell_problems.append(
+                f"{path.name}: runs git and does not source {SEAL}. A hook exports "
+                "GIT_DIR, GIT_DIR outranks `-C`, and this file is run from one: "
+                "without the seal its git calls land in the repository the hook is "
+                "about. One line, first thing after `set -uo pipefail`.")
+        if SENTINEL not in code:
+            shell_problems.append(
+                f"{path.name}: builds or configures a git repository in shell and never "
+                f"checks that the checkout it was started from is unchanged. Record "
+                f"`bash {SENTINEL} --record` before the fixture runs and check it in the "
+                f"EXIT trap; and give every git call a `-C <fixture>` so a failed cd "
+                f"cannot fall through to the real one.")
+    problems.extend(shell_problems)
+    checked += shell_checked
 
     if problems:
         print(f"[fixture-env] FAIL: {len(problems)} of {checked} fixture file(s) "

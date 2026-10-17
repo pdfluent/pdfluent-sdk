@@ -1,4 +1,4 @@
-# pdf-java — XFA Java SDK
+# pdf-java — legacy Java binding
 
 > **Deprecated / non-publishable.** This crate's `com.xfa.pdf.*` Java classes
 > are legacy. The canonical, published Java binding is
@@ -8,7 +8,7 @@
 > binding for AcroForm fill (`getFormFields` / `setFormField` /
 > `setMultiSelect`) and all other features.
 
-Java JNI bindings for the XFA PDF engine.  Provides the same feature set as
+Java JNI bindings for the PDFluent engine.  Provides the same feature set as
 the Python and Node.js SDKs.
 
 ## Requirements
@@ -74,7 +74,7 @@ java  -cp "crates/pdf-java/java/;out/" `
 All instance methods throw `PdfException` on failure.  Implements
 `AutoCloseable` — always use **try-with-resources**.
 
-#### Round 1 — basics
+#### Basics
 
 | Method | Description |
 |--------|-------------|
@@ -93,7 +93,7 @@ All instance methods throw `PdfException` on failure.  Implements
 | `doc.getBookmarkCount()` | Number of top-level outline entries |
 | `doc.save(path)` | Save (mutated state or original bytes) |
 
-#### Round 2 — forms, annotations, redaction, encryption
+#### Forms, annotations, redaction, encryption
 
 | Method | Description |
 |--------|-------------|
@@ -122,7 +122,10 @@ Static helpers that do not require an open document.
 | `PdfUtils.validatePdfA(path, level)` | Validate against PDF/A level → `ComplianceReport` |
 
 Supported level strings: `"1b"`, `"2b"` (default), `"3b"`, `"1a"`, `"2a"`,
-`"3a"`, `"2u"`, `"3u"`, `"4"`.
+`"3a"`, `"2u"`, `"3u"`, `"4"` — for **validation**. This binding does not
+convert to PDF/A; conversion is delivered at 1B, 2B and 3B only, through the
+Rust facade, the WASM package and the C ABI, and every other level is refused
+there rather than written as its part's B level.
 
 ## Data classes
 

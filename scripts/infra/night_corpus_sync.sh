@@ -25,7 +25,7 @@
 set -uo pipefail
 
 # The Hetzner VPS behind this was cancelled on 24-08-2026 and the address has
-# since been reassigned: 46.225.223.175 now answers for somebody else. A script
+# since been reassigned: <retired-vps> now answers for somebody else. A script
 # that keeps a dead address as a default does not fail when the host goes away --
 # it connects to whoever holds it next. So the host is required, and its absence
 # is loud.

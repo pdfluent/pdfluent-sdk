@@ -1,7 +1,7 @@
 use crate::cache::{Cache, CacheKey};
 use crate::color::ColorSpace;
 use crate::convert::convert_transform;
-use crate::font::{Font, StandardFont};
+use crate::font::{Font, MarkPlacement, StandardFont};
 use crate::interpret::state::{ClipType, State, TextStateFont};
 use crate::ocg::OcgState;
 use crate::util::{BezPathExt, Float64Ext};
@@ -74,6 +74,9 @@ pub struct Context<'a> {
     /// How deep this interpretation already sits inside XObjects, patterns,
     /// soft masks or Type 3 glyph procedures. See MAX_NESTED_INTERPRETATION_DEPTH.
     nesting_depth: u32,
+    /// Where the combining marks the AMS name rows give are placed on this
+    /// page (spec `specs/text/circlecopyrt.md`, C4 and C5a).
+    pub(crate) marks: MarkPlacement,
 }
 
 impl<'a> Context<'a> {
@@ -120,6 +123,7 @@ impl<'a> Context<'a> {
             font_cache: HashMap::new(),
             object_cache: cache,
             ocg_state,
+            marks: MarkPlacement::default(),
         }
     }
 

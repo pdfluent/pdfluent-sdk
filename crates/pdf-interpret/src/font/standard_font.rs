@@ -3,10 +3,11 @@ use crate::font::blob::{CffFontBlob, OpenTypeFontBlob};
 use crate::font::generated::{glyph_names, metrics, standard, symbol, zapf_dings};
 use crate::font::true_type::{Width, read_encoding, read_widths};
 use crate::font::{
-    Encoding, FontData, FontQuery, glyph_name_to_unicode, normalized_glyph_name, stretch_glyph,
+    Encoding, FontData, FontQuery, glyph_name_to_bfstring, normalized_glyph_name, stretch_glyph,
     strip_subset_prefix,
 };
 use kurbo::BezPath;
+use pdf_font::cmap::BfString;
 use pdf_syntax::object::Dict;
 use pdf_syntax::object::Name;
 use pdf_syntax::object::dict::keys::{
@@ -51,6 +52,17 @@ pub enum StandardFont {
 }
 
 impl StandardFont {
+    /// Advance width of `ch` in thousandths of an em, if this face covers it.
+    ///
+    /// The character rides the face's built-in encoding to a glyph name, and
+    /// the name reads the standard width table; characters outside Latin-1
+    /// have no code there and read as uncovered.
+    pub fn char_width(&self, ch: char) -> Option<f32> {
+        let code = u8::try_from(ch as u32).ok()?;
+        let name = self.code_to_name(code)?;
+        self.get_width(name)
+    }
+
     pub(crate) fn code_to_name(&self, code: u8) -> Option<&'static str> {
         match self {
             Self::Symbol => symbol::get(code),
@@ -504,6 +516,8 @@ pub(crate) struct StandardKind {
     fallback: bool,
     glyph_to_code: RefCell<HashMap<GlyphId, u8>>,
     encodings: HashMap<u8, String>,
+    /// The font dictionary's /BaseFont, when it names one.
+    named: Option<String>,
 }
 
 impl StandardKind {
@@ -535,6 +549,10 @@ impl StandardKind {
         let (blob, index) = resolver(&FontQuery::Standard(base_font))?;
         let base_font_blob = StandardFontBlob::from_data(blob, index)?;
 
+        let named = dict
+            .get::<Name>(BASE_FONT)
+            .map(|name| name.as_str().to_string());
+
         Some(Self {
             base_font,
             base_font_blob,
@@ -544,6 +562,7 @@ impl StandardKind {
             glyph_to_code: RefCell::new(HashMap::new()),
             fallback,
             encoding,
+            named,
         })
     }
 
@@ -628,8 +647,8 @@ impl StandardKind {
         }
     }
 
-    pub(crate) fn char_code_to_unicode(&self, code: u8) -> Option<char> {
-        self.code_to_ps_name(code).and_then(glyph_name_to_unicode)
+    pub(crate) fn char_code_to_unicode(&self, code: u8) -> Option<BfString> {
+        self.code_to_ps_name(code).and_then(glyph_name_to_bfstring)
     }
 
     pub(crate) fn is_italic(&self) -> bool {
@@ -658,6 +677,12 @@ impl StandardKind {
         self.base_font.postscript_name()
     }
 
+    /// The font dictionary's /BaseFont, when it names one (#623): the
+    /// face the page asked for, which a standard font stands in for.
+    pub(crate) fn declared_name(&self) -> Option<&str> {
+        self.named.as_deref()
+    }
+
     /// Vertical font metrics from the Standard-14 AFM fallback table.
     pub(crate) fn font_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
         self.base_font.canonical_metrics()
@@ -682,6 +707,7 @@ mod tests {
             StandardFontBlob::from_data(data, index).expect("standard font data should parse");
 
         StandardKind {
+            named: None,
             base_font: StandardFont::Helvetica,
             base_font_blob,
             encoding: Encoding::WinAnsi,

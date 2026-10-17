@@ -1,6 +1,6 @@
 [package]
 name = "pdf-python"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 # publish = false: Python bindings are distributed via PyPI/maturin, not crates.io.
 publish = false
@@ -15,16 +15,37 @@ crate-type = ["cdylib"]
 [workspace]
 
 [dependencies]
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0" }
-pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0" }
-pdf-manip = { path = "../pdf-manip", default-features = false, features = ["font-subset"], version = "=1.0.0" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0" }
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.7" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0" }
-pdf-annot = { path = "../pdf-annot", version = "=1.0.0" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0" }
-pdfluent = { path = "../pdfluent", version = "=1.0.0" }
+pdf-engine = { path = "../pdf-engine", version = "=1.1.0" }
+pdf-ocr = { path = "../pdf-ocr", version = "=1.1.0" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.1.0" }
+pdf-manip = { path = "../pdf-manip", default-features = false, features = ["font-subset"], version = "=1.1.0" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.1.0" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.6.0" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.1.0" }
+pdf-annot = { path = "../pdf-annot", version = "=1.1.0" }
+pdf-redact = { path = "../pdf-redact", version = "=1.1.0" }
+pdf-content-stream = { path = "../pdf-content-stream", version = "=0.1.0" }
+pdfluent = { path = "../pdfluent", version = "=1.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.5" }
-pyo3 = { version = "0.24", features = ["extension-module", "abi3-py38", "generate-import-lib"] }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.6" }
+docx-extract = { path = "../docx-extract", version = "=1.1.0" }
+pptx-extract = { path = "../pptx-extract", version = "=1.1.0" }
+xlsx-extract = { path = "../xlsx-extract", version = "=1.1.0" }
+# Office content-type sniffing reads [Content_Types].xml out of the container.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# `multiple-pymethods` lets each compat lane add its own `#[pymethods]` blocks
+# for the existing Document/Page classes in its own file. Cost: every
+# `#[pymethods]` in the crate (existing ones included) switches to the
+# inventory-based registration, which collects impls at load time and is
+# only supported where `inventory` is (Linux, macOS, Windows and the other
+# platforms it names; elsewhere methods silently do not register). Our
+# wheel targets are all covered; see the t1/pm-scaffold report. Orthogonal
+# to abi3.
+pyo3 = { version = "0.24", features = ["extension-module", "abi3-py38", "generate-import-lib", "multiple-pymethods"] }
+
+[features]
+default = ["ocr-cli"]
+ocr-cli = ["pdf-engine/ocr-cli", "pdf-ocr/tesseract-cli"]
+ort-layout = ["pdfluent/ort-layout"]
+ort-tables = ["pdfluent/ort-tables"]

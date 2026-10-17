@@ -34,7 +34,7 @@ for d in doc.diagnostics() {
 (output is intact but incomplete or substituted), `Error` (the operation was
 stopped).
 
-**Total diagnostic codes:** 15
+**Total diagnostic codes:** 16
 
 | Code | Severity | Category | What happened | What a caller should do |
 |------|----------|----------|---------------|-------------------------|
@@ -53,6 +53,7 @@ stopped).
 | `ASCII85_LENIENT_PARTIAL` | Info | Decode | A one-character terminal group in ASCII-85 was accepted leniently. | Informational. The spec forbids it; the data is intact. |
 | `CCITT_PARTIAL_DECODE` | Warning | Decode | A CCITT image decoded only partially. | Part of the image is missing, typically the lower rows. |
 | `STREAM_PARSE_FALLBACK` | Info | Decode | The manual stream parser was used because the declared `/Length` was wrong. | Informational. The stream was recovered. |
+| `ANNOT_APPEARANCE_UNRESOLVED` | Warning | Other | An annotation has an appearance dictionary, but its normal appearance could not be selected or loaded, so the annotation was not drawn. | **That annotation is missing from the render.** Page content is intact. Check the annotation's `/AP` and `/AS` if the visual matters. |
 
 Severity for the `Decode` and cycle codes is carried by the underlying
 `LeniencyEvent` rather than fixed at the mapping site, so a code listed here as

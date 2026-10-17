@@ -14,10 +14,15 @@ use crate::error::Result;
 ///
 /// Mapping to ETSI EN 319 142-1:
 ///
-/// - [`BasicSignature`](Self::BasicSignature) — PAdES B-B (basic, no timestamp).
-/// - [`Timestamped`](Self::Timestamped) — PAdES B-T (with timestamp).
-/// - [`LongTerm`](Self::LongTerm) — PAdES B-LT (with DSS, long-term validation). **Default.**
-/// - [`LongTermArchive`](Self::LongTermArchive) — PAdES B-LTA (with archive timestamp).
+/// - [`BasicSignature`](Self::BasicSignature) — PAdES B-B (basic, no timestamp). **Default.**
+/// - [`Timestamped`](Self::Timestamped) — PAdES B-T. Needs a timestamp over
+///   the signature, so it is signed through
+///   [`PdfDocument::sign_timestamped`](crate::PdfDocument::sign_timestamped).
+/// - [`LongTerm`](Self::LongTerm) — PAdES B-LT. The same, plus a DSS built
+///   from the signer's own chain and the revocation evidence given to
+///   [`SignOptions::revocation_data`].
+/// - [`LongTermArchive`](Self::LongTermArchive) — PAdES B-LTA. **Not
+///   implemented.** Asking for it is an error, see the variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum PadesProfile {
@@ -30,16 +35,29 @@ pub enum PadesProfile {
     /// that claims less.
     #[default]
     BasicSignature,
-    /// PAdES B-T — signature with trusted timestamp.
-    Timestamped,
-    /// PAdES B-LT — signature with long-term validation data (DSS).
+    /// PAdES B-T — signature with a trusted timestamp.
     ///
-    /// Not reachable yet: B-LT needs a timestamp authority to collect
-    /// validation data from, and SignOptions carries no TSA configuration.
-    /// Asking for it returns an error rather than quietly signing B-B, which
-    /// is what this used to do while being the default (#176).
+    /// The timestamp has to cover the signature, which does not exist until
+    /// signing is done, so this profile is reached through
+    /// [`PdfDocument::sign_timestamped`](crate::PdfDocument::sign_timestamped):
+    /// it signs, hands the signature to your authority, and embeds what comes
+    /// back. Without a token, signing fails rather than falling back to B-B.
+    Timestamped,
+    /// PAdES B-LT — timestamp plus long-term validation data (DSS).
+    ///
+    /// Signed the same way as [`Timestamped`](Self::Timestamped), and the DSS
+    /// carries the signer's certificate chain plus the revocation evidence
+    /// given to [`SignOptions::revocation_data`]. Both halves are the point of
+    /// the profile: a verifier offline in five years needs the chain *and* the
+    /// proof it was not revoked, so this profile is refused without the second.
     LongTerm,
-    /// PAdES B-LTA — signature with archive timestamp for renewal.
+    /// PAdES B-LTA — B-LT plus an archive timestamp for renewal.
+    ///
+    /// **Not implemented.** B-LTA needs a document timestamp signature
+    /// (`/Type /DocTimeStamp` with SubFilter `ETSI.RFC3161`) written over the
+    /// whole file, and nothing here writes one. Asking for it returns an error;
+    /// it is listed so the error can name what is missing rather than the
+    /// variant quietly not existing.
     LongTermArchive,
 }
 
@@ -53,6 +71,9 @@ pub struct SignOptions {
     pub(crate) field_name: Option<String>,
     pub(crate) visible_rect: Option<(usize, [f64; 4])>,
     pub(crate) profile: PadesProfile,
+    pub(crate) timestamp_token: Option<Vec<u8>>,
+    pub(crate) ocsp_responses: Vec<Vec<u8>>,
+    pub(crate) crls: Vec<Vec<u8>>,
 }
 
 impl SignOptions {
@@ -91,9 +112,56 @@ impl SignOptions {
         self
     }
 
+    /// Revocation evidence for the DSS, DER-encoded.
+    ///
+    /// PAdES B-LT is the profile that lets a verifier check the signature years
+    /// later without going back on the network, and that takes more than the
+    /// certificate chain: it takes the evidence that those certificates were
+    /// not revoked at signing time. Fetching it is the caller's, because the
+    /// engine makes no network call while signing.
+    ///
+    /// Include what covers the signer's chain, and the timestamp authority's
+    /// chain as well if you have it -- a verifier offline in five years checks
+    /// both. [`PadesProfile::LongTerm`] is refused without any of it, rather
+    /// than writing a DSS that names the profile and cannot support it.
+    pub fn revocation_data(mut self, ocsp_responses: Vec<Vec<u8>>, crls: Vec<Vec<u8>>) -> Self {
+        self.ocsp_responses = ocsp_responses;
+        self.crls = crls;
+        self
+    }
+
     /// Select the PAdES profile.
+    ///
+    /// [`PadesProfile::Timestamped`] and [`PadesProfile::LongTerm`] have to be
+    /// signed through
+    /// [`PdfDocument::sign_timestamped`](crate::PdfDocument::sign_timestamped),
+    /// which fetches the token over the signature it just made.
     pub fn profile(mut self, p: PadesProfile) -> Self {
         self.profile = p;
+        self
+    }
+
+    /// Supply a DER-encoded RFC 3161 timestamp token you already hold.
+    ///
+    /// **Only a token over this document's signature will be accepted**, and a
+    /// token obtained before signing cannot be one: the signature does not
+    /// exist yet, so its digest cannot be in the token's `messageImprint`.
+    /// [`PdfDocument::sign`](crate::PdfDocument::sign) refuses a token that
+    /// stamps other bytes rather than writing a B-T claim that no verifier will
+    /// accept (#515).
+    ///
+    /// So this method is for the case where the token genuinely is about this
+    /// signature -- one carried across a process boundary, say. To fetch a
+    /// token in the ordinary way, use
+    /// [`PdfDocument::sign_timestamped`](crate::PdfDocument::sign_timestamped),
+    /// which sequences the two correctly. The engine deliberately has no HTTP
+    /// client of its own (that is what keeps document content off the network),
+    /// so talking to the authority stays the caller's job either way.
+    ///
+    /// Ignored for [`PadesProfile::BasicSignature`], which carries no
+    /// timestamp by definition.
+    pub fn timestamp_token(mut self, der: impl Into<Vec<u8>>) -> Self {
+        self.timestamp_token = Some(der.into());
         self
     }
 }

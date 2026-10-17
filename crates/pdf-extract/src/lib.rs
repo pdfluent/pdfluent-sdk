@@ -51,11 +51,13 @@
 // that file travels with the copy you received, which a URL does not.
 
 pub mod error;
+pub mod image_export;
 pub mod images;
 pub mod search;
 pub mod text;
 
 pub use error::{ExtractError, Result};
+pub use image_export::{export_images, ExportedImage, ImageExport, SkipReason, SkippedImage};
 pub use images::{
     encode_image_for_document, extract_all_images, extract_images_from_page_id,
     extract_page_images, EncodedImage, ExtractedImage, ImageFilter,

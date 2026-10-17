@@ -74,9 +74,25 @@ ORG = "pdfluent"
 MINIMUM_ROWS = 4
 
 # Repositories the organisation owns publicly that are deliberately outside this
-# register, with the reason. Empty, and a row here should be an argument
-# somebody makes in writing rather than a way to quieten question 1.
-BUITEN: dict[str, str] = {}
+# register: the name mapped to (the upstream it must still be a fork of, the
+# reason). A row here is an argument somebody makes in writing rather than a way
+# to quieten question 1, so both halves are load-bearing -- the reason is printed
+# on every run, and the parent is CHECKED against the API. An exclusion that
+# stops being true of the repository it was written for is the failure mode of
+# every list like this one: `pdfluent/hayro` un-forked, or re-pointed at
+# something else, is a repository of ours again and this guard says so again.
+BUITEN: dict[str, tuple[str, str]] = {
+    "pdfluent/hayro": ("LaurenzV/hayro", """
+A fork of the upstream project, created 06-09-2026 to carry our patches back to
+it (#255). Its `main` tracks upstream and holds nothing of ours: the content is
+LaurenzV's, and what we add lives on patch branches that are rebased onto it and
+force-pushed as upstream moves. The three rules this register enforces --
+no force-push, no deletion, linear history -- would each obstruct that, and none
+of them protects anything, because everything here is reconstructible by forking
+again. Protecting a fork's default branch is ceremony; it is not the case this
+guard was written for.
+"""),
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -251,11 +267,56 @@ def beoordeel_repo(rij: dict, prot: dict | None, groen: set[str],
     return fataal, gemeld
 
 
-def beoordeel_dekking(register: list[dict], repos: list[dict]) -> list[str]:
-    bekend = {r["name"] for r in register} | set(BUITEN)
-    return [f"{r['full_name']}: public and in no row of the register -- a new "
-            f"repository stands unprotected until somebody looks"
-            for r in repos if r["full_name"] not in bekend]
+def ouder_van(repo: str) -> tuple[bool, str | None]:
+    """(is it a fork, what is it a fork OF), from the API.
+
+    Its own call on purpose: `orgs/<org>/repos` carries `fork` but not `parent`
+    -- measured, the field is simply absent from the list response -- so the
+    upstream an excusal names can only be verified one repository at a time.
+    Only repositories in BUITEN are asked about, which is at most a handful.
+    """
+    try:
+        data = json.loads(gh("api", f"repos/{repo}"))
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        return False, None
+    return bool(data.get("fork")), (data.get("parent") or {}).get("full_name")
+
+
+def beoordeel_dekking(register: list[dict], repos: list[dict],
+                      buiten: dict[str, tuple[str, str]] | None = None,
+                      ouder=ouder_van,
+                      ) -> tuple[list[str], list[str]]:
+    """Every public repository is in the register or excused. Returns (fatal, reported).
+
+    An excusal is checked, not taken on trust. `BUITEN` excuses a repository on
+    the grounds that it is a fork of a named upstream, so the API's own answer
+    to that must still agree: a repository that has stopped being that fork is
+    one of ours, and falls back into the register's question.
+    """
+    buiten = BUITEN if buiten is None else buiten
+    bekend = {r["name"] for r in register}
+    fataal: list[str] = []
+    gemeld: list[str] = []
+    for r in repos:
+        naam = r["full_name"]
+        if naam in bekend:
+            continue
+        if naam in buiten:
+            verwacht, reden = buiten[naam]
+            is_fork, werkelijk = ouder(naam)
+            if not is_fork or werkelijk != verwacht:
+                fataal.append(
+                    f"{naam}: excused as a fork of {verwacht}, but the API "
+                    f"reports fork={is_fork} parent={werkelijk or 'none'}. The "
+                    f"excusal is no longer true of this repository, so it is one "
+                    f"of ours and needs a row")
+            else:
+                gemeld.append(f"{naam}: outside the register -- "
+                              f"{' '.join(reden.split())}")
+            continue
+        fataal.append(f"{naam}: public and in no row of the register -- a new "
+                      f"repository stands unprotected until somebody looks")
+    return fataal, gemeld
 
 
 # --------------------------------------------------------------------------- #
@@ -326,8 +387,9 @@ def main() -> int:
               f"{'not ' if fataal else ''}consistent.")
         return 1 if fataal else 0
 
-    fataal += beoordeel_dekking(register, repos)
-    gemeld: list[str] = []
+    dekking_fataal, dekking_gemeld = beoordeel_dekking(register, repos)
+    fataal += dekking_fataal
+    gemeld: list[str] = list(dekking_gemeld)
     for rij in register:
         prot = bescherming(rij["name"], rij["branch"])
         groen = groen_gezien(rij["name"], rij["branch"])

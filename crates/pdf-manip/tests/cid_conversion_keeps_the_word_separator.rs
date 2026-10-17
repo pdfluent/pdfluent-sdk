@@ -68,7 +68,55 @@ const TWO_GLYPH_CID_CFF: &[u8] = &[
 /// the page draws. Both are given by the caller so a test can state its case
 /// in the two things that matter and nothing else.
 fn document_drawing(cids: &[u16], bfchar: &[(u16, u16)]) -> Document {
+    let mut sections = format!("{} beginbfchar\n", bfchar.len());
+    for (cid, unicode) in bfchar {
+        sections.push_str(&format!("<{cid:04X}> <{unicode:04X}>\n"));
+    }
+    sections.push_str("endbfchar\n");
+    document_declaring(cids, &sections)
+}
+
+/// The same page, with the /ToUnicode sections given verbatim.
+///
+/// A producer may declare the very same mapping as a bfchar pair, as a
+/// one-code bfrange, as a bfrange with an array of destinations, or as an
+/// identity bfrange over the whole plane -- and the reader has to see the
+/// space in all four. The tests below hand over the bytes their producer
+/// writes, which is the only way to state that case.
+fn document_declaring(cids: &[u16], tounicode_sections: &str) -> Document {
+    document_declaring_under(cids, tounicode_sections, None)
+}
+
+/// The same page again, read through a CMap of the document's own: `cmap_name`
+/// names an embedded /Encoding stream, and None keeps Identity-H.
+///
+/// An embedded CMap is the shape that matters here -- it is what pdf.js
+/// `bug1019475_1` carries, and unlike a predefined name there is no table of
+/// ranges the pipeline can fall back on.
+fn document_declaring_under(
+    cids: &[u16],
+    tounicode_sections: &str,
+    cmap_name: Option<&str>,
+) -> Document {
     let mut doc = Document::with_version("1.7");
+    let encoding = match cmap_name {
+        None => Object::Name(b"Identity-H".to_vec()),
+        Some(name) => {
+            let cmap = format!(
+                "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n\
+                 /CMapName /{name} def\n/CMapType 1 def\n1 begincodespacerange\n\
+                 <0000> <FFFF>\nendcodespacerange\n1 begincidrange\n<0000> <FFFF> 0\n\
+                 endcidrange\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n"
+            );
+            Object::Reference(doc.add_object(Object::Stream(Stream::new(
+                dictionary! {
+                    "Type" => "CMap",
+                    "CMapName" => Object::Name(name.as_bytes().to_vec()),
+                },
+                cmap.into_bytes(),
+            ))))
+        }
+    };
     let pages_id = doc.new_object_id();
 
     let font_file = doc.add_object(Object::Stream(Stream::new(
@@ -92,6 +140,12 @@ fn document_drawing(cids: &[u16], bfchar: &[(u16, u16)]) -> Document {
         },
         "FontDescriptor" => Object::Reference(fd_id),
         "DW" => Object::Integer(500),
+        // The two widths the CFF above actually carries, so a pass that
+        // compares the two finds them agreeing.
+        "W" => Object::Array(vec![
+            Object::Integer(0),
+            Object::Array(vec![Object::Integer(500), Object::Integer(650)]),
+        ]),
     }));
 
     let mut cmap = String::from(
@@ -99,11 +153,8 @@ fn document_drawing(cids: &[u16], bfchar: &[(u16, u16)]) -> Document {
          12 dict begin\nbegincmap\n/CMapName /Test def\n1 begincodespacerange\n\
          <0000> <FFFF>\nendcodespacerange\n",
     );
-    cmap.push_str(&format!("{} beginbfchar\n", bfchar.len()));
-    for (cid, unicode) in bfchar {
-        cmap.push_str(&format!("<{cid:04X}> <{unicode:04X}>\n"));
-    }
-    cmap.push_str("endbfchar\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
+    cmap.push_str(tounicode_sections);
+    cmap.push_str("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
     let tounicode = doc.add_object(Object::Stream(Stream::new(
         dictionary! {},
         cmap.into_bytes(),
@@ -113,7 +164,7 @@ fn document_drawing(cids: &[u16], bfchar: &[(u16, u16)]) -> Document {
         "Type" => "Font",
         "Subtype" => "Type0",
         "BaseFont" => "AAAAAA+TestCID",
-        "Encoding" => Object::Name(b"Identity-H".to_vec()),
+        "Encoding" => encoding,
         "DescendantFonts" => Object::Array(vec![Object::Reference(descendant)]),
         "ToUnicode" => Object::Reference(tounicode),
     }));
@@ -282,5 +333,144 @@ fn an_unrenderable_code_never_becomes_the_lowest_surviving_glyph() {
         letters_after, letters_before,
         "a code was replaced by the lowest surviving CID, which is a letter: \
          {drawn:?} -> {after:?}"
+    );
+}
+
+/// Word, Excel and PowerPoint declare the space in an array of destinations.
+///
+/// `ABCDEE+Calibri` of tuning document 0031969 writes exactly this line, and
+/// its CID 3 is drawn 743 times. The reader knew `beginbfchar` alone, so it
+/// answered "this font declares no whitespace", the empty outline of the space
+/// read as a glyph the subsetter had stripped, and every one of those 743
+/// codes was deleted from the page -- words glued together and, the advance
+/// going with the code, the lines reflowed. (#485.)
+#[test]
+fn a_space_declared_in_an_array_of_destinations_survives() {
+    let shape = "1 beginbfrange\n<0000> <0001> [<0020> <0041>]\nendbfrange\n";
+    let mapping = [(0u16, 0x0020u16), (1, 0x0041)];
+    let drawn = [1u16, 0, 1];
+    let mut doc = document_declaring(&drawn, shape);
+
+    assert_eq!(
+        text_of(&cids_drawn(&doc), &mapping),
+        "A A",
+        "the fixture does not draw what it claims to"
+    );
+
+    pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
+
+    let after = cids_drawn(&doc);
+    assert_eq!(
+        text_of(&after, &mapping),
+        "A A",
+        "the space declared in an array was read as a missing glyph: {after:?}"
+    );
+}
+
+/// iText, Publisher, Soda PDF and PDFium declare it as a one-code range.
+///
+/// `NECPHF+IPAexGothic` of tuning document 3098921 writes `<0003><0003><0020>`
+/// with no space between the tokens; its CID 3 is drawn 445 times.
+#[test]
+fn a_space_declared_as_a_one_code_range_survives() {
+    let shape = "2 beginbfrange\n<0000><0000><0020>\n<0001><0001><0041>\nendbfrange\n";
+    let mapping = [(0u16, 0x0020u16), (1, 0x0041)];
+    let drawn = [1u16, 0, 1];
+    let mut doc = document_declaring(&drawn, shape);
+
+    pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
+
+    let after = cids_drawn(&doc);
+    assert_eq!(
+        text_of(&after, &mapping),
+        "A A",
+        "the space declared as a one-code range was read as a missing glyph: {after:?}"
+    );
+}
+
+/// ABBYY FineReader ends its CMap lines with a bare CR.
+///
+/// `BXTCFK+TimesNewRomanPS-BoldItalicMT` of tuning document 0260774 declares
+/// 47 bfchar pairs, the first of them `<0001> <0020>`, separated by CR alone.
+/// `str::lines` does not split on that, so the whole CMap arrived as one line
+/// whose only content was the word `beginbfchar` and not a single pair was
+/// read -- the shape the reader did know, in a file it could not see. Its
+/// spaces were rewritten to CID 0x4B, which extracts as `%`.
+#[test]
+fn a_space_declared_on_a_carriage_return_line_survives() {
+    let shape = "2 beginbfchar\r<0000> <0020>\r<0001> <0041>\rendbfchar\r";
+    let mapping = [(0u16, 0x0020u16), (1, 0x0041)];
+    let drawn = [1u16, 0, 1];
+    let mut doc = document_declaring(&drawn, shape);
+
+    pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
+
+    let after = cids_drawn(&doc);
+    assert_eq!(
+        text_of(&after, &mapping),
+        "A A",
+        "a CMap written with CR line endings was not read at all: {after:?}"
+    );
+}
+
+/// A /ToUnicode is keyed by character code, and only Identity makes that a CID.
+///
+/// This pass reads the keys of a /ToUnicode as CIDs, which they are under
+/// Identity-H and are not under anything else: the encoding CMap sits between
+/// the two and maps one to the other. Reading them as CIDs under a CMap of the
+/// document's own keeps whatever that CMap resolves them to -- on pdf.js
+/// `bug1019475_1`, an embedded `Prince-ArialMT-H` whose /ToUnicode declares
+/// `<01> <04> <0020>`, that is .notdef, 148 times on a page that used to be
+/// empty, and §6.2.11.8 fails.
+///
+/// So the declaration is read where its keys mean what this pass takes them
+/// for, and nowhere else. CID 0 is `.notdef` by convention and survives only
+/// because the document calls it a space: under Identity that claim is about
+/// this CID, and under any other CMap it is about a code that the encoding
+/// resolves to some other one.
+#[test]
+fn a_blank_declared_under_a_cmap_of_the_documents_own_is_not_a_cid() {
+    let shape = "2 beginbfchar\n<0000> <0020>\n<0001> <0041>\nendbfchar\n";
+    let drawn = [1u16, 0, 1];
+
+    let mut identity = document_declaring(&drawn, shape);
+    pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut identity);
+    assert!(
+        cids_drawn(&identity).contains(&0),
+        "under Identity-H the /ToUnicode keys are CIDs, and CID 0 is declared blank"
+    );
+
+    let mut through_a_cmap = document_declaring_under(&drawn, shape, Some("Prince-Test-H"));
+    pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut through_a_cmap);
+    assert!(
+        !cids_drawn(&through_a_cmap).contains(&0),
+        "the code was kept as a CID through a CMap that does not make it one: {:?}",
+        cids_drawn(&through_a_cmap)
+    );
+}
+
+/// A declared blank the program has no glyph for is still a .notdef reference.
+///
+/// `HiddenHorzOCR`, the stub face an OCR layer draws its invisible text with,
+/// is a handful of glyphs and a /ToUnicode that calls code 32 a space. Keeping
+/// that code because the document calls it blank puts a glyph on the page that
+/// the program cannot draw -- §6.2.11.8, 16 times on tuning document 0627369
+/// and 100 times on 2569641, both of which had their OCR layer cleared before.
+///
+/// An empty outline is a space. An absent glyph is not, whatever the document
+/// says about it.
+#[test]
+fn a_blank_the_program_does_not_carry_is_not_admitted() {
+    // CID 7 is past the end of the two-glyph program, and declared a space.
+    let shape = "3 beginbfchar\n<0000> <0020>\n<0001> <0041>\n<0007> <0020>\nendbfchar\n";
+    let drawn = [1u16, 7, 1];
+    let mut doc = document_declaring(&drawn, shape);
+
+    pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
+
+    assert!(
+        !cids_drawn(&doc).contains(&7),
+        "a code with no glyph was kept because the document called it a space: {:?}",
+        cids_drawn(&doc)
     );
 }

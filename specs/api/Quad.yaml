@@ -1,0 +1,264 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for Quad, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: Quad
+rust_path: pdfluent::compat::Quad
+names: {python: Quad, node: Quad, java: Quad, dotnet: Quad}
+members:
+  - name: __abs__
+    kind: operator
+    signature: "()"
+    names: {python: __abs__, node: abs, java: abs, dotnet: Abs}
+    rust: "Quad::abs"
+    tier: unranked
+    lane: P0
+    status: missing
+    tests: [p0-quad-abs]
+  - name: __add__
+    kind: operator
+    signature: "(q)"
+    names: {python: __add__, node: add, java: add, dotnet: Add}
+    rust: "Quad::Add"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-add]
+  - name: __bool__
+    kind: operator
+    signature: "()"
+    names: {python: __bool__, node: bool, java: bool, dotnet: Bool}
+    rust: "Quad::to_bool"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-bool]
+  - name: __contains__
+    kind: operator
+    signature: "(x)"
+    names: {python: __contains__, node: contains, java: contains, dotnet: Contains}
+    rust: "Quad::contains_point"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-contains]
+  - name: __eq__
+    kind: operator
+    signature: "(quad)"
+    names: {python: __eq__, node: eq, java: eq, dotnet: Eq}
+    rust: "Quad::PartialEq"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-eq]
+  - name: __ge__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ge__, node: ge, java: ge, dotnet: Ge}
+    rust: "Quad::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-ge]
+  - name: __getitem__
+    kind: operator
+    signature: "(i)"
+    names: {python: __getitem__, node: getitem, java: getitem, dotnet: Getitem}
+    rust: "Quad::Index"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-getitem]
+  - name: __gt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __gt__, node: gt, java: gt, dotnet: Gt}
+    rust: "Quad::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-gt]
+  - name: __init__
+    kind: constructor
+    signature: "(*args, ul=None, ur=None, ll=None, lr=None)"
+    names: {python: __init__, node: Quad, java: Quad, dotnet: Quad}
+    rust: "Quad::new"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-init]
+  - name: __le__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __le__, node: le, java: le, dotnet: Le}
+    rust: "Quad::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-le]
+  - name: __len__
+    kind: operator
+    signature: "()"
+    names: {python: __len__, node: len, java: len, dotnet: Len}
+    rust: "Quad::len"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-len]
+  - name: __lt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __lt__, node: lt, java: lt, dotnet: Lt}
+    rust: "Quad::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-lt]
+  - name: __mul__
+    kind: operator
+    signature: "(m)"
+    names: {python: __mul__, node: mul, java: mul, dotnet: Mul}
+    rust: "Quad::Mul"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-mul]
+  - name: __ne__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ne__, node: ne, java: ne, dotnet: Ne}
+    rust: "Quad::PartialEq"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-ne]
+  - name: __neg__
+    kind: operator
+    signature: "()"
+    names: {python: __neg__, node: neg, java: neg, dotnet: Neg}
+    rust: "Quad::Neg"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-neg]
+  - name: __pos__
+    kind: operator
+    signature: "()"
+    names: {python: __pos__, node: pos, java: pos, dotnet: Pos}
+    rust: "Quad::pos"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-pos]
+  - name: __setitem__
+    kind: operator
+    signature: "(i, v)"
+    names: {python: __setitem__, node: setitem, java: setitem, dotnet: Setitem}
+    rust: "Quad::IndexMut"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-setitem]
+  - name: __sub__
+    kind: operator
+    signature: "(q)"
+    names: {python: __sub__, node: sub, java: sub, dotnet: Sub}
+    rust: "Quad::Sub"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-sub]
+  - name: __truediv__
+    kind: operator
+    signature: "(m)"
+    names: {python: __truediv__, node: truediv, java: truediv, dotnet: Truediv}
+    rust: "Quad::Div"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-truediv]
+  - name: height
+    kind: property
+    signature: "()"
+    names: {python: height, node: height, java: getHeight, dotnet: Height}
+    rust: "Quad::height"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-height]
+  - name: is_convex
+    kind: property
+    signature: "()"
+    names: {python: is_convex, node: isConvex, java: isConvex, dotnet: IsConvex}
+    rust: "Quad::is_convex"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-is-convex]
+  - name: is_empty
+    kind: property
+    signature: "()"
+    names: {python: is_empty, node: isEmpty, java: isEmpty, dotnet: IsEmpty}
+    rust: "Quad::is_empty"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-is-empty]
+  - name: is_infinite
+    kind: property
+    signature: "()"
+    names: {python: is_infinite, node: isInfinite, java: isInfinite, dotnet: IsInfinite}
+    rust: "Quad::is_infinite"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-is-infinite]
+  - name: is_rectangular
+    kind: property
+    signature: "()"
+    names: {python: is_rectangular, node: isRectangular, java: isRectangular, dotnet: IsRectangular}
+    rust: "Quad::is_rectangular"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-is-rectangular]
+  - name: morph
+    kind: method
+    signature: "(p, m)"
+    names: {python: morph, node: morph, java: morph, dotnet: Morph}
+    rust: "Quad::morph"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-morph]
+  - name: rect
+    kind: property
+    signature: "()"
+    names: {python: rect, node: rect, java: getRect, dotnet: Rect}
+    rust: "Quad::rect"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-rect]
+  - name: transform
+    kind: method
+    signature: "(m)"
+    names: {python: transform, node: transform, java: transform, dotnet: Transform}
+    rust: "Quad::transform"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-transform]
+  - name: width
+    kind: property
+    signature: "()"
+    names: {python: width, node: width, java: getWidth, dotnet: Width}
+    rust: "Quad::width"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-quad-width]

@@ -1,0 +1,172 @@
+{
+  "seed": 3392027,
+  "selection": "20 PDFs under 2 MB absent by name and SHA-256 from all prior evaluation sets, frozen after the font-compaction and embedded-width guard build, before evaluation of these documents",
+  "excluded": [
+    {
+      "path": "test/pdfs/rotation.pdf",
+      "reason": "exact prior content"
+    }
+  ],
+  "rows": [
+    {
+      "file": "pdfjs__test_pdfs_issue12418_reduced.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/issue12418_reduced.pdf",
+      "sha256": "f12d1054fbd242a85e10fb2a30c2bc2346e60cd3f4dda4d8ad8fd89b0505b328",
+      "bytes": 25365
+    },
+    {
+      "file": "pdfjs__test_pdfs_js-buttons.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/js-buttons.pdf",
+      "sha256": "4679ee03ee84b48d8b67ba39975e946de49216ba744a729fa30ef8f32c3ea9ba",
+      "bytes": 29410
+    },
+    {
+      "file": "pdfjs__test_pdfs_issue1002.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/issue1002.pdf",
+      "sha256": "f56a73d0ce26f32e5b944f079ea2a34abcb3032e0e5be661c3ceaf337c17abed",
+      "bytes": 19172
+    },
+    {
+      "file": "pdfjs__test_pdfs_doc_3_3_pages.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/doc_3_3_pages.pdf",
+      "sha256": "3cf0390d93e09a4d29babe75670b85b039ac934cb115a62de693f931c10b3a3b",
+      "bytes": 40746
+    },
+    {
+      "file": "pdfjs__test_pdfs_pr7352.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/pr7352.pdf",
+      "sha256": "0db206fae31dba72521d689e21e6450fb9f2d992e8bb853291340c20c573da63",
+      "bytes": 1648
+    },
+    {
+      "file": "pdfjs__test_pdfs_issue15977_reduced.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/issue15977_reduced.pdf",
+      "sha256": "edec2b809f2553f036a000e152885c3d5453ddd8e9760bdcbaf0570c42486a3b",
+      "bytes": 1667
+    },
+    {
+      "file": "pdfjs__test_pdfs_issue15815.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/issue15815.pdf",
+      "sha256": "07e14ce3b86bc5699cd2938afe2f374c7b0ab555aafefef734f68b7330427e6a",
+      "bytes": 7424
+    },
+    {
+      "file": "pdfjs__test_pdfs_issue6132.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/issue6132.pdf",
+      "sha256": "255889d533fe7b7d8db56b2ae0137f0cb676d2bab9245b417175cfbe8f899185",
+      "bytes": 119101
+    },
+    {
+      "file": "pdfjs__test_pdfs_knockout_blend_multiply.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/knockout_blend_multiply.pdf",
+      "sha256": "ff31a84877c957101040906f087d4a73d0f29f3a3060448cb6f6929dbcee5280",
+      "bytes": 900
+    },
+    {
+      "file": "pdfjs__test_pdfs_issue15372.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/issue15372.pdf",
+      "sha256": "94580093a9ebec71ff1c002dbf40796f3c8aadca043747661ba9fdae095941dc",
+      "bytes": 109219
+    },
+    {
+      "file": "pdfjs__test_pdfs_pr4922.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/pr4922.pdf",
+      "sha256": "b4172e31f3cea17853a143865334c5e54e1bf04a075378be48f4f57534d5bfd9",
+      "bytes": 63472
+    },
+    {
+      "file": "pdfjs__test_pdfs_issue11915.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/issue11915.pdf",
+      "sha256": "bb2710e5a820a5b8baec18180a23c802fd03bc0d0d29018434029bd8f1cf813d",
+      "bytes": 7729
+    },
+    {
+      "file": "pdfjs__test_pdfs_issue5972.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/issue5972.pdf",
+      "sha256": "89c19057e13bcb80a737b51807f5526b0a478a4cd73b691cf0559e395d164c18",
+      "bytes": 767
+    },
+    {
+      "file": "pdfjs__test_pdfs_issue19695.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/issue19695.pdf",
+      "sha256": "3e3e095f9289fb4ddfb0c122288e4e5a4720896ed2fabe58eff13520203c41a9",
+      "bytes": 1480
+    },
+    {
+      "file": "pdfjs__test_pdfs_bitmap-stripe-single.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/bitmap-stripe-single.pdf",
+      "sha256": "b6d9b0b9348e9f4c33ba192a32c913ecc446d212dc3df0108ed732cc399b5482",
+      "bytes": 1041
+    },
+    {
+      "file": "pdfjs__test_pdfs_bug1539074.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/bug1539074.pdf",
+      "sha256": "1daa1ed8e6d2611c41e4072daf226be9bad3d261b7a36783a4cc560790be5adf",
+      "bytes": 6015
+    },
+    {
+      "file": "pdfjs__test_pdfs_bug1065245.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/bug1065245.pdf",
+      "sha256": "00beff9834bc18913a93f0c7bc0572187845c665e29a1ff3aa0bc3b8121feee5",
+      "bytes": 2188
+    },
+    {
+      "file": "pdfjs__test_pdfs_bitmap-symbol-textrefine.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/bitmap-symbol-textrefine.pdf",
+      "sha256": "c6dc6a57d164c86c8aa59e6136f8b166a4697213ef6d5669bed6a7f6227bed0b",
+      "bytes": 1128
+    },
+    {
+      "file": "pdfjs__test_pdfs_issue12295.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/issue12295.pdf",
+      "sha256": "b4f8476db03a9f1e3359d13fd83700942da16ab71b5c46a922e97f3de5f8f90c",
+      "bytes": 375776
+    },
+    {
+      "file": "pdfjs__test_pdfs_cidfont_cmap_overflow.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "path": "test/pdfs/cidfont_cmap_overflow.pdf",
+      "sha256": "ecb07ca4b3c6a9fd408db07c29c7e4426fb1bd6ee9e2bbdfa4997b65be602c13",
+      "bytes": 94168
+    }
+  ]
+}

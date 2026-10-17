@@ -67,6 +67,38 @@ pub trait OcrEngine: Send + Sync {
     fn supported_languages(&self) -> Vec<String>;
 }
 
+/// RGB row-major pixels from an RGB or RGBA buffer.
+///
+/// Backends accept both shapes and drop an alpha channel; anything else is a
+/// caller error naming the expected sizes.
+///
+/// Hidden: an internal helper the Python binding also uses, not API.
+#[doc(hidden)]
+pub fn rgb_pixels(
+    image_data: &[u8],
+    width: u32,
+    height: u32,
+) -> std::result::Result<Vec<u8>, String> {
+    let pixels = width as usize * height as usize;
+    if image_data.len() == pixels * 3 {
+        Ok(image_data.to_vec())
+    } else if image_data.len() == pixels * 4 {
+        Ok(image_data
+            .chunks_exact(4)
+            .flat_map(|px| px[..3].to_vec())
+            .collect())
+    } else {
+        Err(format!(
+            "unexpected image size: {} bytes for {}x{} (expected {} RGB or {} RGBA)",
+            image_data.len(),
+            width,
+            height,
+            pixels * 3,
+            pixels * 4,
+        ))
+    }
+}
+
 /// A no-op OCR engine that always returns empty results.
 ///
 /// Useful for testing the pipeline without a real OCR backend.
@@ -129,5 +161,18 @@ mod tests {
             image_height: 100,
         };
         assert_eq!(result.full_text(), "Hello World");
+    }
+
+    #[test]
+    fn rgb_pixels_keeps_rgb_drops_alpha_and_rejects_the_rest() {
+        assert_eq!(
+            rgb_pixels(&[1, 2, 3, 4, 5, 6], 2, 1).unwrap(),
+            vec![1, 2, 3, 4, 5, 6]
+        );
+        assert_eq!(
+            rgb_pixels(&[1, 2, 3, 255, 4, 5, 6, 0], 2, 1).unwrap(),
+            vec![1, 2, 3, 4, 5, 6]
+        );
+        assert!(rgb_pixels(&[1, 2, 3, 4, 5], 2, 1).is_err());
     }
 }

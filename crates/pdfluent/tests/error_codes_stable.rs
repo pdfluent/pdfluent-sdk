@@ -56,6 +56,13 @@ fn variant_samples() -> Vec<(Error, &'static str)> {
             "E-PARSE-UNSUPPORTED-VERSION",
         ),
         (
+            Error::PageOutOfRange {
+                requested: 0,
+                page_count: 1,
+            },
+            "E-PAGE-OUT-OF-RANGE",
+        ),
+        (
             Error::PdfaValidationFailed {
                 profile: pdfluent::PdfAProfile::A2b,
                 violations: Vec::new(),
@@ -102,6 +109,19 @@ fn variant_samples() -> Vec<(Error, &'static str)> {
             "E-BUDGET-RESOURCE-LIMIT",
         ),
         (
+            Error::TextEditFailed { reason: "x".into() },
+            "E-EDIT-TEXT-FAILED",
+        ),
+        (
+            Error::PageRangeInvalid {
+                start: 1,
+                end: 0,
+                page_count: 1,
+            },
+            "E-PAGE-RANGE-INVALID",
+        ),
+        (Error::Unsupported("x".into()), "E-UNSUPPORTED"),
+        (
             Error::Internal {
                 message: "x".into(),
                 crate_version: "test",
@@ -109,6 +129,46 @@ fn variant_samples() -> Vec<(Error, &'static str)> {
             "E-INTERNAL",
         ),
     ]
+}
+
+/// Every code the `code()` method can return, read out of the source.
+///
+/// `variant_samples()` is a hand-written list, and a hand-written list of
+/// everything is a list that goes stale silently: `E-UNSUPPORTED` was missing
+/// from it from the day it was added until #453, so none of the tests below
+/// covered it. Parsing the match arms is the only way this file can tell that
+/// a variant was added without a sample.
+fn codes_in_source() -> Vec<String> {
+    const SOURCE: &str = include_str!("../src/error.rs");
+    let body = SOURCE
+        .split_once("pub const fn code(&self)")
+        .expect("error.rs must define code()")
+        .1;
+    let body = body.split_once("\n    }").expect("code() must end").0;
+    let mut codes = Vec::new();
+    let mut rest = body;
+    while let Some((_, after)) = rest.split_once("\"E-") {
+        let (code, tail) = after.split_once('"').expect("unterminated code literal");
+        codes.push(format!("E-{code}"));
+        rest = tail;
+    }
+    codes
+}
+
+#[test]
+fn every_code_in_the_source_has_a_sample() {
+    let sampled: std::collections::HashSet<&str> =
+        variant_samples().iter().map(|(_, c)| *c).collect();
+    let missing: Vec<String> = codes_in_source()
+        .into_iter()
+        .filter(|c| !sampled.contains(c.as_str()))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "these codes exist in error.rs but no sample in variant_samples() \
+         exercises them, so the code, uniqueness, naming and docs_url tests \
+         above silently skip them: {missing:?}"
+    );
 }
 
 #[test]
@@ -197,6 +257,39 @@ fn from_pdf_engine_invalid_maps_to_invalid_pdf() {
     let e = pdf_engine::EngineError::InvalidPdf("parse error".into());
     let mapped: Error = e.into();
     assert!(matches!(mapped, Error::InvalidPdf { .. }));
+}
+
+#[test]
+fn from_pdf_engine_options_error_maps_to_unsupported() {
+    // An OptionsError rides inside EngineError::Io: a mistake in the call,
+    // not a broken file, so it must read as Unsupported rather than
+    // InvalidPdf (#574).
+    let e = pdf_engine::EngineError::Io(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        pdf_engine::OptionsError::ConflictingPageSelection,
+    ));
+    let mapped: Error = e.into();
+    assert!(
+        matches!(mapped, Error::Unsupported(_)),
+        "an OptionsError must map to Error::Unsupported, got {mapped:?}",
+    );
+}
+
+#[test]
+fn engine_options_error_reports_invalid_options_code() {
+    // An OptionsError rides inside EngineError::Io, but it is a mistake in
+    // the call, not an OS failure: through the facade's PdfError::code() it
+    use pdf_engine::api_error::PdfError as _;
+    let e = pdf_engine::EngineError::Io(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        pdf_engine::OptionsError::ConflictingPageSelection,
+    ));
+    assert_eq!(e.code(), "INVALID_OPTIONS");
+    let plain = pdf_engine::EngineError::Io(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "plain",
+    ));
+    assert_eq!(plain.code(), "IO_ERROR");
 }
 
 #[test]

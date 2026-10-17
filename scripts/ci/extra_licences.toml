@@ -1,0 +1,66 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+
+# Reviewed licences for third-party extra/optional/peer/private dependencies.
+#
+# scripts/ci/license_gate.py judges these rows from this table ONLY. Installed
+# distribution metadata, where present, is a cross-check that warns -- never
+# the verdict. A gate whose verdict depends on what the machine happens to
+# have installed is not a gate: Pillow 10.2 declares HPND while 12.3 declares
+# MIT-CMU, and numpy's License field carries the full text instead of an
+# identifier.
+#
+# One entry per package the gate scans. `version` is the lower bound the
+# entry holds for; `spdx` quotes the package's OWN metadata
+# (License-Expression/License/classifier, npm `license`, nuspec `license`);
+# `source` names the URL plus which field was read; `checked` is the review
+# date. A package missing here is red with an add-hint, never guessed.
+#
+# A scoped exception adds three fields, and the gate honours them together or
+# not at all. `versions` is the PEP 440 range the review covers;
+# `surface` is the single dependency class it covers (`python-extra`,
+# `npm-optional`, `maven-optional`, `nuget-private`, ...); `decision` is the
+# owner decision recording the exception. The gate accepts the row's `spdx`
+# ONLY when the manifest's declared requirement lies inside `versions` AND
+# the row arrives on `surface`; anything else stays red. The exception never
+# widens `allowed` in docs/LICENSE_POLICY.toml.
+
+[[extra]]
+package = "Pillow"
+ecosystem = "pypi"
+version = "11.2.1"
+versions = ">=11.2.1,<13"
+surface = "python-extra"
+decision = "D34"
+spdx = "MIT-CMU"
+source = "https://pypi.org/pypi/pillow/json license_expression (MIT-CMU since 11.2.1; 11.0 and 11.1 carry only a trove classifier)"
+checked = "2026-10-11"
+
+[[extra]]
+package = "numpy"
+ecosystem = "pypi"
+version = "2.4"
+spdx = "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0"
+source = "https://pypi.org/project/numpy/2.5.4/ License-Expression (first present in 2.4.0; older releases carry the BSD text in License with no identifier)"
+checked = "2026-10-11"
+
+[[extra]]
+package = "pytest"
+ecosystem = "pypi"
+version = "7"
+spdx = "MIT"
+source = "https://pypi.org/project/pytest/9.1.1/ License-Expression (7.0.0 declares License MIT)"
+checked = "2026-10-11"
+
+# Not declared by any scanned manifest today; reviewed so a future extra
+# resolves to the package's own statement instead of the machine's.
+[[extra]]
+package = "pypng"
+ecosystem = "pypi"
+version = "0"
+spdx = "MIT"
+source = "https://pypi.org/project/pypng/0.20220715.0/ License (MIT; classifier License :: OSI Approved :: MIT License)"
+checked = "2026-10-11"

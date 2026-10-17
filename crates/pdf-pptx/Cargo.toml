@@ -11,7 +11,7 @@ readme = "README.md"
 [dependencies]
 lopdf.workspace = true
 thiserror.workspace = true
-pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0" }
+pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.1.0" }
 quick-xml = { version = "0.37", features = ["serialize"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 

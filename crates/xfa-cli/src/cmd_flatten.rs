@@ -62,7 +62,7 @@ pub fn run(
     // policy through the flattener. `FreshMergeExperimental` is experimental,
     // opt-in, and pending corpus-scale (D13) validation; it is reproduced for
     // measurement via the policy-aware API
-    // (`pdf_xfa::flatten_xfa_to_pdf_with_policy`) or `pdfluent measure --policy
+    // (`pdf_xfa::flatten_xfa_to_pdf_with_policy`) or `xfa-runner measure --policy
     // fresh-merge`, never by `flatten`. Reject any non-saved-state token loudly
     // rather than silently producing saved-state output under the wrong label.
     let policy =
@@ -77,7 +77,7 @@ pub fn run(
             "`flatten` applies the production 'saved-state' (SavedStateFaithful) \
              policy only. '{}' is experimental and not produced by `flatten` \
              (pending D13 corpus-scale validation); use \
-             `pdfluent measure --policy fresh-merge` for experimental measurement. \
+             `xfa-runner measure --policy fresh-merge` for experimental measurement. \
              SavedStateFaithful remains the default.",
             policy.as_str()
         );

@@ -26,13 +26,17 @@ PKG_DIR="${1:?usage: $0 <pkg-dir> <target-version>}"
 VERSION="${2:?usage: $0 <pkg-dir> <target-version>}"
 
 PKG_JSON="$PKG_DIR/package.json"
+# The repository root, resolved from this script rather than from the caller's
+# working directory: the registers copied into the package below live there, and
+# this script is invoked from several places (#541).
+WORTEL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 if [[ ! -f "$PKG_JSON" ]]; then
     echo "error: $PKG_JSON not found" >&2
     exit 2
 fi
 
-python3 - "$PKG_JSON" "$VERSION" <<'PY'
+python3 - "$PKG_JSON" "$VERSION" "$WORTEL" <<'PY'
 import json, os, sys, pathlib
 
 pkg_path = pathlib.Path(sys.argv[1])
@@ -72,7 +76,27 @@ pkg_dir = _pl.Path(sys.argv[1]).parent
 existing_files = d.get("files") or []
 if (pkg_dir / "snippets").is_dir() and "snippets" not in existing_files:
     existing_files.append("snippets")
-for extra in ("xfa_wasm_bg.wasm.d.ts",):
+# The three licence files, for the same reason and a sharper one: `license:
+# "SEE LICENSE IN LICENSE-OFFER"` is a promise about a file, and npm's automatic
+# inclusion covers LICENSE and nothing else. Every published sdk-wasm tarball up
+# to and including 1.0.0-beta.17.5 shipped a manifest pointing at a
+# LICENSE-OFFER that was not in it. The audit below checks the files are in the
+# directory; only this list gets them into the tarball.
+# AND THE THIRD-PARTY NOTICES, COPIED IN HERE (#541). `xfa_wasm_bg.wasm`
+# contains the Foxit Standard 14 faces, the Liberation and Noto substitutes and
+# Adobe's CMap resources; BSD-3-Clause and OFL 1.1 both ask for their notice
+# with a redistribution in binary form, and a tarball carrying only our own
+# licence texts provides our terms and none of theirs. `pkg/` is generated, so
+# these are copied at packaging time rather than committed twice.
+import shutil as _sh
+_root = _pl.Path(sys.argv[3])
+for register in ("NOTICE", "THIRD_PARTY_LICENSES.txt"):
+    bron = _root / register
+    if bron.is_file():
+        _sh.copyfile(bron, pkg_dir / register)
+
+for extra in ("xfa_wasm_bg.wasm.d.ts", "LICENSE", "LICENSE-COMMERCIAL", "LICENSE-OFFER",
+              "NOTICE", "THIRD_PARTY_LICENSES.txt"):
     if (pkg_dir / extra).is_file() and extra not in existing_files:
         existing_files.append(extra)
 d["files"] = existing_files

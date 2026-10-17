@@ -51,3 +51,209 @@ state a licence, train our own models, or keep OCR out of the facade until one o
 those lands. This row exists so the question cannot be forgotten; it does not
 answer it, and a guard is the wrong thing to answer it with.
 """
+
+[[asset]]
+url_prefix = "https://digitalcorpora.s3.amazonaws.com/corpora/files/govdocs1"
+what = "GovDocs1 — the PDF subset (~231,000 documents) of the 986,278-file corpus, read out of its 1,000 zip archives"
+used_by = "scripts/ci/build_pdfa_corpus_manifest.py, scripts/ci/fetch_pdfa_corpus.py"
+licence = "freely redistributable"
+licence_source = """
+digitalcorpora.org states the file corpora are "freely redistributable" and
+publishes them for unrestricted research use. The documents themselves were
+harvested from US government web servers by the Naval Postgraduate School.
+"""
+verified = "2026-09-07"
+decision = """
+Usable, and used the way the licence is least in question: nothing is mirrored
+into this repository. corpus/pdfa/ carries digests and coordinates, and the
+documents are fetched to the measuring machine and stay there (#377).
+"""
+
+[[asset]]
+url_prefix = "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED"
+what = "DARPA SafeDocs CC-MAIN-2021-31-PDF-UNTRUNCATED — 7.9 million web PDFs, plus the provenance and pdfinfo metadata tables"
+used_by = "scripts/ci/build_pdfa_corpus_manifest.py, scripts/ci/fetch_pdfa_corpus.py"
+licence = "Common Crawl terms of use"
+licence_source = """
+The corpus README points at https://commoncrawl.org/terms-of-use/full/ for the
+crawled content; digitalcorpora.org publishes the collation under the DARPA
+SafeDocs programme. The terms permit use of the crawl data for research and
+analysis; they do not grant redistribution of the files themselves.
+"""
+verified = "2026-09-07"
+decision = """
+Usable for measurement, and the redistribution question is avoided rather than
+answered: this repository holds no SAFEDOCS bytes, only per-file digests taken
+from the published provenance table, and the corpus is fetched to the measuring
+machine (#377). If that ever changes, this row has to be revisited first.
+"""
+
+[[asset]]
+url_prefix = "https://huggingface.co/datasets/docling-project/DocLayNet-v1.2"
+what = "DocLayNet v1.2 — 80,863 human-annotated document pages with the original PDF page beside every annotation; the `test` split (4,999 pages) is what the structured baseline measures on"
+used_by = "scripts/ci/loop/structured_bench.py"
+licence = "CDLA-Permissive-1.0"
+licence_source = """
+Stated on the dataset card under `Licensing Information`, and the licence text
+is at https://cdla.io/permissive-1-0/. §2.1 grants a perpetual, irrevocable,
+royalty-free licence to use, modify and Publish the Data, with no field-of-use
+limit and no non-commercial clause.
+"""
+verified = "2026-09-17"
+decision = """
+Usable and publishable; the verdict and the reading are in
+benchmarks/structured/comparison/DATASETS.toml, which is where a set's terms are
+weighed. This row is the fetch half: nothing is mirrored into this repository,
+corpus/structured/ carries page names and digests, and the pages are fetched to
+the measuring machine and stay there -- the same shape as the two corpus rows
+above (#377).
+"""
+
+[[asset]]
+url_prefix = "https://huggingface.co/datasets/bsmock/pubtables-1m"
+what = "PubTables-1M — 401,733 per-document table annotations with full cell structure in PDF coordinates; the table half of the structured measurement (#575)"
+used_by = "scripts/ci/loop/structured_bench.py"
+licence = "CDLA-Permissive-2.0"
+licence_source = """
+Stated on the dataset card as `license: cdla-permissive-2.0`, and the licence
+text is at https://cdla.dev/permissive-2-0/. §1.1 grants use, modification and
+sharing with no field-of-use limit and no non-commercial clause; §3.1 says the
+agreement imposes no restriction on Results, and a measurement is a Result. The
+one condition, §2.1, is on sharing the data.
+"""
+verified = "2026-09-20"
+decision = """
+Usable and publishable; the verdict and the reading are in
+benchmarks/structured/comparison/DATASETS.toml. This row is the fetch half, and
+what is fetched is the ANNOTATIONS only -- the documents are the row below, and
+they are a different archive under different terms. Nothing is mirrored into
+this repository: corpus/structured/ carries names and digests, and the bytes
+are fetched to the measuring machine and stay there.
+"""
+
+[[asset]]
+url_prefix = "https://pmc-oa-opendata.s3.amazonaws.com"
+what = "PubMed Central Open Access Subset on AWS Open Data — one PDF and one metadata record per article; the documents the PubTables-1M annotations are about"
+used_by = "scripts/ci/loop/structured_bench.py"
+licence = "per article; the fetch keeps CC0 and CC BY and refuses every other code by name"
+licence_source = """
+https://pmc.ncbi.nlm.nih.gov/tools/openftlist/ states two things this row is
+built on. First: "License terms vary. Please refer to the license statement in
+each article for specific terms of use." Second: "The PMC Cloud Service, PMC
+OAI-PMH Service, E-Utilities and BioC API are the only services that may be
+used for automated retrieval of PMC content. Systematic retrieval (or bulk
+retrieval) of articles through any other automated process is prohibited." The
+Cloud Service publishes each article's own licence code in the JSON beside its
+PDF, which is that per-article statement in a form a protocol can obey.
+"""
+verified = "2026-09-20"
+decision = """
+Usable through the Cloud Service and through nothing else, per article, and
+only for the codes the register allows. The fetch reads each article's metadata
+BEFORE its PDF and skips anything that is not CC0 or CC BY; refusals are booked
+in the manifest by name, so the corpus reads back as what was allowed rather
+than as what was taken. Share-alike and no-derivatives are refused although
+they permit commercial use, because where the reading is a judgement this
+programme errs against itself -- the subset is large enough that a round does
+not need them.
+
+The legacy FTP tree at ftp.ncbi.nlm.nih.gov/pub/pmc is NOT a route: it is being
+removed (readme, 2026-08-25) and it is not one of the four services the terms
+name.
+"""
+
+[[asset]]
+url_prefix = "https://huggingface.co/datasets/bsmock/FinTabNet.c"
+what = "FinTabNet.c — financial-report tables with corrected cell structure in PDF coordinates, one file per page; the annotations of the FinTabNet lane (#574)"
+used_by = "scripts/ci/loop/structured_bench.py, scripts/extraction/fintabnet_archive.py"
+licence = "CDLA-Permissive-2.0"
+licence_source = """
+Stated on the dataset card as `license: cdla-permissive-2.0`, and the licence
+text is at https://cdla.dev/permissive-2-0/. §1.1 grants use, modification and
+sharing with no field-of-use limit and no non-commercial clause; §3.1 says the
+agreement imposes no restriction on Results, and a measurement is a Result. The
+one condition, §2.1, is on sharing the data.
+"""
+verified = "2026-09-30"
+decision = """
+Usable and publishable; the verdict and the reading are in
+benchmarks/structured/comparison/DATASETS.toml. This row is the fetch half, and
+what is fetched is the ANNOTATIONS only -- the documents are the row below, and
+they are a different archive under different terms. Nothing is mirrored into
+this repository: corpus/structured/ carries names and digests, and the bytes
+are fetched to the measuring machine and stay there.
+"""
+
+[[asset]]
+url_prefix = "https://huggingface.co/datasets/Leon1207/FinTabNet"
+what = "FinTabNet 1.0.0 via its pinned mirror — 89,646 one-page S&P 500 annual-report PDFs with the six FinTabNet jsonl and IBM's LICENSE.txt; the documents the FinTabNet.c annotations are about, read by HTTP Range and never downloaded whole"
+used_by = "scripts/ci/loop/structured_bench.py, scripts/extraction/fintabnet_archive.py"
+licence = "CDLA-Permissive-1.0, as printed in the release's own fintabnet/LICENSE.txt"
+licence_source = """
+fintabnet/LICENSE.txt inside the release, which the fetch reads and refuses
+the set without: "Community Data License Agreement – Permissive – Version
+1.0". §3.1 lets anyone who received the data publish it under a licence of
+their choice as long as the text of the agreement goes with it and the credit
+to IBM is kept. IBM's own dataset page (archived 2022-01-25) describes
+"Format PDF, JSON", "89,646 pages comprising 112,887 tables", "License
+CDLA-Permissive", 16 GB -- and the mirror is that release member for member,
+which the provenance check measured rather than taking from its tag.
+"""
+verified = "2026-09-30"
+decision = """
+Usable; the verdict and the reading are in
+benchmarks/structured/comparison/DATASETS.toml. The fetch pins the commit,
+reads the central directory once and each page by range, and refuses the set
+unless the LICENSE starts with the agreement's name and the PDF count is the
+register's 89,646 -- so a mirror that stopped being the release cannot be
+measured as it. Nothing is mirrored into this repository.
+"""
+
+[[asset]]
+url_prefix = "https://huggingface.co/datasets/opendatalab/OmniDocBench"
+what = "OmniDocBench — 1,355 (v1.0/v1.5) to 1,651 (v1.6) annotated document page IMAGES with text, table HTML and reading order"
+used_by = "nothing: refused, and this row is why"
+licence = "none stated; a copyright statement saying research only, not for commercial use"
+licence_source = """
+https://huggingface.co/datasets/opendatalab/OmniDocBench/raw/main/README.md,
+under `Copyright Statement`: "The dataset is for research purposes only and not
+for commercial use." There is no SPDX licence on the dataset card and no LICENSE
+file in the repository.
+"""
+verified = "2026-09-17"
+decision = """
+NOT FETCHED. #566 was written around this set and it is refused on the terms:
+measuring an engine to decide what to build and what to claim is product
+development at a company that sells the engine, which is the commercial use the
+sentence names. The reading, and what would change it, is in
+benchmarks/structured/comparison/DATASETS.toml.
+
+The row is here rather than absent because this register's job is to make a
+fetch's terms impossible to lose, and "we looked at it and did not take it" is
+exactly the answer that goes missing otherwise -- the next round would read the
+same card and take the same hour to reach the same conclusion, or not reach it.
+"""
+
+[[asset]]
+url_prefix = "https://github.com/kevina/wordlist"
+what = "SCOWL v2 (Spell Checker Oriented Word Lists), tag rel-2026.02.25 -- the American size-60 list, derived to lowercase letters-only and vendored as scripts/extraction/lexicon/en_scowl60-rel-2026.02.25.txt (88,750 words); the dictionary behind matching v2 (#574)"
+used_by = "scripts/extraction/structured_axes.py (load_lexicon, normalise_v2), scripts/ci/loop/structured_bench.py"
+licence = "MIT-like with attribution (Kevin Atkinson); component sources public domain"
+licence_source = """
+The release's own Copyright file (verbatim in
+scripts/extraction/lexicon/ATTRIBUTION): "Permission to use, copy, modify,
+distribute, and sell any part of SCOWLv2, or word lists created from it, is
+hereby granted without fee, provided that the above copyright notice appears
+in all copies". The primary word sources (12dicts, ENABLE2K) are public
+domain; COCA 3-gram frequency data was used within the author's NDA rights.
+The notice states that for a generated word list that is not Australian and
+not larger than 80, no additional copyright applies -- ours is American,
+size 60.
+"""
+verified = "2026-10-03"
+decision = """
+Usable and vendored with attribution: the Copyright text travels beside the
+derived list in scripts/extraction/lexicon/ATTRIBUTION, and LEXICON.json pins
+the tag, the commit and the sha256. No download at run time; the loader
+refuses a file whose digest differs.
+"""
