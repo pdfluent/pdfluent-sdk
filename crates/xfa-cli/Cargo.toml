@@ -3,11 +3,11 @@ name = "xfa-cli"
 version.workspace = true
 edition.workspace = true
 # Deliberately non-publishable to crates.io. This crate bundles internal
-# research/corpus binaries (xfa-collector, corpus-render, edge-case-analyzer,
-# accuracy-report) alongside the user `pdfluent` CLI binary.
-# The user-facing CLI is distributed as signed platform binaries via
-# scripts/release/pdfluent_cli_package.sh, NOT as crates.io source. (A legacy
-# 1.0.0-beta.8 was published before this governance was set; it is superseded.)
+# research/corpus binaries (xfa-runner, xfa-collector, corpus-render,
+# edge-case-analyzer, accuracy-report). The user-facing CLI is the `pdfluent`
+# binary from the `pdfluent-cli` crate, NOT this one: the internal binary used
+# to be called `pdfluent` too and was renamed to `xfa-runner` in the 30-09-2026
+# takeover (#636) so the public CLI could take the name.
 publish = false
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
 license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
@@ -18,7 +18,7 @@ readme = "README.md"
 keywords = ["pdf", "xfa", "forms", "rendering", "cli"]
 categories = ["command-line-utilities"]
 [[bin]]
-name = "pdfluent"
+name = "xfa-runner"
 path = "src/main.rs"
 
 [[bin]]

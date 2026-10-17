@@ -74,3 +74,93 @@ waarom  = "#276 -- tests/text_span_info_contract.rs does not COMPILE: TextSpan g
 pakket  = "pdf-ocr"
 feature = "tesseract"
 waarom  = "#333 -- its job was ocr-feature.yml: ubuntu-latest, pull_request-only, and it COMPILES. Both halves are refused while this repository is private: no pull_request trigger, and no hosted minutes. It cannot move to ci-ephemeral yet either, because that snapshot does not carry libtesseract-dev, libleptonica-dev and libclang-dev (#244) -- and it must not move to the desktop, which is what orchestration_stays_hosted.py refuses for a compiling job. Remove this row when the snapshot carries those three: 28 tests pass with them"
+
+[[gap]]
+pakket = "pdfluent-lopdf"
+feature = "chrono"
+waarom = "Owner decision 2026-09-12: paid compute disabled. Integration tests are deferred, not passed; use an explicitly authorized local full run when required."
+
+[[gap]]
+pakket = "pdfluent-lopdf"
+feature = "jiff"
+waarom = "Owner decision 2026-09-12: paid compute disabled. Integration tests are deferred, not passed; use an explicitly authorized local full run when required."
+
+[[gap]]
+pakket = "pdfluent-lopdf"
+feature = "time"
+waarom = "Owner decision 2026-09-12: paid compute disabled. Integration tests are deferred, not passed; use an explicitly authorized local full run when required."
+
+[[gap]]
+pakket = "pdf-annot"
+feature = "write"
+waarom = "Owner decision 2026-09-12: paid compute disabled. Integration tests are deferred, not passed; use an explicitly authorized local full run when required."
+
+[[gap]]
+pakket = "pdf-engine"
+feature = "xfa"
+waarom = "Owner decision 2026-09-12: paid compute disabled. Integration tests are deferred, not passed; use an explicitly authorized local full run when required."
+
+[[gap]]
+pakket = "pdf-engine"
+feature = "parallel"
+waarom = "#636 -- runs on every landing through the local gate step engparallel (render_all_nested_in_a_small_pool, red without the nested-rayon guard). The CI step exists in ci-ephemeral.yml, which is dispatch-only since paid compute was disabled (owner decision 2026-09-12). This gap closes when a blocking job runs it."
+
+[[gap]]
+pakket = "pdf-engine"
+feature = "vision"
+waarom = "#636 -- optional vision layer, off by default and no product promise yet. The step exists in ci-ephemeral.yml, which is dispatch-only since paid compute was disabled (owner decision 2026-09-12). This gap closes when a blocking job runs it."
+
+[[gap]]
+pakket = "pdf-engine"
+feature = "corridor-grid"
+waarom = "#574 -- tuning-only override of the stripe-corridor grid, off by default and never shipped; the default build reads no environment. The step exists in ci-ephemeral.yml, dispatch-only like the vision step above. This gap closes when a blocking job runs it."
+
+[[gap]]
+pakket = "pdf-font"
+feature = "embed-cmaps"
+waarom = "Owner decision 2026-09-12: paid compute disabled. Integration tests are deferred, not passed; use an explicitly authorized local full run when required."
+
+[[gap]]
+pakket = "pdf-manip"
+feature = "pdfa-convert"
+waarom = "Owner decision 2026-09-12: paid compute disabled. Integration tests are deferred, not passed; use an explicitly authorized local full run when required."
+
+[[gap]]
+pakket = "pdf-manip"
+feature = "serde"
+waarom = "Owner decision 2026-09-12: paid compute disabled. Integration tests are deferred, not passed; use an explicitly authorized local full run when required."
+
+[[gap]]
+pakket = "pdf-ocr"
+feature = "paddle"
+waarom = "Owner decision 2026-09-12: paid compute disabled. Integration tests are deferred, not passed; use an explicitly authorized local full run when required."
+
+[[gap]]
+pakket = "pdf-ocr"
+feature = "onnx-runtime"
+waarom = "#641 -- the shared ONNX Runtime layer's tests (tests/ort_runtime.rs). The step exists in ci-ephemeral.yml, which is dispatch-only since paid compute was disabled (owner decision 2026-09-12). The failure-kind tests run there; the dylib-backed tests skip unless PDFLUENT_ORT_TEST_DYLIB names a real ONNX Runtime 1.23.2, which no CI machine does. This gap closes when a blocking job runs it."
+
+[[gap]]
+pakket = "pdf-engine"
+feature = "ort"
+waarom = "#641 -- the ModelError round trip (error.rs, gated on ort). The step exists in ci-ephemeral.yml, which is dispatch-only since paid compute was disabled (owner decision 2026-09-12). This gap closes when a blocking job runs it."
+
+[[gap]]
+pakket = "pdf-engine"
+feature = "ort-layout"
+waarom = "#641 -- the layout model tier's tests (tests/layout_parity.rs, tests/balanced_parity.rs, the gated test in tests/quality.rs and the layout/balanced unit tests). The step exists in ci-ephemeral.yml, which is dispatch-only since paid compute was disabled (owner decision 2026-09-12). The unit tests run there; the parity tests skip unless their PDFLUENT_*_PARITY_DIR (and for the model, PDFLUENT_MODEL_DIR) are set, which no CI machine does. This gap closes when a blocking job runs it."
+
+[[gap]]
+pakket = "pdfluent-cli"
+feature = "ort-layout"
+waarom = "#641 -- the CLI half of the balanced tier (the cmd_models unit tests, tests/cmd_models.rs and the gated test in tests/cmd_extract.rs). The step exists in ci-ephemeral.yml, which is dispatch-only since paid compute was disabled (owner decision 2026-09-12). This gap closes when a blocking job runs it."
+
+[[gap]]
+pakket = "pdfluent-cli"
+feature = "ort-tables"
+waarom = "#636 -- the CLI half of TATR in the balanced tier (the gated test in tests/cmd_extract.rs). The step exists in ci-ephemeral.yml, which is dispatch-only since paid compute was disabled (owner decision 2026-09-12). This gap closes when a blocking job runs it."
+
+[[gap]]
+pakket = "pdf-engine"
+feature = "ort-tables"
+waarom = "#636 -- the TATR table tier's tests (tests/tatr_postprocess_matches_python.rs, the gated tests in tests/tatr_engine_hook.rs and the tables_tatr unit tests). The step exists in ci-ephemeral.yml, which is dispatch-only since paid compute was disabled (owner decision 2026-09-12). The unit tests and the model-missing refusal run there; the parity tests skip loudly without their env dir. This gap closes when a blocking job runs it."

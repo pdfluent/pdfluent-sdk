@@ -1,0 +1,505 @@
+{
+  "schema_name": "DoclingDocument",
+  "version": "1.10.0",
+  "name": "report",
+  "origin": null,
+  "furniture": {
+    "self_ref": "#/furniture",
+    "parent": null,
+    "children": [
+      {
+        "cref": "#/texts/7"
+      },
+      {
+        "cref": "#/texts/8"
+      },
+      {
+        "cref": "#/texts/9"
+      },
+      {
+        "cref": "#/texts/10"
+      },
+      {
+        "cref": "#/texts/11"
+      },
+      {
+        "cref": "#/texts/12"
+      }
+    ],
+    "content_layer": "furniture",
+    "meta": null,
+    "name": "_root_",
+    "label": "unspecified"
+  },
+  "body": {
+    "self_ref": "#/body",
+    "parent": null,
+    "children": [
+      {
+        "cref": "#/texts/0"
+      },
+      {
+        "cref": "#/texts/1"
+      },
+      {
+        "cref": "#/texts/2"
+      },
+      {
+        "cref": "#/texts/3"
+      },
+      {
+        "cref": "#/texts/4"
+      },
+      {
+        "cref": "#/texts/5"
+      },
+      {
+        "cref": "#/texts/6"
+      }
+    ],
+    "content_layer": "body",
+    "meta": null,
+    "name": "_root_",
+    "label": "unspecified"
+  },
+  "groups": [],
+  "texts": [
+    {
+      "self_ref": "#/texts/0",
+      "parent": {
+        "cref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "meta": null,
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 72,
+            "t": 696,
+            "r": 156.46399983978273,
+            "b": 680,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            10
+          ]
+        }
+      ],
+      "orig": "Operations",
+      "text": "Operations",
+      "formatting": null,
+      "hyperlink": null,
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/1",
+      "parent": {
+        "cref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "meta": null,
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 72,
+            "t": 666,
+            "r": 328.2099979496002,
+            "b": 632,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            138
+          ]
+        }
+      ],
+      "orig": "The plant ran to schedule through the quarter and the two lines commissioned in March reached their rated output in the first week of May.",
+      "text": "The plant ran to schedule through the quarter and the two lines commissioned in March reached their rated output in the first week of May.",
+      "formatting": null,
+      "hyperlink": null
+    },
+    {
+      "self_ref": "#/texts/2",
+      "parent": {
+        "cref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "meta": null,
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 72,
+            "t": 614,
+            "r": 144.6839993686676,
+            "b": 602,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            11
+          ]
+        }
+      ],
+      "orig": "Maintenance",
+      "text": "Maintenance",
+      "formatting": null,
+      "hyperlink": null,
+      "level": 2
+    },
+    {
+      "self_ref": "#/texts/3",
+      "parent": {
+        "cref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "meta": null,
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 72,
+            "t": 594,
+            "r": 346.57999873161316,
+            "b": 572,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            116
+          ]
+        },
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 72,
+            "t": 690,
+            "r": 343.7999981021881,
+            "b": 668,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            117,
+            207
+          ]
+        }
+      ],
+      "orig": "The shutdown planned for August was brought forward to July so that it would fall in the same week as the inspection already booked for the boiler house, and the two were carried out together over five days.",
+      "text": "The shutdown planned for August was brought forward to July so that it would fall in the same week as the inspection already booked for the boiler house, and the two were carried out together over five days.",
+      "formatting": null,
+      "hyperlink": null
+    },
+    {
+      "self_ref": "#/texts/4",
+      "parent": {
+        "cref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "meta": null,
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 72,
+            "t": 654,
+            "r": 132.46399983978273,
+            "b": 638,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            7
+          ]
+        }
+      ],
+      "orig": "Finance",
+      "text": "Finance",
+      "formatting": null,
+      "hyperlink": null,
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/5",
+      "parent": {
+        "cref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "meta": null,
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 72,
+            "t": 624,
+            "r": 339.37999802589417,
+            "b": 590,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            149
+          ]
+        }
+      ],
+      "orig": "Revenue for the quarter was ahead of the budget laid before the board in January, and the whole of the difference is the contract signed in February.",
+      "text": "Revenue for the quarter was ahead of the budget laid before the board in January, and the whole of the difference is the contract signed in February.",
+      "formatting": null,
+      "hyperlink": null
+    },
+    {
+      "self_ref": "#/texts/6",
+      "parent": {
+        "cref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "meta": null,
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 72,
+            "t": 690,
+            "r": 333.2299986457825,
+            "b": 668,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            79
+          ]
+        }
+      ],
+      "orig": "No further business was brought before the meeting, which rose at four o'clock.",
+      "text": "No further business was brought before the meeting, which rose at four o'clock.",
+      "formatting": null,
+      "hyperlink": null
+    },
+    {
+      "self_ref": "#/texts/7",
+      "parent": {
+        "cref": "#/furniture"
+      },
+      "children": [],
+      "content_layer": "furniture",
+      "meta": null,
+      "label": "page_header",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 72,
+            "t": 730,
+            "r": 170.92999917030335,
+            "b": 720,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            21
+          ]
+        }
+      ],
+      "orig": "Quarterly Report 2026",
+      "text": "Quarterly Report 2026",
+      "formatting": null,
+      "hyperlink": null
+    },
+    {
+      "self_ref": "#/texts/8",
+      "parent": {
+        "cref": "#/furniture"
+      },
+      "children": [],
+      "content_layer": "furniture",
+      "meta": null,
+      "label": "page_footer",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 290,
+            "t": 90,
+            "r": 341.14999967575073,
+            "b": 80,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            11
+          ]
+        }
+      ],
+      "orig": "Page 1 of 3",
+      "text": "Page 1 of 3",
+      "formatting": null,
+      "hyperlink": null
+    },
+    {
+      "self_ref": "#/texts/9",
+      "parent": {
+        "cref": "#/furniture"
+      },
+      "children": [],
+      "content_layer": "furniture",
+      "meta": null,
+      "label": "page_header",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 72,
+            "t": 730,
+            "r": 170.92999917030335,
+            "b": 720,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            21
+          ]
+        }
+      ],
+      "orig": "Quarterly Report 2026",
+      "text": "Quarterly Report 2026",
+      "formatting": null,
+      "hyperlink": null
+    },
+    {
+      "self_ref": "#/texts/10",
+      "parent": {
+        "cref": "#/furniture"
+      },
+      "children": [],
+      "content_layer": "furniture",
+      "meta": null,
+      "label": "page_footer",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 290,
+            "t": 90,
+            "r": 341.14999967575073,
+            "b": 80,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            11
+          ]
+        }
+      ],
+      "orig": "Page 2 of 3",
+      "text": "Page 2 of 3",
+      "formatting": null,
+      "hyperlink": null
+    },
+    {
+      "self_ref": "#/texts/11",
+      "parent": {
+        "cref": "#/furniture"
+      },
+      "children": [],
+      "content_layer": "furniture",
+      "meta": null,
+      "label": "page_header",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 72,
+            "t": 730,
+            "r": 170.92999917030335,
+            "b": 720,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            21
+          ]
+        }
+      ],
+      "orig": "Quarterly Report 2026",
+      "text": "Quarterly Report 2026",
+      "formatting": null,
+      "hyperlink": null
+    },
+    {
+      "self_ref": "#/texts/12",
+      "parent": {
+        "cref": "#/furniture"
+      },
+      "children": [],
+      "content_layer": "furniture",
+      "meta": null,
+      "label": "page_footer",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 290,
+            "t": 90,
+            "r": 341.14999967575073,
+            "b": 80,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            11
+          ]
+        }
+      ],
+      "orig": "Page 3 of 3",
+      "text": "Page 3 of 3",
+      "formatting": null,
+      "hyperlink": null
+    }
+  ],
+  "pictures": [],
+  "tables": [],
+  "key_value_items": [],
+  "form_items": [],
+  "pages": {
+    "1": {
+      "size": {
+        "width": 612,
+        "height": 792
+      },
+      "image": null,
+      "page_no": 1
+    },
+    "2": {
+      "size": {
+        "width": 612,
+        "height": 792
+      },
+      "image": null,
+      "page_no": 2
+    },
+    "3": {
+      "size": {
+        "width": 612,
+        "height": 792
+      },
+      "image": null,
+      "page_no": 3
+    }
+  }
+}

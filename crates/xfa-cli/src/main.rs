@@ -323,7 +323,7 @@ mod tests {
     #[test]
     fn flatten_parses_dump_layout_flag() {
         let cli = Cli::parse_from([
-            "pdfluent",
+            "xfa-runner",
             "flatten",
             "input.pdf",
             "--output",
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn measure_parses_with_defaults() {
-        let cli = Cli::parse_from(["pdfluent", "measure", "--input", "in.pdf"]);
+        let cli = Cli::parse_from(["xfa-runner", "measure", "--input", "in.pdf"]);
         match cli.command {
             Commands::Measure {
                 input,
@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn measure_parses_fresh_merge_and_flags() {
         let cli = Cli::parse_from([
-            "pdfluent",
+            "xfa-runner",
             "measure",
             "--input",
             "in.pdf",

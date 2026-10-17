@@ -106,6 +106,7 @@ fn main() {
         smoke_page_count();
         let _ = open_and_count(pad);
         quickstart_extract_text();
+        let _ = structured_extraction(pad);
         let _ = text_and_merge(pad);
         let _ = xfa_fill_and_flatten(pad);
         let _ = pdfa_validate_and_convert(pad);
@@ -137,8 +138,9 @@ fn sign_pkcs12(path: &Path) -> pdfluent::Result<()> {
     let mut doc = PdfDocument::open("contract.pdf")?;
     let signer = Pkcs12Signer::from_pfx_file("cert.p12", "password")?;
 
-    // SignOptions::new() asks for PAdES B-LT, which needs a document security
-    // store this build cannot write. Choose the profile you can honour.
+    // SignOptions::new() is PAdES B-B. For B-T or B-LT, use
+    // doc.sign_timestamped(..), which signs and then hands your timestamp
+    // authority the signature to stamp.
     let opts = SignOptions::new()
         .profile(PadesProfile::BasicSignature)
         .reason("Approved");
@@ -259,6 +261,29 @@ fn quickstart_extract_text() {
     let _ = main();
 }
 
+/// De RAG-pagina: de structuur eruit, als markdown en als blokken.
+fn structured_extraction(path: &Path) -> pdfluent::Result<()> {
+    // site:structured-extraction
+    use pdfluent::prelude::*;
+
+    let doc = PdfDocument::open("report.pdf")?;
+
+    // The whole document as markdown: headings, lists and tables, in reading
+    // order, with a comment where the page changes.
+    let markdown = doc.extract_markdown(&ExtractOptions::default())?;
+    std::fs::write("report.md", &markdown).ok();
+
+    // Or the blocks themselves, to chunk and cite with.
+    for block in doc.extract_blocks(&ExtractOptions::default())? {
+        if let BlockKind::Heading { level } = block.kind {
+            println!("h{level} p{} {}", block.page + 1, block.text);
+        }
+    }
+    // site:end
+    let _ = (path, doc);
+    Ok(())
+}
+
 /// Tekst met plaatsaanduiding, en documenten samenvoegen.
 fn text_and_merge(path: &Path) -> pdfluent::Result<()> {
     // site:text-and-merge
@@ -357,8 +382,8 @@ fn sign_and_verify(path: &Path) -> pdfluent::Result<()> {
     doc.sign(
         &signer,
         SignOptions::new()
-            // The default profile is PAdES B-LT, which this build refuses:
-            // it has no route to write a document security store.
+            // PAdES B-B. B-T and B-LT need a timestamp over the signature, so
+            // they go through doc.sign_timestamped; B-LTA is not implemented.
             .profile(PadesProfile::BasicSignature)
             .reason("Approved by legal")
             .location("Amsterdam, NL"),

@@ -27,7 +27,13 @@ MAP = REPO / "scripts" / "ci"
 
 # `docs/<iets>.<ext>` -- de extensie is de eis, anders matcht dit elke zin die
 # toevallig met "docs/" begint.
-VERWIJZING = re.compile(r"\bdocs/[A-Za-z0-9_./-]+\.[A-Za-z0-9]{2,5}\b")
+#
+# De lookbehind is er omdat `\b` ook grijpt NA een schuine streep. Elke
+# verwijzing naar een script onder `scripts/docs/` -- bestaande, juiste paden --
+# werd hier gelezen alsof de staart erachter op zichzelf stond, en gemeld als
+# een document dat er niet is. Een wachter die een correcte verwijzing afkeurt,
+# leert de lezer de melding te negeren, en dan vangt hij de echte ook niet meer.
+VERWIJZING = re.compile(r"(?<![A-Za-z0-9_./-])docs/[A-Za-z0-9_./-]+\.[A-Za-z0-9]{2,5}\b")
 
 # ONDERGRENS: onderzochte bestanden >= 40. Er staan er ruim honderd in scripts/ci.
 # Minder betekent dat het zoeken stuk is, niet dat het werk af is.

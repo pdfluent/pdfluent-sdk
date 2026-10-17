@@ -20,6 +20,7 @@ for *what must hold* before any byte ships.
 |---|---|
 | Run a publish (any channel) | `PUBLISH_PROTOCOL.md` then this README §3 for the channel |
 | Run the multi-channel SDK publish train | `SDK_NON_XFA_PUBLISH_TRAIN_RUNBOOK.md` |
+| Publish 1.0.0 to the six registry pages | `REGISTRY_1_0_0_RUNBOOK.md` (internal; not in the published tree) |
 | Yank or deprecate a defective version | `ROLLBACK_PROCEDURE.md` |
 | Refresh SBOM baselines (intentional dep change) | `sbom_protocol.md` §5 step 3 |
 | Verify a previously-published version against the registry | `sha_ledger/README.md` §6 |

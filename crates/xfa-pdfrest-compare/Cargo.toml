@@ -11,9 +11,8 @@ license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 publish = false
 
 [dependencies]
-pdf-xfa = { path = "../pdf-xfa", version = "=1.0.0" }
-pdf-engine = { path = "../pdf-engine", features = ["xfa"], version = "=1.0.0" }
-lopdf = "0.34"
+pdf-xfa = { path = "../pdf-xfa", version = "=1.1.0" }
+pdf-engine = { path = "../pdf-engine", features = ["xfa"], version = "=1.1.0" }
 rusqlite = { version = "0.31", features = ["bundled"] }
 clap = { version = "4", features = ["derive"] }
 image = "0.25"

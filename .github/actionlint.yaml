@@ -1,0 +1,16 @@
+# actionlint knows the GitHub-hosted labels and the stock self-hosted ones
+# (self-hosted, linux, windows, macos, x64, arm, arm64). Ours ride here:
+#
+#   xfa-local-checks  the WSL desktop runner CI jobs land on.
+#   xfa-corpus        the four manual corpus gates (#276); no runner answers
+#                     today, which every_label_has_a_runner.py owns -- this
+#                     entry only stops actionlint repeating it.
+#   pdfluent-release  the pool label only the ephemeral release VMs register
+#                     (#636); the five release workflows name it inside
+#                     matrix entries and fromJSON sets, the smoke workflows
+#                     on a literal runs-on.
+self-hosted-runner:
+  labels:
+    - xfa-local-checks
+    - xfa-corpus
+    - pdfluent-release

@@ -80,15 +80,23 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 /// Comparison is case-insensitive on the hex, and constant-time over the digest so
 /// that verification does not leak the expected value byte by byte.
 pub fn verify_sha256(bytes: &[u8], expected_hex: &str) -> Result<(), IntegrityError> {
+    let actual = sha256_hex(bytes);
+    compare_hex_digests(&actual, expected_hex)
+}
+
+/// Compare a computed hex digest against the expectation.
+///
+/// The single comparison behind [`verify_sha256`] and
+/// [`verify_reader_sha256`]: one normalisation, one constant-time fold, so the
+/// streaming path cannot drift from the in-memory one.
+fn compare_hex_digests(actual_hex: &str, expected_hex: &str) -> Result<(), IntegrityError> {
     let expected = expected_hex.trim().to_ascii_lowercase();
     if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(IntegrityError::MalformedDigest(expected_hex.to_string()));
     }
 
-    let actual = sha256_hex(bytes);
-
     // Constant-time: fold every byte rather than returning on the first mismatch.
-    let diff = actual
+    let diff = actual_hex
         .bytes()
         .zip(expected.bytes())
         .fold(0u8, |acc, (a, b)| acc | (a ^ b));
@@ -96,8 +104,79 @@ pub fn verify_sha256(bytes: &[u8], expected_hex: &str) -> Result<(), IntegrityEr
     if diff == 0 {
         Ok(())
     } else {
-        Err(IntegrityError::DigestMismatch { expected, actual })
+        Err(IntegrityError::DigestMismatch {
+            expected,
+            actual: actual_hex.to_string(),
+        })
     }
+}
+
+/// Why a streamed verification failed: the read itself, or the digest.
+///
+/// Non-exhaustive: future verifications may fail in new ways, and callers
+/// match with a wildcard arm.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum StreamIntegrityError {
+    /// Reading the stream failed before the digest was complete.
+    Io(std::io::Error),
+    /// The stream read fine but did not match the pinned digest.
+    Integrity(IntegrityError),
+}
+
+impl std::fmt::Display for StreamIntegrityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "could not read the verified file: {e}"),
+            Self::Integrity(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for StreamIntegrityError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            Self::Integrity(e) => Some(e),
+        }
+    }
+}
+
+/// Hex-encoded SHA-256 of a stream, read 64 KiB at a time.
+///
+/// For files too large to hold in memory -- a 300 MB model weight is hashed in
+/// place rather than read into a `Vec` first, so the bytes are never held twice.
+pub fn sha256_hex_of_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<String> {
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = std::io::Read::read(reader, &mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .fold(String::with_capacity(64), |mut s, b| {
+            use std::fmt::Write as _;
+            let _ = write!(s, "{b:02x}");
+            s
+        }))
+}
+
+/// Check a stream against an expected hex SHA-256 without holding it in memory.
+///
+/// The streaming twin of [`verify_sha256`], over the same comparison: the
+/// shared ONNX Runtime layer verifies multi-hundred-megabyte model files with
+/// this before loading them.
+pub fn verify_reader_sha256<R: std::io::Read>(
+    reader: &mut R,
+    expected_hex: &str,
+) -> Result<(), StreamIntegrityError> {
+    let actual = sha256_hex_of_reader(reader).map_err(StreamIntegrityError::Io)?;
+    compare_hex_digests(&actual, expected_hex).map_err(StreamIntegrityError::Integrity)
 }
 
 #[cfg(test)]
@@ -177,5 +256,59 @@ mod tests {
         // that nothing landed on disk and that retrying is not the answer.
         let msg = verify_sha256(b"abd", ABC).unwrap_err().to_string();
         assert!(msg.contains("NOT written"), "message was: {msg}");
+    }
+
+    #[test]
+    fn streaming_hash_matches_the_in_memory_hash() {
+        // The chunked reader must agree with the one-shot hash, across chunk
+        // boundaries: 200_000 bytes span three 64 KiB reads.
+        let bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        let mut slice: &[u8] = &bytes;
+        assert_eq!(
+            sha256_hex_of_reader(&mut slice).expect("a slice never fails a read"),
+            sha256_hex(&bytes)
+        );
+    }
+
+    #[test]
+    fn streaming_verify_accepts_and_rejects_like_verify() {
+        let mut good: &[u8] = b"abc";
+        assert_eq!(
+            verify_reader_sha256(&mut good, ABC).map_err(|e| e.to_string()),
+            Ok(())
+        );
+        let mut bad: &[u8] = b"abd";
+        let err = verify_reader_sha256(&mut bad, ABC).expect_err("must reject");
+        assert!(
+            matches!(
+                err,
+                StreamIntegrityError::Integrity(IntegrityError::DigestMismatch { .. })
+            ),
+            "wrong error: {err:?}"
+        );
+        let mut malformed: &[u8] = b"abc";
+        let err = verify_reader_sha256(&mut malformed, "not-a-digest").expect_err("must reject");
+        assert!(
+            matches!(
+                err,
+                StreamIntegrityError::Integrity(IntegrityError::MalformedDigest(_))
+            ),
+            "wrong error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn streaming_verify_reports_a_read_failure_as_io() {
+        struct Failing;
+        impl std::io::Read for Failing {
+            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "boom"))
+            }
+        }
+        let err = verify_reader_sha256(&mut Failing, ABC).expect_err("must report the read");
+        assert!(
+            matches!(err, StreamIntegrityError::Io(_)),
+            "a failed read is Io, not a digest verdict: {err:?}"
+        );
     }
 }

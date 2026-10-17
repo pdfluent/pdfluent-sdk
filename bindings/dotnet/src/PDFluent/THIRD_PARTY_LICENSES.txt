@@ -1,0 +1,844 @@
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+This project incorporates components from the projects listed below. The
+original copyright notices and license terms are included below.
+
+Generated: 2026-05-26 via `cargo license --avoid-build-deps --avoid-dev-deps`
+RC1 commit: 747cf1c8ab6c6debdec734c3569b2995f37d1f1f
+
+All PDFluent workspace crates (formcalc-interpreter, pdf-annot, pdf-compliance,
+pdf-docx, pdf-engine, pdf-font, pdf-invoice, pdf-manip, pdf-ocr, pdf-pptx,
+pdf-redact, pdf-render, pdf-text-format, pdf-xfa, pdf-xlsx, pdfluent,
+pdfluent-cli, pdfluent-extract, pdfluent-forms, pdfluent-sign, xfa-cli,
+xfa-dom-resolver, xfa-js-sandboxed, xfa-json, xfa-layout-engine, xfa-license,
+xfa-wasm, and others) are covered by the PDFluent Commercial License v1.0
+(see LICENSE at the root of this repository).
+
+================================================================================
+hayro — A PDF interpreter and renderer in pure Rust
+https://github.com/LaurenzV/hayro
+================================================================================
+
+Copyright (c) Laurenz Stampfl
+
+Dual-licensed under MIT and Apache-2.0.
+
+Forked crates:
+  - hayro-syntax      → pdf-syntax
+  - hayro-interpret   → pdf-interpret
+  - hayro-font        → pdf-font (merged with hayro-cmap and hayro-postscript)
+  - hayro-cmap        → pdf-font::cmap
+  - hayro-postscript  → pdf-font::postscript
+  - hayro             → pdf-render
+  - hayro-jbig2       (retained as-is)
+  - hayro-jpeg2000    (retained as-is)
+  - hayro-ccitt       (retained as-is)
+
+--- MIT License ---
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- Apache License, Version 2.0 ---
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+--- NOTICE (from hayro) ---
+
+The following parts of code have been adapted/translated from PDFBox
+(https://github.com/apache/pdfbox), available under the Apache 2.0 license:
+  - The encoding maps for some of the standard fonts.
+  - The evaluator for type 0 functions.
+  - The list of common dictionary keys.
+
+The following parts of code have been adapted/translated from pdf.js
+(https://github.com/mozilla/pdf.js), available under the Apache 2.0 license:
+  - The CalRGB and CalGray conversion code.
+  - The flate decoder.
+  - The implementation of AES, MD5, SHA and RC4.
+
+The following parts of code have been adapted/translated from the CFFDump
+utility tool (https://github.com/janpe2/CFFDump/), available under the
+Apache 2.0 license:
+  - The Type1 font parser.
+
+================================================================================
+Foxit Embedded Fonts (embedded in pdf-interpret)
+================================================================================
+
+The Foxit-branded Type1 fonts (FoxitSans, FoxitSerif, FoxitFixed, FoxitDingbats,
+FoxitSymbol) are used as substitutes for the 14 PDF standard fonts. These fonts
+are distributed under the Foxit license included in:
+  crates/pdf-interpret/assets/LICENSE_FOXIT
+
+Shipped as fourteen Type1 programs in pdf-interpret and the same fourteen as
+bare CFF in pdf-standard-fonts.  Listed by file name because that is what the
+licence gate counts, and because a family name does not tell a reader which
+bytes are in the build:
+
+  crates/pdf-interpret/assets/        crates/pdf-standard-fonts/assets/
+    FoxitDingbats.pfb                   FoxitDingbats.cff
+    FoxitFixed.pfb                      FoxitFixed.cff
+    FoxitFixedBold.pfb                  FoxitFixedBold.cff
+    FoxitFixedBoldItalic.pfb            FoxitFixedBoldItalic.cff
+    FoxitFixedItalic.pfb                FoxitFixedItalic.cff
+    FoxitSans.pfb                       FoxitSans.cff
+    FoxitSansBold.pfb                   FoxitSansBold.cff
+    FoxitSansBoldItalic.pfb             FoxitSansBoldItalic.cff
+    FoxitSansItalic.pfb                 FoxitSansItalic.cff
+    FoxitSerif.pfb                      FoxitSerif.cff
+    FoxitSerifBold.pfb                  FoxitSerifBold.cff
+    FoxitSerifBoldItalic.pfb            FoxitSerifBoldItalic.cff
+    FoxitSerifItalic.pfb                FoxitSerifItalic.cff
+    FoxitSymbol.pfb                     FoxitSymbol.cff
+
+================================================================================
+Adobe CMap Resources (pdf-font, pdf-manip)
+================================================================================
+
+Two vendored files, both Adobe's own CMap resources, both BSD-3-Clause:
+
+  crates/pdf-font/assets/cmaps.brotli        the Adobe CMap resources as one
+                                             compressed blob, generated by
+                                             github.com/LaurenzV/cmap-resources
+                                             (branch hayro) and taken with the
+                                             pdf-font fork
+                                             Copyright 1990-2023 Adobe
+  crates/pdf-manip/resources/cmap/GB-EUC-H   one CMap in Adobe's own source
+                                             form, read by the PDF/A fixups for
+                                             EUC-encoded CID text
+                                             Copyright 1990-2019 Adobe
+
+Upstream licence texts in the tree:
+  crates/pdf-font/assets/LICENSE.txt              (BSD-3-Clause, full text)
+  crates/pdf-manip/resources/cmap/GB-EUC-H        (the notice is the file's own
+                                                   header, as Adobe ships it)
+
+AND REPRODUCED HERE, because those two paths exist in a source checkout and a
+binary distribution is where the condition bites: BSD-3-Clause asks a
+redistribution in binary form to reproduce the notice, the conditions and the
+disclaimer "in the documentation and/or other materials provided with the
+distribution", and this file is that material. The 1990-2019 text in GB-EUC-H's
+header differs from the one below only in its years.
+
+--- BSD 3-Clause, as Adobe ships it with the CMap resources ---
+
+Copyright 1990-2023 Adobe. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+Redistributions of source code must retain the above copyright notice,
+this list of conditions and the following disclaimer.
+
+Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+Neither the name of Adobe nor the names of its contributors may be
+used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+BSD-3-Clause asks that a redistribution in source form keep the copyright
+notice, the conditions and the disclaimer. Both files do, inside themselves or
+beside themselves; this entry is the other half -- the register that says which
+bytes in this tree are not ours. It was missing for GB-EUC-H until the
+prepublish audit for pdf-manip-1.0.0-beta.18 listed the path in the packaged
+file set, and missing for cmaps.brotli until the same question was asked of
+every file under a crate's assets/ and resources/ (#493).
+
+One more file came out of that question and is not third-party work in the sense
+the sections above are:
+
+  crates/lopdf/assets/example.pdf   a 329-byte test document from the lopdf
+                                    project, vendored with that fork and covered
+                                    by its MIT licence above
+
+================================================================================
+Embedded ICC Profiles (pdf-interpret, hayro-jpeg2000, pdf-manip)
+================================================================================
+
+Six profile files are embedded, three distinct profiles across three crates.
+By path, because the same three names occur in more than one crate and a name
+on its own does not say which copies are in the build:
+
+  CGATS.001 compatible CMYK, from github.com/saucecontrol/Compact-ICC-Profiles,
+  CC0-1.0:
+    crates/pdf-interpret/assets/CGATS001Compat-v2-micro.icc
+    crates/pdf-manip/assets/CGATS001Compat-v2-micro.icc
+    crates/hayro-jpeg2000/assets/CGATS001Compat-v2-micro.icc
+  ProPhoto RGB, same upstream, CC0-1.0:
+    crates/hayro-jpeg2000/assets/ProPhoto-v2-micro.icc
+  Generated with LCMS2; no third-party rights:
+    crates/pdf-interpret/assets/LAB.icc
+    crates/hayro-jpeg2000/assets/LAB.icc
+
+Each of those directories carries a README.md of its own saying where its
+profile came from, and they are ours:
+    crates/pdf-interpret/assets/README.md
+    crates/pdf-manip/assets/README.md
+    crates/hayro-jpeg2000/assets/README.md
+  -- and one more beside the CMap blob, pointing at the tool that generated it:
+    crates/pdf-font/assets/README.md
+
+PDF/A conversion embeds its own byte-identical copy of the CGATS profile so
+that pdf-manip stays self-contained; CC0 carries no attribution condition, but
+a second copy in the tree is a second thing to name here.
+
+Upstream licence texts:
+  crates/pdf-interpret/assets/CGATS_LICENSE.txt
+  crates/pdf-manip/assets/CGATS_LICENSE.txt   (same text, same profile)
+  crates/hayro-jpeg2000/assets/LICENSE.txt  (CC0 1.0 Universal, full text)
+
+ProPhoto was previously absent from this file while being present in the tree
+and correctly attributed in crates/hayro-jpeg2000/assets/README.md. That is the
+same shape of gap as the JNA entry above: recorded where the build can see it
+and missing from the document that leaves the building. Naming all three here
+is the point, not naming the one that happened to be asked about.
+
+================================================================================
+Java Binding Dependencies (resolved by Maven in the user's own build)
+================================================================================
+
+net.java.dev.jna:jna 5.14.0 — Apache-2.0, as elected by PDFluent.
+
+JNA has been offered under two licences since version 4.0: LGPL-2.1-or-later OR
+Apache-2.0. PDFluent takes Apache-2.0, so no LGPL obligation travels to a
+commercial licensee. Recording that choice is the point of this entry: without
+it the default reading of a dual-licensed dependency is the copyleft half, and
+that is a different answer to give a buyer's lawyer than the one we mean.
+
+The election is held as data in docs/LICENSE_POLICY.toml under [elections], and
+scripts/ci/license_gate.py fails on any Maven dependency that has no election
+recorded. This paragraph is the human-readable half of that same fact.
+
+We ship no shaded or assembled jar; the POM declares JNA and Maven resolves it
+in the user's own build. It is listed here because it is the one external
+runtime dependency across all bindings, and an unlisted dependency is
+indistinguishable from one nobody looked at.
+
+================================================================================
+Rust Crate Dependencies — Complete List (cargo license 2026-05-26)
+================================================================================
+
+The following crates are transitive dependencies of PDFluent at rc1.
+License expressions follow SPDX 3.x syntax.
+
+---- Apache-2.0 OR MIT (and combined expressions with these) ----
+aes, ahash, aligned, android_system_properties, anstream, anstyle,
+anstyle-parse, anstyle-query, anstyle-wincon, anyhow, arbitrary, arrayvec,
+as-slice, atomic-waker, base16ct, base64, base64ct, bit-set, bit-vec,
+bit_field, bitflags, bitstream-io, block-buffer, block-padding, bs58,
+bumpalo, bytecount, camino, cargo-platform, cbc, cesu8, cfg-if, chrono,
+cipher, clap, clap_builder, clap_complete, clap_derive, clap_lex, clap_mangen,
+color, colorchoice, const-oid, cookie, core-foundation, core-foundation-sys,
+core-graphics, core-graphics-types, cpufeatures, crc32fast, crossbeam-channel,
+crossbeam-deque, crossbeam-epoch, crossbeam-utils, crypto-bigint,
+crypto-common, ctor, ctor-proc-macro, curve25519-dalek-derive, dbus, der,
+deranged, derive_arbitrary, des, digest, dirs, dirs-sys, displaydoc,
+document-features, dtoa, dtor, dtor-proc-macro, dyn-clone, ecdsa, ed25519,
+either, elliptic-curve, embed_plist, encode_unicode, equivalent, erased-serde,
+errno, euclid, fallible-iterator, fallible-streaming-iterator,
+fast_image_resize, fastrand, fdeflate, fearless_simd, ff, field-offset,
+flate2, fnv, font-types, foreign-types, foreign-types-macros,
+foreign-types-shared, form_urlencoded, futf, futures-channel, futures-core,
+futures-executor, futures-io, futures-macro, futures-sink, futures-task,
+futures-util, fxhash, getopts, getrandom, gif, glob, group, half, hashbrown,
+hashlink, heck, hermit-abi, hex, hmac, html5ever, http, httparse, httpdate,
+hyper-tls, iana-time-zone, iana-time-zone-haiku, id-arena, ident_case, idna,
+idna_adapter, image, image-webp, indexmap, inout, ipnet, is_terminal_polyfill,
+itertools, itoa, jni, jni-sys, jni-sys-macros, js-sys, json-patch, jsonptr,
+keyboard-types, kurbo, lazy_static, leb128fmt, libappindicator,
+libappindicator-sys, libc, libdbus-sys, linebender_resource_handle, litrs,
+lock_api, log, mac, markup5ever, md-5, mime, minimal-lexical, muda,
+native-tls, ndk, ndk-sys, no_std_io2, num-bigint, num-bigint-dig, num-conv,
+num-derive, num-integer, num-iter, num-rational, num-traits, num_cpus,
+once_cell, once_cell_polyfill, openssl-macros, openssl-probe, ordered-channel,
+p12, p256, p384, parking_lot, parking_lot_core, paste, pastey, pathdiff,
+pdf-content-stream, pdf-interpret, pdf-syntax, pdfluent-ccitt, pdfluent-cff,
+pdfluent-jbig2, pdfluent-jpeg2000, peniko, percent-encoding,
+pin-project-lite, pkcs1, pkcs8, png, polycool, portable-atomic,
+portable-atomic-util, powerfmt, ppv-lite86, prettyplease, primeorder,
+proc-macro-crate, proc-macro-error, proc-macro-error-attr, proc-macro2,
+profiling, profiling-procmacros, qoi, quick-error, quote, rand, rand_chacha,
+rand_core, rangemap, rayon, rayon-core, rc2, read-fonts, ref-cast,
+ref-cast-impl, regex, regex-automata, regex-lite, regex-syntax, relative-path,
+reqwest, rfc6979, roff, roxmltree, rsa, rust_xlsxwriter, rustc-hash,
+rustls-pki-types, rustversion, scopeguard, sec1, security-framework,
+security-framework-sys, semver, serde, serde-untagged, serde_core,
+serde_derive, serde_derive_internals, serde_json, serde_path_to_error,
+serde_repr, serde_spanned, serde_urlencoded, serde_with, serde_with_macros,
+serialize-to-javascript, serialize-to-javascript-impl, servo_arc, sha1, sha2,
+signal-hook, signal-hook-registry, signature, siphasher, skrifa, smallvec,
+socket2, softbuffer, spki, stable_deref_trait, string_cache, stringprep,
+subsetter, swift-rs, syn, system-configuration, system-configuration-sys,
+tao, tao-macros, tauri, tauri-codegen, tauri-macros, tauri-plugin-dialog,
+tauri-plugin-fs, tauri-plugin-shell, tauri-runtime, tauri-runtime-wry,
+tauri-utils, tempfile, tendril, thiserror, thiserror-impl, thread_local,
+tikv-jemalloc-sys, tikv-jemallocator, time, time-core, time-macros,
+tokio-rustls, toml, toml_datetime, toml_edit, toml_parser, toml_writer,
+tray-icon, ttf-parser, typed-path, typeid, typenum, unic-char-property,
+unic-char-range, unic-common, unic-ucd-ident, unic-ucd-version, unicode-bidi,
+unicode-normalization, unicode-properties, unicode-segmentation, unicode-width,
+unicode-xid, url, utf-8, utf8_iter, utf8parse, uuid, vello_common, vello_cpu,
+wasm-bindgen, wasm-bindgen-futures, wasm-bindgen-macro,
+wasm-bindgen-macro-support, wasm-bindgen-shared, wasm-streams, web-sys,
+web-time, web_atoms, weezl, winapi, winapi-i686-pc-windows-gnu,
+winapi-x86_64-pc-windows-gnu, window-vibrancy, windows, windows-collections,
+windows-core, windows-future, windows-implement, windows-interface,
+windows-link, windows-numerics, windows-registry, windows-result,
+windows-strings, windows-sys, windows-targets, windows-threading,
+windows-version, windows_aarch64_gnullvm, windows_aarch64_msvc, windows_i686_gnu,
+windows_i686_gnullvm, windows_i686_msvc, windows_x86_64_gnu,
+windows_x86_64_gnullvm, windows_x86_64_msvc, write-fonts, wry, xmp-writer,
+yasna, zeroize
+
+License: Apache-2.0 OR MIT (see https://opensource.org/licenses/MIT and
+         https://www.apache.org/licenses/LICENSE-2.0)
+
+---- Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT ----
+linux-raw-sys, rustix, wasi, wasip2, wasip3, wasm-encoder, wasm-metadata,
+wasmparser, wit-bindgen, wit-bindgen-core, wit-bindgen-rust,
+wit-bindgen-rust-macro, wit-component, wit-parser
+
+---- Apache-2.0 OR MIT OR Zlib ----
+bytemuck, bytemuck_derive, dispatch2, miniz_oxide, objc2-app-kit,
+objc2-cloud-kit, objc2-core-data, objc2-core-foundation, objc2-core-graphics,
+objc2-core-image, objc2-core-location, objc2-core-text,
+objc2-exception-helper, objc2-io-surface, objc2-quartz-core, objc2-ui-kit,
+objc2-user-notifications, objc2-web-kit, raw-window-handle, tinyvec,
+tinyvec_macros, zune-core, zune-inflate, zune-jpeg
+
+---- Apache-2.0 OR BSD-3-Clause ----
+moxcms, pxfm
+
+---- Apache-2.0 OR BSD-3-Clause OR MIT ----
+num_enum, num_enum_derive
+
+---- Apache-2.0 OR BSD-2-Clause OR MIT ----
+zerocopy, zerocopy-derive
+
+---- Apache-2.0 (standalone) ----
+openssl, sync_wrapper, zopfli
+
+---- Apache-2.0 AND ISC ----
+ring
+
+---- Apache-2.0 AND MIT ----
+dpi
+
+---- Apache-2.0 OR BSL-1.0 ----
+ryu
+(BSL-1.0 = Boost Software License, fully permissive)
+
+---- Apache-2.0 OR CC0-1.0 ----
+imgref
+
+---- Apache-2.0 OR CC0-1.0 OR MIT-0 ----
+dunce
+
+---- Apache-2.0 OR ISC OR MIT ----
+hyper-rustls, rustls
+
+---- Apache-2.0 OR LGPL-2.1-or-later OR MIT ----
+r-efi
+(PDFluent selects Apache-2.0 / MIT; LGPL alternative not exercised)
+
+---- (Apache-2.0 OR MIT) AND BSD-3-Clause ----
+encoding_rs
+
+---- (Apache-2.0 OR MIT) AND NCSA ----
+libfuzzer-sys
+(NCSA = Univ. of Illinois/NCSA Open Source License, 3-clause BSD equivalent)
+
+---- (Apache-2.0 OR MIT) AND Unicode-3.0 ----
+unicode-ident
+
+---- Apache-2.0 OR BSD-1-Clause OR MIT ----
+fiat-crypto
+
+---- MIT ----
+aligned-vec, arg_enum_proc_macro, atk, atk-sys, av-scenechange, axum,
+axum-core, block2, bytes, cairo-rs, cairo-sys-rs, cargo_metadata, cfb,
+color_quant, combine, console, convert_case, crunchy, darling, darling_core,
+darling_macro, derive_more, derive_more-impl, dlopen2, dlopen2_derive,
+dom_query, ecb, equator, equator-macro, fax, gdk, gdk-pixbuf, gdk-pixbuf-sys,
+gdk-sys, gdkwayland-sys, gdkx11, gdkx11-sys, generic-array, gio, gio-sys,
+glib, glib-macros, glib-sys, gobject-sys, gtk, gtk-sys, gtk3-macros, h2,
+http-body, http-body-util, hyper, hyper-util, ico, indicatif, infer,
+interpolate_name, is-docker, is-wsl, javascriptcore-rs, javascriptcore-rs-sys,
+libm, libredox, libsqlite3-sys, loop9, lopdf, matchers, maybe-rayon,
+memoffset, mio, multer, napi, napi-derive, napi-derive-backend, napi-sys,
+new_debug_unreachable, nom, nom_locate, noop_proc_macro, nu-ansi-term,
+number_prefix, objc2, objc2-encode, objc2-foundation, open, openssl-sys,
+os_pipe, pango, pango-sys, pdf-bench, pdf-desktop, pdf-diff, pdf-java,
+pdfluent-lopdf, phf, phf_generator, phf_macros, phf_shared, plist,
+precomputed-hash, quick-xml, redox_syscall, redox_users, rfd, rgb, rquickjs,
+rquickjs-core, rquickjs-macro, rquickjs-sys, rusqlite, schannel, schemars,
+schemars_derive, sharded-slab, shared_child, sigchld, simd-adler32,
+simd_helpers, slab, soup3, soup3-sys, spin, strsim, synstructure, tiff,
+tokio, tokio-macros, tokio-native-tls, tokio-util, tower, tower-http,
+tower-layer, tower-service, tracing, tracing-attributes, tracing-core,
+tracing-log, tracing-subscriber, try-lock, urlpattern, valuable, want,
+webkit2gtk, webkit2gtk-sys, webview2-com, webview2-com-macros,
+webview2-com-sys, winnow, x11, x11-dl, xfa-api-server, xfa-golden-tests,
+xfa-license-gen, xfa-test-runner, y4m, zip, zmij
+
+License: MIT (see https://opensource.org/licenses/MIT)
+
+---- MIT OR Unlicense ----
+aho-corasick, byteorder, byteorder-lite, jiff, jiff-static, jiff-tzdb,
+jiff-tzdb-platform, memchr, same-file, walkdir, winapi-util
+
+---- BSD-2-Clause ----
+av1-grain, rav1e, v_frame
+
+---- BSD-3-Clause ----
+alloc-no-stdlib, alloc-stdlib, avif-serialize, curve25519-dalek,
+ed25519-dalek, exr, lebe, ravif, subtle
+
+---- BSD-3-Clause AND MIT ----
+brotli, matchit
+
+---- BSD-3-Clause OR MIT ----
+brotli-decompressor
+
+---- ISC ----
+ego-tree, libloading, rustls-webpki, scraper, untrusted
+
+---- Zlib ----
+foldhash, zlib-rs
+
+---- MPL-2.0 (file-level copyleft only) ----
+cssparser, cssparser-macros, dtoa-short, option-ext, selectors
+
+Mozilla Public License 2.0: https://www.mozilla.org/en-US/MPL/2.0/
+Modifications to MPL-covered files must be shared; surrounding code is free.
+
+---- BSL-1.0 (Boost Software License; permissive) ----
+ryu
+
+License: https://www.boost.org/users/license.html
+
+---- 0BSD ----
+adler2
+
+---- MIT-0 ----
+dunce (in expression Apache-2.0 OR CC0-1.0 OR MIT-0)
+
+---- CC0-1.0 ----
+imgref, dunce (via OR expressions)
+
+---- Unlicense ----
+aho-corasick, byteorder, memchr, walkdir, winapi-util (all MIT OR Unlicense)
+
+---- NCSA ----
+libfuzzer-sys (in expression (Apache-2.0 OR MIT) AND NCSA)
+
+---- Unicode-3.0 ----
+icu_collections, icu_locale_core, icu_normalizer, icu_normalizer_data,
+icu_properties, icu_properties_data, icu_provider, litemap, potential_utf,
+tinystr, writeable, yoke, yoke-derive, zerofrom, zerofrom-derive, zerotrie,
+zerovec, zerovec-derive
+
+License: https://opensource.org/licenses/Unicode-3.0
+
+================================================================================
+OFL-1.1 — Liberation Fonts (BUNDLED)
+================================================================================
+
+crates/pdf-substitute-fonts/assets/ carries twelve Liberation 2.1.5 faces,
+compiled into pdf-manip and embedded in the output of a PDF/A conversion:
+
+  LiberationMono-Bold.ttf         LiberationSans-Bold.ttf
+  LiberationMono-BoldItalic.ttf   LiberationSans-BoldItalic.ttf
+  LiberationMono-Italic.ttf       LiberationSans-Italic.ttf
+  LiberationMono-Regular.ttf      LiberationSans-Regular.ttf
+  LiberationSerif-Bold.ttf        LiberationSerif-BoldItalic.ttf
+  LiberationSerif-Italic.ttf      LiberationSerif-Regular.ttf
+
+They are UNMODIFIED, which OFL-1.1 §1 requires of anything still carrying the
+reserved font name.  Each file is byte-identical to the file of that name in the
+upstream release tarball liberation-fonts-ttf-2.1.5.tar.gz, sha256
+7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0, from
+https://github.com/liberationfonts/liberation-fonts.  The per-face checksums are
+in crates/pdf-substitute-fonts/PROVENANCE.sha256 and can be re-checked with
+`sha256sum -c` from the assets directory, so a build that picked up a different
+copy is detectable rather than a matter of trust.
+
+The licence text below travels with the fonts as OFL-1.1 requires; the same text
+ships inside the crate as LICENSE-Liberation.txt, because a URL is not a copy.
+
+Digitized data copyright (c) 2010 Google Corporation
+	with Reserved Font Arimo, Tinos and Cousine.
+Copyright (c) 2012 Red Hat, Inc.
+	with Reserved Font Name Liberation.
+
+This Font Software is licensed under the SIL Open Font License,
+Version 1.1.
+
+This license is copied below, and is also available with a FAQ at:
+http://scripts.sil.org/OFL
+
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+
+PREAMBLE The goals of the Open Font License (OFL) are to stimulate
+worldwide development of collaborative font projects, to support the font
+creation efforts of academic and linguistic communities, and to provide
+a free and open framework in which fonts may be shared and improved in
+partnership with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves.
+The fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works.  The fonts and derivatives,
+however, cannot be released under any other type of license.  The
+requirement for fonts to remain under this license does not apply to
+any document created using the fonts or their derivatives.
+
+ 
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such.
+This may include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components
+as distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting ? in part or in whole ?
+any of the components of the Original Version, by changing formats or
+by porting the Font Software to a new environment.
+
+"Author" refers to any designer, engineer, programmer, technical writer
+or other person who contributed to the Font Software.
+
+
+PERMISSION & CONDITIONS
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,in
+   Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+   redistributed and/or sold with any software, provided that each copy
+   contains the above copyright notice and this license. These can be
+   included either as stand-alone text files, human-readable headers or
+   in the appropriate machine-readable metadata fields within text or
+   binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+   Name(s) unless explicit written permission is granted by the
+   corresponding Copyright Holder. This restriction only applies to the
+   primary font name as presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+   Software shall not be used to promote, endorse or advertise any
+   Modified Version, except to acknowledge the contribution(s) of the
+   Copyright Holder(s) and the Author(s) or with their explicit written
+   permission.
+
+5) The Font Software, modified or unmodified, in part or in whole, must
+   be distributed entirely under this license, and must not be distributed
+   under any other license. The requirement for fonts to remain under
+   this license does not apply to any document created using the Font
+   Software.
+
+
+ 
+TERMINATION
+This license becomes null and void if any of the above conditions are not met.
+
+ 
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT.  IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER
+DEALINGS IN THE FONT SOFTWARE.
+
+================================================================================
+OFL-1.1 — Noto Naskh Arabic (BUNDLED)
+================================================================================
+
+crates/pdf-substitute-fonts/assets/ also carries two Noto Naskh Arabic v2.021
+faces, compiled into pdf-manip and embedded in the output of a PDF/A conversion:
+
+  NotoNaskhArabic-Regular.ttf     NotoNaskhArabic-Bold.ttf
+
+They are here for a gap Liberation cannot fill: Liberation covers Latin, Greek
+and Cyrillic and no Arabic, so a document naming an Arabic typeface it does not
+embed was given a face without one glyph it needed (#502).
+
+They are UNMODIFIED, which OFL-1.1 §1 requires of anything still carrying the
+reserved font name.  Each file is byte-identical to the file of that name in the
+upstream release archive NotoNaskhArabic-v2.021.zip, sha256
+6c050ab9bd087d69b733c505a7576e60c528c2f33cd7b91005a5bd7da4514032, from
+https://github.com/notofonts/arabic/releases/tag/NotoNaskhArabic-v2.021.  The
+per-face checksums are in crates/pdf-substitute-fonts/PROVENANCE.sha256 and can
+be re-checked with `sha256sum -c` from the assets directory.
+
+The static hinted TTFs are used deliberately.  google/fonts publishes this family
+only as a variable font, and pdfa_subset::retain_glyphs refuses a program
+carrying fvar/gvar -- an uninstanced variable font has no place in an archival
+PDF.
+
+"Noto" is a trademark of Google LLC (name ID 7 in the font files).  It is named
+here as a fact about the bytes we ship, not as an endorsement of this product by
+Google.
+
+The licence text below travels with the fonts as OFL-1.1 requires; the same text
+ships inside the crate as LICENSE-NotoNaskhArabic.txt, because a URL is not a
+copy.
+
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/arabic)
+	with Reserved Font Name Noto.
+
+This Font Software is licensed under the SIL Open Font License,
+Version 1.1.
+
+The full text of SIL Open Font License Version 1.1 is reproduced in the
+Liberation Fonts section above and is not repeated here; it is the same licence,
+word for word, and two copies that can drift apart are worse than one that
+cannot.  The verbatim file as the Noto project ships it is
+crates/pdf-substitute-fonts/LICENSE-NotoNaskhArabic.txt.
+
+================================================================================
+BSD-3-Clause — Adobe CMap resources (BUNDLED)
+================================================================================
+
+crates/pdf-manip/resources/cid-tables/ and crates/pdf-manip/resources/cmap/
+carry six unmodified Adobe CMap resources, compiled into pdf-manip and read to
+turn the character codes a document draws into CIDs:
+
+  crates/pdf-manip/resources/cid-tables/90ms-RKSJ-H
+  crates/pdf-manip/resources/cid-tables/GBK-EUC-H
+  crates/pdf-manip/resources/cid-tables/GBKp-EUC-H
+  crates/pdf-manip/resources/cid-tables/UniGB-UTF16-H
+  crates/pdf-manip/resources/cid-tables/UniJIS-UTF16-H
+  crates/pdf-manip/resources/cmap/GB-EUC-H
+
+Three files beside them are OURS, written for this repository and under its own
+licence, and are named here because the register answers "which bytes are not
+ours" and silence is not an answer:
+
+  crates/pdf-manip/resources/README.md            what the two directories are
+  crates/pdf-manip/resources/PROVENANCE.sha256    the checksums below
+  crates/pdf-manip/resources/cid-tables/LICENSE-Adobe-CMap.txt
+                                                  the BSD-3-Clause text below,
+                                                  copied out of the headers
+
+The five under cid-tables/ are read and never emitted.  cmap/GB-EUC-H is also
+on the host search path of the width and .notdef repairs, which may embed a
+CMap a document names into the output; BSD-3-Clause permits that, and the
+notice above travels inside the file.
+
+Each file is byte-identical to the file of that name in
+https://github.com/adobe-type-tools/cmap-resources at commit
+f5cf3bca7fdfeaceb77aa82847e974f2306c20b4, under Adobe-GB1-6/CMap/ and
+Adobe-Japan1-7/CMap/.  The per-file checksums are in
+crates/pdf-manip/resources/PROVENANCE.sha256 and can be re-checked with
+`shasum -a 256 -c`, so a build that picked up a different copy is detectable
+rather than a matter of trust.
+
+The licence text below is the one every one of those files carries in its own
+%%Copyright header; the same text ships inside the crate as
+resources/cid-tables/LICENSE-Adobe-CMap.txt, because a URL is not a copy.
+
+Copyright 1990-2019 Adobe. All rights reserved.
+
+Redistribution and use in source and binary forms, with or
+without modification, are permitted provided that the
+following conditions are met:
+
+Redistributions of source code must retain the above
+copyright notice, this list of conditions and the following
+disclaimer.
+
+Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following
+disclaimer in the documentation and/or other materials
+provided with the distribution.
+
+Neither the name of Adobe nor the names of its contributors
+may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+================================================================================
+tract — ONNX inference for the optional vision layer (#636)
+https://github.com/sonos/tract
+================================================================================
+
+The `vision` cargo feature of pdf-engine (off by default; passthrough in
+pdfluent) runs ONNX models through tract-onnx 0.23 (default-features off, so
+without the `transformers` op-set). No trained model ships; the only ONNX
+bytes in the tree are the 152-byte identity fixture the tests run.
+
+Copyright (c) Mathieu Poumeyrol and the tract contributors.
+
+Dual-licensed under MIT and Apache-2.0, at our option. The crates as resolved
+(tract-onnx, tract-onnx-opl, tract-hir, tract-core, tract-data,
+tract-extra, tract-nnef, tract-linalg and their transitive dependencies
+bytes, derive-new, log, memmap2, nom, nom-language, num-integer,
+num-rational, num-traits, prost, smallvec and the tract-*-sys/metal
+helpers) each declare MIT OR Apache-2.0 and are covered by the texts below;
+both are permissive and impose no copyleft obligation on the product. This
+entry stands outside the `cargo license 2026-05-26` list above because that
+list predates the dependency; the next regeneration absorbs these crates.
+
+--- MIT License ---
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- Apache License, Version 2.0 ---
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+================================================================================
+table-transformer — Table Transformer structure post-processing (MIT)
+https://github.com/microsoft/table-transformer
+commit 16d124f616109746b7785f03085100f1f6247575
+================================================================================
+
+Copyright (c) Microsoft Corporation.
+
+What is used, in two forms:
+
+  crates/pdf-engine/src/learned/tables_tatr.rs        a Rust port of the
+             publisher's row/column/header/spanning-cell reconciliation and
+             grid-cell construction (`objects_to_cells` and everything it
+             calls), behind the `ort-tables` feature of pdf-engine. Same
+             thresholds, same refinement, same cells; the parity test feeds
+             raw ONNX outputs and requires the Python-decoded cells, value
+             for value.
+  scripts/extraction/tables_b/tatr_postprocess.py     the Python original,
+             `src/postprocess.py` at the commit above, vendored verbatim
+             (see the header in that file). The zero-shot eval runs TATR
+             through it rather than through a reimplementation, so a TATR
+             number is the publisher's reading of its own boxes.
+
+MIT is permissive, no copyleft: the licence text below is that commit's
+LICENSE, word for word. The same copyright line and text ship inside the
+pdf-engine crate as THIRD_PARTY.md, because a crates.io reader has this
+file's section in front of them only through the repository.
+
+--- MIT License ---
+
+MIT License
+
+Copyright (c) Microsoft Corporation.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE
+
+================================================================================
+END OF THIRD PARTY LICENSES
+================================================================================

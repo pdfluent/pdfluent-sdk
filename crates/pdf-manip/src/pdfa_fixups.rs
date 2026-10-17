@@ -1842,9 +1842,18 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
         &[b"GoTo", b"GoToR", b"GoToE", b"Thread", b"URI", b"Named"];
     const ALLOWED_NAMED: &[&[u8]] = &[b"NextPage", b"PrevPage", b"FirstPage", b"LastPage"];
 
+    // Where `/A` is a resource name rather than an action: a font resource
+    // named `/A` -- pdfTeX's one-glyph Type 3 -- resolves to a dictionary with
+    // no `/S`, which reads here as "unknown action type, remove". See
+    // `resource_dictionary_ids` (#441).
+    let resource_dicts = crate::pdfa_cleanup::resource_dictionary_ids(doc);
+
     let mut count = 0;
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
+        if resource_dicts.contains(&id) {
+            continue;
+        }
         let should_remove_action = {
             let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
                 continue;
@@ -3937,6 +3946,9 @@ static AGL_NAMES: &[&str] = &[
     "existential",
     "f",
     "female",
+    "ff",
+    "ffi",
+    "ffl",
     "fi",
     "figuredash",
     "filledbox",
@@ -3958,6 +3970,7 @@ static AGL_NAMES: &[&str] = &[
     "gradient",
     "grave",
     "gravecomb",
+    "greater",
     "greaterequal",
     "guillemotleft",
     "guillemotright",
@@ -4019,6 +4032,7 @@ static AGL_NAMES: &[&str] = &[
     "m",
     "macron",
     "male",
+    "middot",
     "minus",
     "minute",
     "mu",
@@ -4032,6 +4046,7 @@ static AGL_NAMES: &[&str] = &[
     "ncaron",
     "ncommaaccent",
     "nine",
+    "nonbreakingspace",
     "notelement",
     "notequal",
     "notsubset",
@@ -4650,7 +4665,11 @@ const CMAP_SEARCH_DIRS: &[&str] = &[
     // Development-local path: valid only on the build machine; excluded from
     // WASM targets (no filesystem) to prevent private paths leaking into the
     // published binary.
-    #[cfg(not(target_arch = "wasm32"))]
+    // Not in a shipped artefact: `env!` is not touched by --remap-path-prefix,
+    // so this baked the runner's checkout into every native. Release builds
+    // set `pdfluent_release` (scripts/release/release_rustflags.sh); local and
+    // corpus builds keep the lookup.
+    #[cfg(all(not(target_arch = "wasm32"), not(pdfluent_release)))]
     concat!(env!("CARGO_MANIFEST_DIR"), "/resources/cmap"),
     "/usr/share/poppler/cMap",
     "/usr/share/fonts/cmap",
@@ -6712,8 +6731,9 @@ fn fix_jbig2_globals(doc: &mut Document) -> usize {
         };
 
         // Extract raw 1bpp bitmap bytes from the decoded image.
-        let bytes_per_row = image.width.div_ceil(8) as usize;
-        let mut raw_bitmap = Vec::with_capacity(bytes_per_row * image.height as usize);
+        // Accessors rather than fields since pdfluent-jbig2 0.3.0 (#357).
+        let bytes_per_row = image.width().div_ceil(8) as usize;
+        let mut raw_bitmap = Vec::with_capacity(bytes_per_row * image.height() as usize);
         struct ByteCollector<'a> {
             out: &'a mut Vec<u8>,
             row_buf: Vec<u8>,
@@ -6755,7 +6775,12 @@ fn fix_jbig2_globals(doc: &mut Document) -> usize {
             row_buf: Vec::with_capacity(bytes_per_row),
             pixel_count: 0,
         };
-        image.decode(&mut collector);
+        // Fallible since 0.3.0 (#357). Bailing rather than keeping a partial
+        // bitmap: this runs inside a PDF/A fixup, and half a decoded image
+        // written into the output is a conversion that silently loses content.
+        if image.decode(&mut collector).is_err() {
+            continue; // Decode failed halfway — leave the stream unchanged.
+        }
         // Flush any remaining row data.
         let leftover = std::mem::take(&mut collector.row_buf);
         drop(collector);
@@ -6780,10 +6805,10 @@ fn fix_jbig2_globals(doc: &mut Document) -> usize {
             stream.dict.remove(b"DecodeParms");
             stream
                 .dict
-                .set("Width", Object::Integer(image.width as i64));
+                .set("Width", Object::Integer(image.width() as i64));
             stream
                 .dict
-                .set("Height", Object::Integer(image.height as i64));
+                .set("Height", Object::Integer(image.height() as i64));
             stream.dict.set("BitsPerComponent", Object::Integer(1));
             stream.set_content(compressed);
             count += 1;
@@ -9410,8 +9435,90 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
     let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
     let mut count = 0;
 
-    // Find an appropriate ICC profile for the transparency group color space (/CS).
-    // According to PDF/A-2 §6.2.10, /CS must match the OutputIntent if present.
+    // A soft mask computes opacity in its own blending space. Replacing a
+    // characterized CMYK mask group with the RGB output intent changes its
+    // luminosity and can expose previously invisible rectangles. DeviceGray
+    // is also valid for mask luminosity; it is not a painted output device.
+    fn mask_forms(doc: &Document, obj: &Object, forms: &mut std::collections::BTreeSet<ObjectId>) {
+        let d = match obj {
+            Object::Dictionary(d) => d,
+            Object::Stream(s) => &s.dict,
+            Object::Array(a) => {
+                for value in a {
+                    mask_forms(doc, value, forms);
+                }
+                return;
+            }
+            _ => return,
+        };
+        if let Some(mask) = d
+            .get(b"SMask")
+            .ok()
+            .and_then(|o| doc.dereference(o).ok())
+            .and_then(|(_, o)| o.as_dict().ok())
+        {
+            if matches!(
+                mask.get(b"S").and_then(Object::as_name).ok(),
+                Some(b"Luminosity" | b"Alpha")
+            ) {
+                if let Ok(id) = mask.get(b"G").and_then(Object::as_reference) {
+                    forms.insert(id);
+                }
+            }
+        }
+        for (_, value) in d.iter() {
+            mask_forms(doc, value, forms);
+        }
+    }
+    let mut mask_ids = std::collections::BTreeSet::new();
+    for obj in doc.objects.values() {
+        mask_forms(doc, obj, &mut mask_ids);
+    }
+    let mut protected_forms = std::collections::BTreeSet::new();
+    let mut protected_groups = std::collections::BTreeSet::new();
+    for id in mask_ids {
+        let Some(group_obj) = doc
+            .get_object(id)
+            .ok()
+            .and_then(|o| o.as_stream().ok())
+            .and_then(|s| s.dict.get(b"Group").ok())
+        else {
+            continue;
+        };
+        let Some(group) = doc
+            .dereference(group_obj)
+            .ok()
+            .and_then(|(_, o)| o.as_dict().ok())
+        else {
+            continue;
+        };
+        if group.get(b"S").and_then(Object::as_name).ok() != Some(b"Transparency") {
+            continue;
+        }
+        let Some(cs) = group
+            .get(b"CS")
+            .ok()
+            .and_then(|o| doc.dereference(o).ok())
+            .map(|(_, o)| o)
+        else {
+            continue;
+        };
+        let supported = cs.as_name().ok() == Some(b"DeviceGray")
+            || cs
+                .as_array()
+                .ok()
+                .and_then(|a| a.first())
+                .and_then(|o| o.as_name().ok())
+                .is_some_and(|n| matches!(n, b"ICCBased" | b"CalGray" | b"CalRGB"));
+        if supported {
+            protected_forms.insert(id);
+            if let Ok(group_id) = group_obj.as_reference() {
+                protected_groups.insert(group_id);
+            }
+        }
+    }
+
+    // Retain the established output-device repair policy for other groups.
     let icc_id = find_output_intent_icc_profile(doc);
     let cs_value = icc_id.map(|id| {
         Object::Array(vec![
@@ -9453,6 +9560,9 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
     let mut indirect_fixes: Vec<ObjectId> = Vec::new();
     let all_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in all_ids {
+        if protected_groups.contains(&id) {
+            continue;
+        }
         if let Some(Object::Dictionary(grp)) = doc.objects.get(&id) {
             // We don't know for sure if it's a Group dict, but if it has /S /Transparency
             // and looks like one, we should fix it to be compliant.
@@ -9477,6 +9587,9 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
     // We fix XObjects first so that pages using them can correctly detect transparency.
     let xobj_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in xobj_ids {
+        if protected_forms.contains(&id) {
+            continue;
+        }
         let needs_fix = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
             let is_form = matches!(s.dict.get(b"Subtype"), Ok(Object::Name(ref n)) if n == b"Form");
             if !is_form {

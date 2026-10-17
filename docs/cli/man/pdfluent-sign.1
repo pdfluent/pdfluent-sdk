@@ -1,0 +1,73 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH PDFLUENT-SIGN 1  "pdfluent 1.1.0" PDFluent
+.SH NAME
+pdfluent\-sign \- Apply a PAdES signature with a PKCS#12 identity
+.SH SYNOPSIS
+\fBpdfluent sign\fR [\fB\-\-json\fR] <\fB\-o\fR|\fB\-\-out\fR> <\fB\-\-p12\fR> [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-password\-file\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-\-tsa\fR] [\fB\-\-profile\fR] [\fB\-\-reason\fR] [\fB\-\-location\fR] [\fB\-\-contact\-info\fR] [\fB\-\-field\fR] [\fB\-\-visible\fR] [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIINPUT\fR> 
+.SH DESCRIPTION
+Apply a PAdES signature with a PKCS#12 identity
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Machine\-readable JSON envelope on stdout
+.TP
+\fB\-o\fR, \fB\-\-out\fR \fI<OUT>\fR
+Output PDF, or `\-` for stdout
+.TP
+\fB\-\-p12\fR \fI<FILE>\fR
+PKCS#12 identity (`.p12`/`.pfx`)
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Quiet: human mode prints data only (no warnings or progress notes)
+.TP
+\fB\-\-password\-file\fR \fI<FILE>\fR
+Password file for the identity (line 1). Without it, PDFLUENT_PASSWORD, then an interactive prompt
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose stderr diagnostics (repeat for more)
+.TP
+\fB\-\-tsa\fR \fI<URL>\fR
+Timestamp authority URL. Accepted and reported: fetching a token needs a TSA exchange the facade does not expose
+.TP
+\fB\-\-profile\fR \fI<PROFILE>\fR [default: basic]
+PAdES profile (only `basic` signs today)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+basic: PAdES B\-B: basic signature, no timestamp
+.IP \(bu 2
+t: PAdES B\-T: refused — needs `\-\-tsa`, which the facade cannot serve
+.RE
+.TP
+\fB\-\-reason\fR \fI<REASON>\fR
+Human\-readable reason for signing
+.TP
+\fB\-\-location\fR \fI<LOCATION>\fR
+Location of signing
+.TP
+\fB\-\-contact\-info\fR \fI<CONTACT_INFO>\fR
+Signer contact information
+.TP
+\fB\-\-field\fR \fI<FIELD>\fR
+Signature form field name (default `Signature1`)
+.TP
+\fB\-\-visible\fR \fI<PAGE,X0,Y0,X1,Y1>\fR
+Visible signature rectangle: `PAGE,X0,Y0,X1,Y1` in points
+.TP
+\fB\-\-force\fR
+Overwrite the existing output file
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+<\fIINPUT\fR>
+Input PDF, or `\-` for stdin
+.SH VERSION
+v1.1.0

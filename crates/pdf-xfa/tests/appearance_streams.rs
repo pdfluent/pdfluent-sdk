@@ -274,8 +274,10 @@ fn draw_shows_its_text_and_declares_the_font_it_uses() {
 /// happens — that is what distinguishes "no text" from "no appearance".
 #[test]
 fn draw_with_empty_text_declares_no_font_but_still_fills() {
-    let mut config = AppearanceConfig::default();
-    config.background_color = Some([1.0, 1.0, 1.0]);
+    let config = AppearanceConfig {
+        background_color: Some([1.0, 1.0, 1.0]),
+        ..Default::default()
+    };
     let ap = draw_appearance("", 120.0, 40.0, &config);
     let stream = stream_text(&ap);
 

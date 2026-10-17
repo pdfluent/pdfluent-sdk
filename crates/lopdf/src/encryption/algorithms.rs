@@ -254,6 +254,26 @@ impl TryFrom<&Document> for PasswordAlgorithm {
     }
 }
 
+impl From<&super::EncryptionState> for PasswordAlgorithm {
+    /// Rebuild the verifier from retained decryption state: loading strips
+    /// the Encrypt dictionary once the (possibly empty) password checks out,
+    /// but later `authenticate` calls still verify against O/U/P.
+    fn from(state: &super::EncryptionState) -> Self {
+        Self {
+            encrypt_metadata: state.encrypt_metadata,
+            length: state.key_length,
+            version: state.version,
+            revision: state.revision,
+            owner_value: state.owner_value.clone(),
+            owner_encrypted: state.owner_encrypted.clone(),
+            user_value: state.user_value.clone(),
+            user_encrypted: state.user_encrypted.clone(),
+            permissions: state.permissions,
+            permission_encrypted: state.permission_encrypted.clone(),
+        }
+    }
+}
+
 impl PasswordAlgorithm {
     /// Sanitize the password (revision 4 and earlier).
     ///

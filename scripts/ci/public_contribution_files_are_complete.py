@@ -57,7 +57,7 @@ REQUIRED: dict[str, list[tuple[str, str]]] = {
         ("Developer Certificate of Origin", "what the sign-off certifies (#223)"),
     ],
     "SECURITY.md": [
-        ("security@pdfluent.com", "the address a report goes to"),
+        ("hello@pdfluent.com", "the address a report goes to"),
         ("do not open a public github issue",
          "that a vulnerability is not filed in the open"),
         ("there is no bug bounty",
@@ -80,6 +80,15 @@ REQUIRED: dict[str, list[tuple[str, str]]] = {
         ("git commit -s", "the sign-off, for the sender who implements it"),
     ],
 }
+
+# Addresses that do not exist. `security@pdfluent.com` was the reporting route
+# in SECURITY.md and README.md until 17-10-2026, and no mailbox stands
+# behind it: a report sent there goes nowhere, and nothing says so. None of the
+# files a stranger meets may name one of these again.
+RETIRED_ADDRESSES = ("security@pdfluent.com",)
+# README.md is not in the register (it is guarded elsewhere), but it carries
+# the same contact line, so it is read for a retired address too.
+ALSO_READ_FOR_ADDRESSES = ("README.md",)
 
 # A promise of money is the one thing a security policy must not make by
 # accident: a report written in the expectation of a payment costs somebody
@@ -185,6 +194,17 @@ def judge(root: pathlib.Path, stripped: list[str]) -> tuple[list[str], list[str]
                     f"{name} points at {target}, which the seeding strips "
                     f"({entry!r}) -- the published copy sends a reader to a file "
                     f"that is not there")
+
+    for name in (*REQUIRED, *ALSO_READ_FOR_ADDRESSES):
+        path = root / name
+        if not path.is_file():
+            continue
+        low = path.read_text(encoding="utf-8", errors="replace").lower()
+        for address in RETIRED_ADDRESSES:
+            if address in low:
+                fatal.append(
+                    f"{name} names {address}, an address with no mailbox behind "
+                    f"it -- a report sent there is lost")
 
     security = root / "SECURITY.md"
     if security.is_file():

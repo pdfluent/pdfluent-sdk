@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """QF3-C — ObjectStream cache real-world impact measurement.
 
-Measures pdfluent flatten wall time and peak RSS on ObjStm-heavy PDFs
+Measures xfa-runner flatten wall time and peak RSS on ObjStm-heavy PDFs
 using two binaries: one built at the pre-QF2-B baseline (a266e77e4) and
 one built at the post-QF2-B baseline (288fcd9b8 = QF2-B landed). Both
 binaries share the same input + same methodology, so the only difference

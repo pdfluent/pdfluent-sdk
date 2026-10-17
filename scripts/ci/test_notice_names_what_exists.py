@@ -22,13 +22,35 @@ The original notices are preserved in the THIRD_PARTY_LICENSES.txt file.
 """
 
 
+def guarded_copies():
+    """The guard's own list of packaged copies."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("guard_list", GUARD)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.KOPIEEN
+
+
 def tree(tmp: pathlib.Path, root_text: str, copy_text: str | None = None) -> pathlib.Path:
+    """A fixture tree with every packaged copy in it.
+
+    Twelve copies since #625 (ten since #630, six since #541): the .NET, Node and Python packages each
+    carry both registers, because their packaging tools cannot reach a file
+    outside the package directory. `copy_text`, when given, is written to the
+    first of them -- that is the divergence case.
+    """
     r = tmp / "repo"
-    (r / "bindings/dotnet/src/PDFluent").mkdir(parents=True)
-    (r / "THIRD_PARTY_LICENSES.txt").write_text("x\n", encoding="utf-8")
+    r.mkdir(parents=True)
     (r / "NOTICE").write_text(root_text, encoding="utf-8")
-    (r / "bindings/dotnet/src/PDFluent/NOTICE").write_text(
-        root_text if copy_text is None else copy_text, encoding="utf-8")
+    # Every copy the guard knows, read from its own list so a copy added there
+    # (the RAG loaders' licence texts, #630) is in the fixture too.
+    for kopie, origineel in guarded_copies():
+        if not (r / origineel).exists():
+            (r / origineel).write_text("x\n", encoding="utf-8")
+        (r / kopie).parent.mkdir(parents=True, exist_ok=True)
+        (r / kopie).write_bytes((r / origineel).read_bytes())
+    if copy_text is not None:
+        (r / "bindings/dotnet/src/PDFluent/NOTICE").write_text(copy_text, encoding="utf-8")
     return r
 
 
@@ -101,6 +123,24 @@ def main() -> int:
         ok &= case("a missing copy is SKIPPED, not green",
                       u.returncode == 1 and "SKIPPED (not a pass)" in u.stderr,
                       (u.stdout + u.stderr)[:200])
+
+    # THE TWO LISTS OF COPIES ARE ONE CLAIM (#541). This guard checks six copies
+    # and regenerate_registers.sh writes them; a copy only one of them knows
+    # about is written and never checked, or checked and never written. The
+    # lists are code, so the case is driven against the real pair with one entry
+    # taken out of this guard's own list rather than against a fixture tree.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("guard_mod", GUARD)
+    guard_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard_mod)
+    ok &= case("the two lists agree today", guard_mod.lijsten_komen_overeen() == [],
+               str(guard_mod.lijsten_komen_overeen()))
+    bewaard = guard_mod.KOPIEEN
+    guard_mod.KOPIEEN = bewaard[:-1]
+    klachten = guard_mod.lijsten_komen_overeen()
+    guard_mod.KOPIEEN = bewaard
+    ok &= case("and a copy the guard forgot is a finding",
+               any("this guard does not check" in k for k in klachten), str(klachten))
 
     print("test_notice_names_what_exists: " + ("OK" if ok else "GEFAALD"))
     return 0 if ok else 1

@@ -321,17 +321,27 @@ impl Document {
         self.encryption_state.is_some()
     }
 
+    /// Password verifier from the live Encrypt dictionary, or from the
+    /// retained state once loading has decrypted and stripped it (an empty
+    /// user password opens the file on its own): later `authenticate` calls
+    /// still verify owner/user passwords against the retained O/U/P.
+    fn password_algorithm(&self) -> Result<PasswordAlgorithm> {
+        if self.is_encrypted() {
+            return PasswordAlgorithm::try_from(self);
+        }
+        self.encryption_state
+            .as_ref()
+            .map(PasswordAlgorithm::from)
+            .ok_or(Error::NotEncrypted)
+    }
+
     /// Authenticate the provided owner password directly as bytes without sanitization
     pub fn authenticate_raw_owner_password<P>(&self, password: P) -> Result<()>
     where
         P: AsRef<[u8]>,
     {
-        if !self.is_encrypted() {
-            return Err(Error::NotEncrypted);
-        }
-
         let password = password.as_ref();
-        let algorithm = PasswordAlgorithm::try_from(self)?;
+        let algorithm = self.password_algorithm()?;
         algorithm.authenticate_owner_password(self, password)?;
 
         Ok(())
@@ -342,12 +352,8 @@ impl Document {
     where
         P: AsRef<[u8]>,
     {
-        if !self.is_encrypted() {
-            return Err(Error::NotEncrypted);
-        }
-
         let password = password.as_ref();
-        let algorithm = PasswordAlgorithm::try_from(self)?;
+        let algorithm = self.password_algorithm()?;
         algorithm.authenticate_user_password(self, password)?;
 
         Ok(())
@@ -358,12 +364,8 @@ impl Document {
     where
         P: AsRef<[u8]>,
     {
-        if !self.is_encrypted() {
-            return Err(Error::NotEncrypted);
-        }
-
         let password = password.as_ref();
-        let algorithm = PasswordAlgorithm::try_from(self)?;
+        let algorithm = self.password_algorithm()?;
         algorithm
             .authenticate_owner_password(self, password)
             .or(algorithm.authenticate_user_password(self, password))?;
@@ -373,11 +375,7 @@ impl Document {
 
     /// Authenticate the provided owner password
     pub fn authenticate_owner_password(&self, password: &str) -> Result<()> {
-        if !self.is_encrypted() {
-            return Err(Error::NotEncrypted);
-        }
-
-        let algorithm = PasswordAlgorithm::try_from(self)?;
+        let algorithm = self.password_algorithm()?;
         let password = algorithm.sanitize_password(password)?;
         algorithm.authenticate_owner_password(self, &password)?;
 
@@ -386,11 +384,7 @@ impl Document {
 
     /// Authenticate the provided user password
     pub fn authenticate_user_password(&self, password: &str) -> Result<()> {
-        if !self.is_encrypted() {
-            return Err(Error::NotEncrypted);
-        }
-
-        let algorithm = PasswordAlgorithm::try_from(self)?;
+        let algorithm = self.password_algorithm()?;
         let password = algorithm.sanitize_password(password)?;
         algorithm.authenticate_user_password(self, &password)?;
 
@@ -399,11 +393,7 @@ impl Document {
 
     /// Authenticate the provided owner/user password
     pub fn authenticate_password(&self, password: &str) -> Result<()> {
-        if !self.is_encrypted() {
-            return Err(Error::NotEncrypted);
-        }
-
-        let algorithm = PasswordAlgorithm::try_from(self)?;
+        let algorithm = self.password_algorithm()?;
         let password = algorithm.sanitize_password(password)?;
         algorithm
             .authenticate_owner_password(self, &password)

@@ -1,0 +1,128 @@
+{
+  "blocks": [
+    {
+      "index": 0,
+      "kind": "heading",
+      "level": 1,
+      "page": 0,
+      "bbox": [72, 680, 162.7039996109009, 696],
+      "text": "Safety rules",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Safety rules", "x": 72, "y": 680, "width": 90.7039996109009, "height": 16, "fontSize": 16, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 1,
+      "kind": "listItem",
+      "level": 0,
+      "ordinal": null,
+      "page": 0,
+      "bbox": [72, 656, 241.07999923706055, 666],
+      "text": "Wear the issued boots on the floor.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "•", "x": 72, "y": 656, "width": 3.5, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Wear the issued boots on the floor.", "x": 86, "y": 656, "width": 155.07999923706055, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 2,
+      "kind": "listItem",
+      "level": 0,
+      "ordinal": null,
+      "page": 0,
+      "bbox": [72, 644, 238.29999926567078, 654],
+      "text": "Keep the gangways clear of stock.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "•", "x": 72, "y": 644, "width": 3.5, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Keep the gangways clear of stock.", "x": 86, "y": 644, "width": 152.29999926567078, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 3,
+      "kind": "listItem",
+      "level": 1,
+      "ordinal": null,
+      "page": 0,
+      "bbox": [100, 632, 283.5199990558624, 642],
+      "text": "Pallets are stacked two high, no more.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "•", "x": 100, "y": 632, "width": 3.5, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Pallets are stacked two high, no more.", "x": 114, "y": 632, "width": 169.5199990558624, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 4,
+      "kind": "listItem",
+      "level": 1,
+      "ordinal": null,
+      "page": 0,
+      "bbox": [100, 620, 286.2999987888336, 630],
+      "text": "Drums are stacked one high, on a mat.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "•", "x": 100, "y": 620, "width": 3.5, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Drums are stacked one high, on a mat.", "x": 114, "y": 620, "width": 172.2999987888336, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 5,
+      "kind": "listItem",
+      "level": 0,
+      "ordinal": null,
+      "page": 0,
+      "bbox": [72, 608, 231.61999919891358, 618],
+      "text": "Report a spill before you clean it.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "•", "x": 72, "y": 608, "width": 3.5, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Report a spill before you clean it.", "x": 86, "y": 608, "width": 145.61999919891358, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 6,
+      "kind": "listItem",
+      "level": 0,
+      "ordinal": 1,
+      "page": 0,
+      "bbox": [72, 572, 248.86999872207642, 582],
+      "text": "Stop the line at the nearest pull cord.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "1.", "x": 72, "y": 572, "width": 8.339999942779542, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Stop the line at the nearest pull cord.", "x": 86, "y": 572, "width": 162.86999872207642, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 7,
+      "kind": "listItem",
+      "level": 0,
+      "ordinal": 2,
+      "page": 0,
+      "bbox": [72, 560, 227.16999915122986, 570],
+      "text": "Tell the shift supervisor at once.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "2.", "x": 72, "y": 560, "width": 8.339999942779542, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Tell the shift supervisor at once.", "x": 86, "y": 560, "width": 141.16999915122986, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 8,
+      "kind": "listItem",
+      "level": 0,
+      "ordinal": 3,
+      "page": 0,
+      "bbox": [72, 548, 224.39999940872192, 558],
+      "text": "Write the entry in the day book.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "3.", "x": 72, "y": 548, "width": 8.339999942779542, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Write the entry in the day book.", "x": 86, "y": 548, "width": 138.39999940872192, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    }
+  ]
+}

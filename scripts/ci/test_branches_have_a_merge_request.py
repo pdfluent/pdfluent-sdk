@@ -94,7 +94,9 @@ def draai(map_: pathlib.Path, met_gh: bool | str,
     """Run the guard. `met_gh`: True for the real PATH, False for git only,
     "leeg" for git plus a fake `gh` that answers with no pull requests and logs
     its arguments to GH_LOG. `stdin` is what a pre-push hook would receive."""
-    omgeving = dict(os.environ)
+    # The pre-push hook exports GIT_DIR. The guard must read this fixture's
+    # branch, just as the git commands that construct the fixture do.
+    omgeving = schone_omgeving(cwd=map_)
     if met_gh == "leeg":
         bin_ = map_ / "bin"
         bin_.mkdir(exist_ok=True)

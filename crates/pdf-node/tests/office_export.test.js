@@ -23,10 +23,16 @@ let PdfDocument;
 try {
   ({ PdfDocument } = require('../index'));
 } catch (e) {
-  describe.skip('office export (native module not built)', () => {
-    test('placeholder', () => {});
-  });
+  PdfDocument = null;
 }
+
+// A skipped placeholder suite used to stand here while the real `describe`
+// below ran regardless: without the addon these tests failed with
+// "Cannot read properties of undefined" instead of skipping (#585).
+if (!PdfDocument) {
+  process.stderr.write('SKIPPED (not a pass): native addon not built — office export not checked\n');
+}
+const d = PdfDocument ? describe : describe.skip;
 
 function openSample() {
   return PdfDocument.open(fs.readFileSync(SAMPLE_PDF));
@@ -39,7 +45,7 @@ function assertOoxml(buf, entry, what) {
   expect(buf.toString('latin1')).toContain(entry);
 }
 
-describe('office export', () => {
+d('office export', () => {
   beforeAll(() => {
   });
 

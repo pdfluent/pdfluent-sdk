@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+#
 # audit-all-packages.sh — unified pre-publish gate runner for all PDFluent channels.
 #
 # Governed by: docs/release/release_gate_contract.md
@@ -53,6 +59,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 AUDIT_TREE="${SCRIPT_DIR}/audit_package_tree.py"
+LICENCE_REP="${SCRIPT_DIR}/licence_representation.py"
 CRATE_AUDIT="${SCRIPT_DIR}/prepublish_crate_audit.sh"
 REPORTS_DIR="${REPO_ROOT}/benchmarks/runs/prepublish_audits"
 DATESTAMP="$(date -u '+%Y%m%d_%H%M%S')"
@@ -153,28 +160,52 @@ gate_clean_tree() {
 # ---------------------------------------------------------------------------
 # Channel: Rust / crates.io
 # ---------------------------------------------------------------------------
+# The crates to audit, one per line on stdout. Explicit --crate flags win;
+# otherwise the publish order. Prints nothing and returns 1 when there is
+# nothing to audit: an empty list must fail the channel, never pass it.
+resolve_crates_to_audit() {
+    if [[ ${#CRATES[@]} -gt 0 ]]; then
+        printf '%s\n' "${CRATES[@]}"
+        return 0
+    fi
+    # The publish order, asked rather than scraped. This used to grep a
+    # `CRATES=(` array out of a second copy of publish_ordered.sh at the
+    # repository root -- a copy that had none of the 1.0.0 repairs and that
+    # publish-crates.yml was still running. It is gone; the order now comes
+    # from the same place the publish itself gets it (#358).
+    local order="${REPO_ROOT}/scripts/release/topological_publish_order.py"
+    if [[ ! -f "${order}" ]]; then
+        echo "error: ${order} not found; run with --crate to specify crates" >&2
+        return 1
+    fi
+    local listed
+    listed=$(python3 "${order}" | awk '{print $1}')
+    if [[ -z "$listed" ]]; then
+        echo "error: the publish list is empty; nothing to audit" >&2
+        return 1
+    fi
+    printf '%s\n' "$listed"
+}
+
 audit_rust() {
     sep
     log "=== CHANNEL: Rust / crates.io ==="
 
     require_helper "${CRATE_AUDIT}"
 
-    # If no --crate flags, use the default publish list.
-    local crates_to_audit=("${CRATES[@]:-}")
-    if [[ ${#crates_to_audit[@]} -eq 0 ]]; then
-        # Source the default list from publish_ordered.sh (exported via CRATES array).
-        # We do this by extracting the CRATES array from publish_ordered.sh.
-        local ordered="${REPO_ROOT}/scripts/publish_ordered.sh"
-        if [[ -f "${ordered}" ]]; then
-            mapfile -t crates_to_audit < <(
-                grep -A200 '^CRATES=(' "${ordered}" | grep '"' | sed 's/.*"\(.*\)".*/\1/'
-            )
-            log "  Loaded ${#crates_to_audit[@]} crates from publish_ordered.sh"
-        else
-            warn "  publish_ordered.sh not found; run with --crate to specify crates"
-            return 0
-        fi
-    fi
+    # If no --crate flags, use the default publish list. The old expansion
+    # `("${CRATES[@]:-}")` yields ONE empty word on bash when CRATES is
+    # empty -- so the length check never fired, the publish list never
+    # loaded, and the channel audited 0 crates and passed. A vacuous green
+    # over the release's own crates; the resolve function above replaced it.
+    local listed
+    listed="$(resolve_crates_to_audit)" || {
+        fail "  Rust channel FAIL (P0): no crates to audit -- refusing a vacuous green"
+        return 1
+    }
+    local crates_to_audit=()
+    mapfile -t crates_to_audit <<<"${listed}"
+    log "  Auditing ${#crates_to_audit[@]} crates"
 
     local rust_pass=0 rust_fail=0
     for crate in "${crates_to_audit[@]}"; do
@@ -185,7 +216,7 @@ audit_rust() {
             ok "  $crate — DRY-RUN SKIP"
             continue
         fi
-        if bash "${CRATE_AUDIT}" "$crate" 2>&1; then
+        if PDFLUENT_AUDIT_TRAIN=1 bash "${CRATE_AUDIT}" "$crate" 2>&1; then
             ok "  $crate — PASS"
             (( rust_pass++ )) || true
         else
@@ -271,21 +302,48 @@ audit_python() {
         license_ok=false
     else
         local lic_field; lic_field=$(grep -i '^License:' "${metadata_file}" | head -1 || echo "")
-        if [[ -z "$lic_field" ]]; then
-            fail "  No License field in METADATA"
-            license_ok=false
-        else
+        if [[ -n "$lic_field" ]]; then
             log "  License field: ${lic_field}"
-        fi
-        # For PDFluent Commercial License, verify LICENSE file present.
-        local lic_file; lic_file=$(find "${tmpdir}/unpacked" -name "LICENSE" | head -1 || echo "")
-        if [[ -z "$lic_file" ]]; then
-            fail "  No LICENSE file inside wheel"
-            license_ok=false
-        elif ! grep -q "PDFluent Commercial License\|MIT\|Apache" "${lic_file}" 2>/dev/null; then
-            warn "  LICENSE file content looks unexpected — review manually"
         else
-            ok "  LICENSE file present and readable"
+            # PEP 639 (metadata 2.4): License-Expression plus License-File,
+            # and no legacy License: line. The expression is accepted when
+            # it equals the one in pyproject.toml, and every License-File
+            # it names is in the wheel.
+            local want_expr have_expr
+            want_expr=$(grep -m1 '^license = ' "${REPO_ROOT}/crates/pdf-python/pyproject.toml" 2>/dev/null | sed 's/.*"\([^"]*\)".*/\1/' || echo "")
+            have_expr=$(grep -i '^License-Expression:' "${metadata_file}" | head -1 | sed 's/^[^:]*:[[:space:]]*//' || echo "")
+            if [[ -z "$have_expr" ]]; then
+                fail "  No License field in METADATA"
+                license_ok=false
+            elif [[ "$have_expr" != "$want_expr" ]]; then
+                fail "  License-Expression '${have_expr}' is not the pyproject.toml expression ('${want_expr}')"
+                license_ok=false
+            else
+                log "  License-Expression: ${have_expr}"
+                local lic_file_ref lf missing_lf=false
+                while IFS= read -r lic_file_ref; do
+                    lf=$(printf '%s' "$lic_file_ref" | sed 's/^[^:]*:[[:space:]]*//')
+                    [[ -z "$lf" ]] && continue
+                    if [[ -z "$(find "${tmpdir}/unpacked" -name "$(basename "$lf")" | head -1)" ]]; then
+                        fail "  License-File '${lf}' is named in METADATA but not in the wheel"
+                        missing_lf=true
+                    fi
+                done < <(grep -i '^License-File:' "${metadata_file}" || true)
+                if [[ "$missing_lf" == true ]]; then
+                    license_ok=false
+                fi
+            fi
+        fi
+        # The licence texts the canonical expression names, judged against
+        # docs/LICENSE_POLICY.toml: LICENSE with the AGPL text and
+        # LICENSE-COMMERCIAL with the commercial one. This used to grep LICENSE
+        # for "PDFluent Commercial License|MIT|Apache" and only warn -- a
+        # check that could not fail and did not know the answer.
+        if python3 "${LICENCE_REP}" texts --pkg-dir "${tmpdir}/unpacked"; then
+            ok "  Licence texts match docs/LICENSE_POLICY.toml"
+        else
+            fail "  Licence texts do not match docs/LICENSE_POLICY.toml"
+            license_ok=false
         fi
     fi
 
@@ -387,16 +445,17 @@ audit_wasm() {
     fi
 
     log "  Step 3: license check"
-    local lic_file="${pkg_dir}/LICENSE"
+    # The [channel_representation] entry for this channel, not a grep: npm
+    # cannot carry the dual expression, so package.json points at
+    # LICENSE-OFFER, whose first line states it, and LICENSE is the AGPL text.
+    # The old grep for "PDFluent Commercial License" in LICENSE failed on every
+    # correct package after #349.
     local license_ok=true
-    if [[ ! -f "$lic_file" ]]; then
-        fail "  No LICENSE file in WASM pkg dir"
-        license_ok=false
-    elif ! grep -q "PDFluent Commercial License" "$lic_file" 2>/dev/null; then
-        fail "  LICENSE file does not contain PDFluent Commercial License"
-        license_ok=false
+    if python3 "${LICENCE_REP}" npm --entry "crates/xfa-wasm/pkg/package.json" --pkg-dir "$pkg_dir"; then
+        ok "  Licence representation matches docs/LICENSE_POLICY.toml"
     else
-        ok "  LICENSE file present with correct content"
+        fail "  Licence representation does not match docs/LICENSE_POLICY.toml"
+        license_ok=false
     fi
 
     log "  Step 4: leakage scan via audit_package_tree.py"
@@ -713,16 +772,29 @@ audit_cabi() {
     fi
 
     log "  Step 4: license check"
-    local lic_file="${root_dir}/LICENSE"
+    # The product is dual-licensed: the tarball carries both halves of the
+    # dual text. LICENSE holds the AGPL half, LICENSE-COMMERCIAL the
+    # commercial half; an archive with only one half fails naming it.
     local license_ok=true
+    local lic_file="${root_dir}/LICENSE"
     if [[ ! -f "$lic_file" ]]; then
         fail "  No LICENSE file in tarball"
         license_ok=false
-    elif ! grep -q "PDFluent Commercial License" "$lic_file" 2>/dev/null; then
-        fail "  LICENSE file does not contain PDFluent Commercial License"
+    elif ! grep -q "AFFERO" "$lic_file" 2>/dev/null; then
+        fail "  LICENSE file does not carry the AGPL text"
         license_ok=false
     else
-        ok "  LICENSE file present with correct content"
+        ok "  LICENSE file present with the AGPL text"
+    fi
+    local commercial_file="${root_dir}/LICENSE-COMMERCIAL"
+    if [[ ! -f "$commercial_file" ]]; then
+        fail "  No LICENSE-COMMERCIAL file in tarball"
+        license_ok=false
+    elif ! grep -q "PDFluent Commercial" "$commercial_file" 2>/dev/null; then
+        fail "  LICENSE-COMMERCIAL file does not carry the commercial text"
+        license_ok=false
+    else
+        ok "  LICENSE-COMMERCIAL file present with the commercial text"
     fi
 
     log "  Step 5: leakage scan via audit_package_tree.py"
@@ -743,6 +815,14 @@ audit_cabi() {
     ok "  C ABI channel PASS"
     return 0
 }
+
+# Sourced by the tests (test_audit_all_packages.py): with this variable set,
+# sourcing stops after the function definitions above, without running the
+# gate. It must sit after every function definition and before the main
+# body below.
+if [[ "${AUDIT_ALL_PACKAGES_SOURCED:-}" == "1" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # Main

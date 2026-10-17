@@ -13,7 +13,10 @@ pub mod gate;
 pub mod report;
 pub mod ssim;
 
-pub use gate::{classify, DifferentialVerdict, GATE_SSIM_THRESHOLD};
+pub use gate::{
+    classify, classify_render, compare_render, DifferentialVerdict, RenderGateConfig, RenderScores,
+    RenderVerdict, GATE_SSIM_THRESHOLD, RENDER_GLOBAL_SSIM, RENDER_TILE_MIN_SSIM, RENDER_TILE_SIZE,
+};
 pub use report::{
     build_report, build_summary, compute_baseline_delta, BaselineDelta, DifferentialReport,
     DocDifferential, HarnessSummary, TextVerdict,

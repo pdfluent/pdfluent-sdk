@@ -10,7 +10,7 @@
 // it can gate a publish.
 //
 // Invariants (the four the 1.0.0-beta.17 incident proved we must enforce):
-//   1. optionalDependencies lists the FULL six-platform matrix (no subset).
+//   1. optionalDependencies lists the FULL seven-platform matrix (no subset).
 //   2. NO native `*.node` binary inside the main meta-package.
 //   3. LICENSE, README.md, index.js, index.d.ts all physically present.
 //   4. No private paths / corpus / key leakage in any packed file.
@@ -48,12 +48,12 @@ try {
   // (0) identity
   if (manifest.name !== MAIN_PKG) fail(`name is ${manifest.name}, expected ${MAIN_PKG}`)
 
-  // (1) FULL six-platform optionalDependencies — the core regression
+  // (1) FULL seven-platform optionalDependencies — the core regression
   const od = manifest.optionalDependencies || {}
   const names = Object.keys(od).sort()
   const want = [...PLATFORM_PKG_NAMES].sort()
   if (names.length !== want.length || names.some((n, i) => n !== want[i])) {
-    fail(`optionalDependencies must be exactly the 6 platforms.\n    have: ${names.join(', ') || '(none)'}\n    want: ${want.join(', ')}`)
+    fail(`optionalDependencies must be exactly the ${want.length} platforms.\n    have: ${names.join(', ') || '(none)'}\n    want: ${want.join(', ')}`)
   }
   // every pin must be a concrete version (no ranges/empties)
   for (const [k, v] of Object.entries(od)) {
@@ -71,7 +71,13 @@ try {
   }
 
   // (4) no leakage
-  const leakRe = /\/Users\/[a-z]+|BEGIN [A-Z ]*PRIVATE KEY|xfa-corpus|xfa-golden|\/opt\/xfa|openrouter|glpat-/
+  // `xfa-corpus` and `xfa-golden` AS PATHS, not as crate names (#541). Both are
+  // workspace members -- `xfa-golden-tests` sits in THIRD_PARTY_LICENSES.txt's
+  // list of MIT crates, which is prose about licences and not a leaked mount --
+  // and this bare substring refused the first main tarball that carried the
+  // third-party notices at all. The same correction the audit in
+  // scripts/release/audit_package_tree.py needed for the same word.
+  const leakRe = /\/Users\/[a-z]+|BEGIN [A-Z ]*PRIVATE KEY|[/\\](?:xfa-corpus|xfa-golden)|(?:xfa-corpus|xfa-golden)[/\\]|\/opt\/xfa|openrouter|glpat-/
   for (const e of entries) {
     if (e.endsWith('/')) continue
     const p = path.join(tmp, e)
@@ -80,7 +86,7 @@ try {
     if (leakRe.test(buf.toString('latin1'))) fail(`leakage pattern in packed file: ${e}`)
   }
 
-  console.log(`[validate-main-tarball] ${meta.filename}: ${entries.length} files, ${names.length}/6 platforms, ${nodeBins.length} binaries`)
+  console.log(`[validate-main-tarball] ${meta.filename}: ${entries.length} files, ${names.length}/${want.length} platforms, ${nodeBins.length} binaries`)
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true })
 }

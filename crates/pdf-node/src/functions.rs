@@ -18,6 +18,7 @@
 //!   - `validatePdfA(path, level)`    → validate a file against a PDF/A level
 
 use crate::document::{compliance_to_info, parse_pdfa_level, ComplianceReportInfo, PdfDocument};
+use crate::error;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use pdf_engine::PdfDocument as RustDocument;
@@ -28,8 +29,8 @@ use pdf_engine::PdfDocument as RustDocument;
 #[napi]
 pub fn open_pdf(path: String) -> Result<PdfDocument> {
     let bytes = std::fs::read(&path)
-        .map_err(|e| napi::Error::from_reason(format!("cannot read '{path}': {e}")))?;
-    PdfDocument::open(Buffer::from(bytes))
+        .map_err(|e| error::io("openPdf", format!("cannot read '{path}': {e}"), &e))?;
+    PdfDocument::open_bytes(bytes, "openPdf")
 }
 
 /// Merge multiple PDF files into a single output file.
@@ -44,12 +45,17 @@ pub fn open_pdf(path: String) -> Result<PdfDocument> {
 #[napi]
 pub fn merge_pdfs(paths: Vec<String>, output_path: String) -> Result<()> {
     if paths.is_empty() {
-        return Err(napi::Error::from_reason("paths must not be empty"));
+        return Err(error::unsupported("mergePdfs", "paths must not be empty"));
     }
     let mut doc = pdf_manip::pages::merge(&paths)
-        .map_err(|e| napi::Error::from_reason(format!("merge failed: {e}")))?;
-    doc.save(&output_path)
-        .map_err(|e| napi::Error::from_reason(format!("cannot write '{output_path}': {e}")))?;
+        .map_err(|e| error::manip("mergePdfs", format!("merge failed: {e}"), e))?;
+    doc.save(&output_path).map_err(|e| {
+        error::io(
+            "mergePdfs",
+            format!("cannot write '{output_path}': {e}"),
+            &e,
+        )
+    })?;
     Ok(())
 }
 
@@ -68,10 +74,10 @@ pub fn merge_pdfs(paths: Vec<String>, output_path: String) -> Result<()> {
 #[napi]
 pub fn validate_pdfa(path: String, level: String) -> Result<ComplianceReportInfo> {
     let bytes = std::fs::read(&path)
-        .map_err(|e| napi::Error::from_reason(format!("cannot read '{path}': {e}")))?;
+        .map_err(|e| error::io("validatePdfa", format!("cannot read '{path}': {e}"), &e))?;
     let doc = RustDocument::open(bytes)
-        .map_err(|e| napi::Error::from_reason(format!("invalid PDF '{path}': {e}")))?;
-    let pdfa_level = parse_pdfa_level(&level)?;
+        .map_err(|e| error::engine_with("validatePdfa", format!("invalid PDF '{path}': {e}"), e))?;
+    let pdfa_level = parse_pdfa_level(&level, "validatePdfa")?;
     let report = pdf_compliance::validate_pdfa(doc.pdf(), pdfa_level);
     Ok(compliance_to_info(report))
 }

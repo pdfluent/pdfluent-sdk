@@ -3,8 +3,8 @@ use crate::device::Device;
 use crate::font::glyph_simulator::GlyphSimulator;
 use crate::font::true_type::{Width, read_encoding, read_widths};
 use crate::font::{
-    Encoding, Glyph, Type3Glyph, UNITS_PER_EM, glyph_name_to_unicode, normalized_glyph_name,
-    read_to_unicode,
+    Encoding, Glyph, Type3Glyph, UNITS_PER_EM, glyph_name_to_bfstring, is_control_only,
+    normalized_glyph_name, read_to_unicode,
 };
 use crate::interpret::state::TextState;
 use crate::soft_mask::SoftMask;
@@ -111,7 +111,12 @@ impl<'a> Type3<'a> {
             .and_then(|t| t.lookup_bf_string(char_code))
             && c != BfString::Char('\0')
         {
-            return Some(c);
+            if !is_control_only(&c) {
+                return Some(c);
+            }
+            // A value of only control characters is no text: the /Encoding
+            // name speaks first, and the value stands when it cannot.
+            return self.encoding_name_to_unicode(char_code as u8).or(Some(c));
         }
 
         // Type3 fonts do carry an /Encoding dictionary (read into
@@ -125,32 +130,18 @@ impl<'a> Type3<'a> {
         // as only `--- Page N ---` markers.
         let code = char_code as u8;
 
-        // 2) /Encoding /Differences — a Type3-specific glyph name.
-        //    Try the literal name first, then its normalized alias.
-        if let Some(name) = self.encodings.get(&code)
-            && let Some(ch) = glyph_name_to_unicode(name)
-                .or_else(|| glyph_name_to_unicode(normalized_glyph_name(name)))
-        {
-            return Some(BfString::Char(ch));
-        }
-
-        // 3) Base encoding (Standard / WinAnsi / MacRoman / MacExpert) →
-        //    AGL. For `Encoding::BuiltIn` this returns None, so we fall
-        //    through to the ASCII identity below.  Try normalized alias too.
-        if let Some(name) = self.encoding.map_code(code)
-            && let Some(ch) = glyph_name_to_unicode(name)
-                .or_else(|| glyph_name_to_unicode(normalized_glyph_name(name)))
-        {
-            return Some(BfString::Char(ch));
+        // 2) + 3) The glyph name from /Encoding.
+        if let Some(text) = self.encoding_name_to_unicode(code) {
+            return Some(text);
         }
 
         // 4) Adobe Standard as last-resort encoding guess. Most legacy
         //    Type3 OCR fonts layout ASCII-compatible content even with
         //    `Encoding::BuiltIn`.
         if let Some(name) = Encoding::Standard.map_code(code)
-            && let Some(ch) = glyph_name_to_unicode(name)
+            && let Some(text) = glyph_name_to_bfstring(name)
         {
-            return Some(BfString::Char(ch));
+            return Some(text);
         }
 
         // 5) Printable-ASCII identity. Emitting a possibly-wrong character
@@ -160,6 +151,27 @@ impl<'a> Type3<'a> {
         }
 
         None
+    }
+
+    /// The text the code's glyph name reads as, where the font's /Encoding
+    /// names one.
+    fn encoding_name_to_unicode(&self, code: u8) -> Option<BfString> {
+        // /Encoding /Differences — a Type3-specific glyph name. Try the
+        // literal name first, then its normalized alias.
+        if let Some(name) = self.encodings.get(&code)
+            && let Some(text) = glyph_name_to_bfstring(name)
+                .or_else(|| glyph_name_to_bfstring(normalized_glyph_name(name)))
+        {
+            return Some(text);
+        }
+
+        // Base encoding (Standard / WinAnsi / MacRoman / MacExpert) → AGL.
+        // For `Encoding::BuiltIn` this returns None, so the caller falls
+        // through to its guesses. Try the normalized alias too.
+        self.encoding.map_code(code).and_then(|name| {
+            glyph_name_to_bfstring(name)
+                .or_else(|| glyph_name_to_bfstring(normalized_glyph_name(name)))
+        })
     }
 
     pub(crate) fn render_glyph(
@@ -224,21 +236,18 @@ impl<'a> Type3<'a> {
             glyph.nesting_depth + 1,
         );
 
-        let mut resources = Resources::from_parent(
-            self.dict.get(RESOURCES).unwrap_or_default(),
-            glyph.parent_resources.clone(),
-        );
-
-        // Technically not valid, but also support by Adobe Acrobat. See PDFBOX-5294.
-        if let Some(procs_resources) = program.dict().get::<Dict<'_>>(RESOURCES) {
-            resources = Resources::from_parent(procs_resources, resources);
-        }
+        let resources = program
+            .dict()
+            .get(RESOURCES)
+            .or_else(|| self.dict.get(RESOURCES))
+            .map(Resources::new);
+        let resources = resources.as_ref().unwrap_or(&glyph.parent_resources);
 
         if is_shape_glyph {
             let mut device = Type3ShapeGlyphDevice::new(device, paint.clone());
-            interpret(iter, &resources, &mut context, &mut device);
+            interpret(iter, resources, &mut context, &mut device);
         } else {
-            interpret(iter, &resources, &mut context, device);
+            interpret(iter, resources, &mut context, device);
         }
 
         Some(())

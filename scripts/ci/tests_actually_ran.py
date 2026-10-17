@@ -19,20 +19,22 @@ defect: the number that distinguishes them was printed and nobody read it.
 
 HOW THIS READS THE NUMBER
 
-Each of the five bindings uses a different runner, so there are five formats to
-recognise. A runner that changes its wording, or a build that dies before the
-summary, leaves nothing to match -- and that case FAILS. It has to: a parser
-that shrugs at unrecognised output is how a check stops looking without anyone
+Each of the five bindings uses a different runner, plus `cargo` for the Rust
+suites this guard wraps directly, so there are six formats to recognise. A
+runner that changes its wording, or a build that dies before the summary,
+leaves nothing to match -- and that case FAILS. It has to: a parser that
+shrugs at unrecognised output is how a check stops looking without anyone
 noticing, and the alternative reading ("no summary, so probably fine") is
 exactly the state this guard exists to detect.
 
 Counts from several summary lines are added, because `make -C ... run` executes
-two C binaries and each prints its own.
+two C binaries and each prints its own, and `cargo test` prints one `test
+result:` line per target.
 
 Usage:
     tests_actually_ran.py <runner> -- <command> [args...]
 
-    runner: capi | dotnet | java | node | python
+    runner: capi | cargo | dotnet | java | node | python
 
 Exit codes:
     0  the command succeeded and a positive test count was reported
@@ -43,6 +45,7 @@ Exit codes:
 # Raakt er een kwijt, dan draait die bindingjob weer kaal en is nul tests
 # weer niet te onderscheiden van alle tests. Vastgezet in
 # scripts/ci/test_tests_actually_ran.py, dat de vijf sleutels controleert.
+# `cargo` rijdt mee voor de CLI-suite en telt niet mee voor de ondergrens.
 
 from __future__ import annotations
 
@@ -63,6 +66,9 @@ FORMATS: dict[str, list[re.Pattern[str]]] = {
         re.compile(r"^Results:\s+\d+/(?P<n>\d+)\s+passed", re.M),
         re.compile(r"^(?:\s*)\d+/(?P<n>\d+)\s+tests passed", re.M),
     ],
+    # test result: ok. 42 passed; 0 failed; 0 ignored; ...   (cargo, one
+    # line per target; the totals add up like the capi ones)
+    "cargo": [re.compile(r"^test result:\s+ok\.\s+(?P<n>\d+) passed", re.M)],
     # Passed!  - Failed: 0, Passed: 39, Skipped: 0, Total: 39, Duration: ...
     "dotnet": [re.compile(r"Total:\s*(?P<n>\d+)", re.M)],
     # Tests run: 24, Failures: 0, Errors: 0, Skipped: 0

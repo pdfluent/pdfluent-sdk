@@ -55,7 +55,10 @@ REPO = Path(__file__).resolve().parent.parent.parent
 OUT = REPO / "docs" / "CAPABILITY_REGISTER.md"
 
 sys.path.insert(0, str(REPO / "scripts" / "ci"))
-from feature_promises import PROMISES  # noqa: E402  single source of truth for promises
+from feature_promises import CLI_COMMANDS, PROMISES  # noqa: E402  single source of truth for promises
+from pdfa_flavours import (  # noqa: E402  one declaration of a flavour
+    CALLER_REACHABLE, FLAVOURS, measured_flavours,
+)
 from api_coverage import BINDINGS, impl_blocks  # noqa: E402  one definition of what each binding exports
 
 # Bodies that mean "this method exists but does nothing at runtime".
@@ -69,6 +72,26 @@ EXCLUDED_FROM_SUITE = {
     "xfa-wasm": "sanity:wasm-binding-smoke",
     "pdf-desktop": None,  # nothing runs it
 }
+
+
+def measured_pdfa_flavours() -> list[str]:
+    """The PDF/A flavours a committed baseline file actually covers.
+
+    The register says what has been measured, not what somebody hopes is true,
+    so this reads `benchmarks/pdfa/conformance_baseline*.json` through
+    `pdfa_flavours.py` rather than naming levels. A flavour claimed in the C
+    header or on the website with no baseline behind it is caught by
+    `a_pdfa_flavour_has_a_baseline.py`, which reads the same list.
+
+    "engine only" marks a level measured against the shipping `convert_bytes`
+    that no binding exposes: `PdfAProfile` has three variants and the C ABI
+    refuses the rest by name. Measured is not the same as offered, and this row
+    is the one place a reader would otherwise conflate them. (codex, #443)
+    """
+    return [
+        FLAVOURS[name].iso if name in CALLER_REACHABLE else f"{FLAVOURS[name].iso} (engine only)"
+        for name in measured_flavours()
+    ]
 
 
 def run(cmd: list[str]) -> str:
@@ -328,7 +351,7 @@ def binding_exports() -> dict[str, set[str]]:
         # Merge, split and compress are all pyo3 *methods*: without this, Python
         # reads as not exposing capabilities it has exposed since day one.
         scan = text
-        for block in impl_blocks(text, b.impl_attrs):
+        for _attr, block in impl_blocks(text, b.impl_attrs):
             for m in re.finditer(r"pub (?:async )?fn (\w+)", block):
                 names.add(m.group(1))
         for pattern, group in b.export_patterns:
@@ -432,6 +455,17 @@ def analyse() -> dict:
             "bindings": bindings,
             "impl": sorted(set(impl_files)), "tests": sorted(set(test_files)),
             "jobs": sorted(jobs), "reachable": reachable, "state": state,
+            # A capability with more than one conformance target says which of
+            # them has evidence. Derived from the baseline files, never typed
+            # here: a hand-kept list is exactly the shape of statement that was
+            # four months out of date three times over. (#443)
+            "flavours": measured_pdfa_flavours() if feature == "PDF to PDF/A" else [],
+            # The CLI command(s) serving this capability. Typed in
+            # feature_promises.py next to the promise itself, so the mapping
+            # is reviewed where the promise is made; the drift test
+            # (pdfluent-cli tests/cli_drift.rs) fails a capability whose
+            # command is missing or untested.
+            "cli": CLI_COMMANDS.get(feature, []),
         })
 
     # Crate-level view: everything published, whether reachable, whether tested.
@@ -574,6 +608,9 @@ def render(a: dict) -> str:
         w(f"| **Exposed in bindings** | {' · '.join(r['bindings']) or '**Rust only**'} |")
         w(f"| **Tested by** | {' · '.join(f'`{p}`' for p in r['tests'][:5]) or '**nothing**'} |")
         w(f"| **Run in CI by** | {' · '.join(f'`{j}`' for j in r['jobs']) or '**no job**'} |")
+        w(f"| **CLI** | {' · '.join(f'`pdfluent {c}`' for c in r['cli']) or '**none**'} |")
+        if r["flavours"]:
+            w(f"| **Conformance levels measured** | {' · '.join(r['flavours'])} |")
         w()
 
     # ---- the action list -------------------------------------------------- #

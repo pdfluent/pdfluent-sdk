@@ -21,6 +21,7 @@ let PdfDocument, openPdf, mergePdfs, validatePdfa;
 try {
   ({ PdfDocument, openPdf, mergePdfs, validatePdfa } = require('../index'));
 } catch (e) {
+  process.stderr.write('SKIPPED (not a pass): native addon not built — pdf-node smoke suite not checked\n');
   describe.skip('pdf-node (native module not built)', () => {
     test('placeholder', () => {});
   });

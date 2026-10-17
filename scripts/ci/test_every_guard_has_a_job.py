@@ -63,6 +63,10 @@ def build(
     min_scripts: int = 2,
     excused_to_the_gate: str | None = None,
     in_the_gate: list[str] | None = None,
+    in_a_called_workflow: list[str] | None = None,
+    call_it: bool = True,
+    release_on_github: list[str] | None = None,
+    release_unreferenced: list[str] | None = None,
 ) -> Path:
     """A synthetic repository, and the path to the script inside it.
 
@@ -70,16 +74,32 @@ def build(
     workflow_dispatch alone; `parked` guards get one in the pull-request
     workflow, in a job behind `needs: parked`. Both are the shape from #1633: a
     real `run:` line that no pull request will ever execute.
+
+    `in_a_called_workflow` guards get a `run:` in a `workflow_call`-only
+    workflow -- the shape of the heavy suites since #350. With `call_it` the
+    blocking workflow calls it and the guard stands before a merge after all;
+    without it, nothing starts that workflow and the guard stands before
+    nothing. The two cases must come out differently. (#361)
+
+    `release_on_github` / `release_unreferenced` are scripts under
+    scripts/release/ rather than scripts/ci/: the scan covers the release
+    lane's home too, and an unreferenced release script is an orphan the
+    same way.
     """
     ci = tmp / "scripts" / "ci"
     ci.mkdir(parents=True)
+    rel = tmp / "scripts" / "release"
+    rel.mkdir(parents=True)
     flows = tmp / ".github" / "workflows"
     flows.mkdir(parents=True)
 
     names = (set(on_github) | set(on_gitlab) | set(unreferenced or [])
-             | set(dispatch_only or []) | set(parked or []))
+             | set(dispatch_only or []) | set(parked or [])
+             | set(in_a_called_workflow or []))
     for name in names:
         (ci / name).write_text("#!/bin/sh\nexit 0\n")
+    for name in (release_on_github or []) + (release_unreferenced or []):
+        (rel / name).write_text("#!/bin/sh\nexit 0\n")
 
     (tmp / ".gitlab-ci.yml").write_text(
         "stages: [sanity]\n"
@@ -95,6 +115,10 @@ def build(
             f"      - name: step {i}\n        run: python3 scripts/ci/{n}\n"
             for i, n in enumerate(on_github)
         )
+        + "".join(
+            f"      - name: release step {i}\n        run: python3 scripts/release/{n}\n"
+            for i, n in enumerate(release_on_github or [])
+        )
         # The parked shape from crash-guard.yml and gate-ci.yml: a job that
         # always fails, and a real job behind it that therefore never starts.
         + "  parked:\n    runs-on: ubuntu-latest\n    steps:\n"
@@ -104,7 +128,20 @@ def build(
             f"      - name: parked step {i}\n        run: python3 scripts/ci/{n}\n"
             for i, n in enumerate(parked or [])
         )
+        + (
+            "  called:\n    uses: ./.github/workflows/suite.yml\n"
+            if in_a_called_workflow and call_it else ""
+        )
     )
+    if in_a_called_workflow:
+        (flows / "suite.yml").write_text(
+            "name: Suite\non:\n  workflow_call:\n"
+            "jobs:\n  suite:\n    runs-on: ubuntu-latest\n    steps:\n"
+            + "".join(
+                f"      - name: step {i}\n        run: python3 scripts/ci/{n}\n"
+                for i, n in enumerate(in_a_called_workflow)
+            )
+        )
     (flows / "dispatch.yml").write_text(
         "name: By hand\non:\n  workflow_dispatch:\n"
         "jobs:\n  guard:\n    runs-on: ubuntu-latest\n    steps:\n"
@@ -367,6 +404,57 @@ case(
 )
 
 print()
+# A reusable workflow called by the blocking one. Since #350 the heavy suites
+# have no trigger of their own -- `security-audit.yml` and the three beside it
+# are `workflow_call` only and the wave calls them -- so judging a workflow on
+# its own events alone reported every script they run as standing before no
+# merge, while their red is the caller's red. (#361)
+case(
+    "a guard in a workflow the blocking one calls stands before a merge",
+    0,
+    on_github=["a.py"],
+    on_gitlab=["c.py"],
+    in_a_called_workflow=["suite.py"],
+    register=ENTRY.format(name="c.py"),
+    ratchet=1,
+)
+
+# And the other half, or the first case would pass by being lenient about
+# workflow_call as such: a reusable workflow nobody calls still starts nowhere.
+case(
+    "a guard in a reusable workflow nothing calls does not",
+    1,
+    "NO REASON WRITTEN DOWN",
+    on_github=["a.py"],
+    on_gitlab=["c.py"],
+    in_a_called_workflow=["suite.py"],
+    call_it=False,
+    register=ENTRY.format(name="c.py"),
+    ratchet=1,
+)
+
+# The release lane's home is scanned too: a scripts/release script with a job
+# is covered, and one without is an orphan that names its real path.
+case(
+    "a release script with a job is covered",
+    0,
+    on_github=["a.py"],
+    on_gitlab=["c.py"],
+    release_on_github=["lane.py"],
+    register=ENTRY.format(name="c.py"),
+    ratchet=1,
+)
+case(
+    "a release script without a job is an orphan",
+    1,
+    "scripts/release/nowhere.py",
+    on_github=["a.py", "b.py"],
+    on_gitlab=["c.py"],
+    release_unreferenced=["nowhere.py"],
+    register=ENTRY.format(name="c.py"),
+    ratchet=1,
+)
+
 if failures:
     print(f"{len(failures)} case(s) failed:\n", file=sys.stderr)
     for f in failures:

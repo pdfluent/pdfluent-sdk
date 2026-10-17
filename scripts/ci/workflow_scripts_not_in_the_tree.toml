@@ -1,0 +1,20 @@
+# Script paths a GitHub workflow names that are not in the tree.
+#
+# scripts/ci/a_workflow_runs_no_script_that_is_not_there.py refuses any other
+# one. An entry here is debt that is counted, not debt that is hidden: it needs
+# a reason and the ticket that removes it, and the guard fails if the path it
+# names has since appeared (an exception nobody retires is how a register stops
+# describing anything).
+
+[["missing"]]
+workflow = "enterprise-acceptance.yml"
+path = "scripts/generate_reference_pngs.py"
+reden = """
+The step has never run: it is behind `env.PDFREST_API_KEYS_JSON != ''` and that
+secret is not set, so a script that was never committed has sat in a `run:`
+body without anyone finding out. This is the shape that made the GitLab half of
+this check exist (a release job calling a publish_ordered.sh that was not in
+the repository). Found 16-09-2026 by this guard's first run; the step and its
+reference are somebody's to remove or restore, and this line exists so the
+guard can be green about every other path meanwhile."""
+ticket = 358

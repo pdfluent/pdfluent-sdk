@@ -9,7 +9,7 @@
     "url": "https://github.com/pdfluent/pdfluent-sdk/blob/main/crates/pdfluent/examples/site_snippets.rs",
     "site_url": "https://pdfluent.com/cookbook/"
   },
-  "digest": "2360b2bb53da90ca09e5dbd0e41578397e54146c4dc440ecc9bdf67f21bd21c1",
+  "digest": "973eb7344193f15c095349f345dfbcac12c16bbae0c728150314816950374c3d",
   "recipes": [
     {
       "slug": "extract-text",
@@ -38,6 +38,13 @@
       "title": "Work on a PDF that headless Chrome produced",
       "intent": "Watermark, compress and archive an exported document; PDFluent does not convert HTML itself.",
       "block": "after-chrome"
+    },
+    {
+      "slug": "extract-structure-for-rag",
+      "category": "pages",
+      "title": "Extract a document as markdown or as blocks",
+      "intent": "Write the document out as markdown for a RAG pipeline, or walk its blocks -- headings, list items, table cells -- to chunk and cite with.",
+      "block": "structured-extraction"
     },
     {
       "slug": "read-an-xfa-form",

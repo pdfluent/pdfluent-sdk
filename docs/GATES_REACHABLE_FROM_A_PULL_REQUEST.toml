@@ -39,11 +39,58 @@ Asks the GitHub API which self-hosted runners carry which labels. That needs a
 token with runner scope, which a pull request from a fork must never have.
 """
 
-# run_build.sh and run_clippy.sh had rows here. They are gone because ci.yml's
-# `workspace` job now runs those very scripts rather than repeating their flags
-# in a step of its own (#343), so the boundary reaches them and a row saying it
-# does not would be a register outliving its subject. run_test.sh arrived in the
-# same job and never needed one.
+# run_build.sh, run_clippy.sh and run_test.sh had rows here, lost them to #343's
+# `workspace` job in ci.yml, and have them back since 06-09-2026 (#350) -- with
+# the reason stated rather than the row silently restored, because a register
+# that oscillates is a register nobody reads.
+#
+# #343 gave them a job on the boundary by building the whole workspace on the
+# desktop on every push to master. That job is gone: on 06-09 that machine had
+# twenty-nine runs queued on four cores, and the workspace build went back to
+# the throwaway instance it came from. The boundary here is "the push to
+# master", and a two-hourly SCHEDULE is not that boundary, however much oftener
+# it runs than a weekly one.
+#
+# What that gives up is precise and worth writing down: a change that breaks the
+# build of a crate the landing did not touch is caught by the next wave, up to
+# two hours later, instead of by the push itself.
+
+[[exempt]]
+gate = "run_build.sh"
+why = """
+`cargo check` over the whole workspace. It runs in the `workspace` job of
+ci-ephemeral.yml, on a Hetzner instance bought per wave and thrown away, on a
+two-hourly schedule against master -- not on the push, because a workspace build
+on the one self-hosted runner is what put twenty-nine runs in its queue on
+06-09-2026, and a hosted runner is the most expensive place this repository
+could compile (#350, #333).
+
+The pre-push gate compiles the crates a landing touches before the push exists
+(#343), so what the wave adds is the crates it did not touch.
+"""
+
+[[exempt]]
+gate = "run_clippy.sh"
+why = """
+The same job, the same instance, the same wave, and the same reason: it is a
+compile, and compiles left this desktop on 06-09-2026 (#350). See run_build.sh.
+"""
+
+[[exempt]]
+gate = "run_excluded_dependents.sh"
+why = """
+The excluded crates a landing reaches, checked and tested natively (#623). It
+compiles, so it is a landing-lane gate like run_test.sh and runs on the same
+scheduled and tag pipeline, not on a pull-request runner.
+"""
+
+[[exempt]]
+gate = "run_test.sh"
+why = """
+The same job, the same instance, the same wave (#350). It is the most expensive
+of the three -- `cargo test --workspace` -- which is exactly why it is on a
+machine that is bought for it and deleted afterwards. See run_build.sh.
+"""
 
 [[exempt]]
 gate = "run_audit.sh"
@@ -96,10 +143,12 @@ behind the copy. Nothing failed; the answers were confident and wrong.
 
 It runs in the full lane of scripts/ci/local_ci_gate.sh, which is the landing and
 the machine that has the copies. What a pull request reaches is
-test_origin_is_the_source_in_every_checkout.py, in the guards job: seven cases on
+test_origin_is_the_source_in_every_checkout.py, in the guards job: nine cases on
 throwaway repositories, including the one that decides whether the guard is
-usable -- a worktree is not a second checkout, and there are 190 of them here.
-Added 05-09-2026 with #291.
+usable -- a worktree is not a second checkout, and there are 190 of them here --
+and the pair that holds a retired `.DEAD-` copy to being checked rather than
+named again on every landing.
+Added 05-09-2026 with #291; the retired pair 06-09-2026 with #340.
 """
 
 [[exempt]]
@@ -116,4 +165,136 @@ Added 05-09-2026 with #231, and the row is the second half of a repair rather
 than a new excuse: the guard had been booked as running "on the machine that
 mirrors" and was in fact called by nothing, for months. The backup was 348
 commits behind and 8 commits ahead at the same time before anybody looked.
+"""
+
+[[exempt]]
+gate = "the_fast_lane_stays_under_its_budget.py"
+why = """
+Reads the local gate's own timing table, which local_ci_gate.sh appends to on
+the machine where it runs. A pull-request runner has never run that gate, so the
+file is not there and the guard can only announce SKIPPED (not a pass) -- a
+permanent skip reporting the same green as a check, which is the exact shape
+this table exists to keep out of the pipeline.
+
+What a pull request reaches instead is test_the_fast_lane_stays_under_its_
+budget.py, in the guards job: seven cases over synthetic tables, and every one
+of them is a way of being green for the wrong reason -- no table, a table of
+runs from a machine at load 98, a landing-lane run read as a fast one, a
+half-written line. The case that carries it asserts the refusal NAMES the
+slowest gates, because a budget that says only "too slow" sends the reader back
+to the stopwatch this ticket was opened to retire.
+
+Added 07-09-2026 with #425. The lane was measured at nineteen to twenty-seven
+minutes against a three-minute intent, and the reason nobody knew is that a gate
+run printed a verdict per gate and no times at all.
+"""
+
+[[exempt]]
+gate = "the_mirror_agent_is_running.py"
+why = """
+Asks whether one launchd agent on one Mac is loaded and still finishing runs.
+That agent pushes the GitLab backup, and it exists on exactly one machine; a
+pull-request runner has no plist, so the guard answers "not this machine" and
+passes. Running it there would prove nothing and would teach people that a green
+mirror check means the mirror is being pushed.
+
+What a pull request DOES reach is its test, which is hermetic -- a stub
+launchctl on a built PATH, throwaway state directories, no network -- and that
+test is registered in ci.yml. So the mechanism is covered where a stranger can
+see it, and the machine-specific fact is checked on the machine that has it.
+
+The consequence of the agent stopping is still checked everywhere:
+mirror_has_not_drifted.py fails on any machine once the backup is fifty commits
+or two days behind. This is the earlier alarm, not the only one (#231)."""
+
+[[exempt]]
+gate = "every_worktree_runs_the_tracked_hooks.py"
+why = """
+Asks what the per-worktree git config of THIS clone says about hooks. A
+pull-request runner is a checkout actions/checkout made a minute earlier: one
+worktree, `core.hooksPath` unset, `extensions.worktreeConfig` off. The guard
+answers "nothing is installed here, and that is not my question" and passes --
+every time, on every pull request, which is the shape of a green tick that
+looked at nothing.
+
+The clone it is about is the operator's: 72 worktrees on 10-09-2026, of which
+two pointed `core.hooksPath` at `<clone>/.git/hooks`, a directory holding
+git's samples and no hook of this repository. Commits written there ran no
+identity check, no sign-off and no attribution guard.
+
+What a pull request DOES reach is its test, in the guards job: it builds a real
+clone, turns `extensions.worktreeConfig` on, adds a real second worktree, sets a
+real per-worktree override, and requires the guard to find it -- and requires it
+to stay silent on a checkout where nothing is installed anywhere, which is the
+runner's own shape.
+
+Added 10-09-2026 with #454, beside the older half of the same question
+(the_commit_msg_hook_is_wired.py, which asks it once and of one worktree)."""
+
+[[exempt]]
+gate = "run_wasm_check.sh"
+why = "Owner decision 2026-09-12 disables paid integration workflows. This check remains local in the landing/full lane; cloud execution is deferred until explicit authorization. No automatic integration verdict is claimed."
+
+[[exempt]]
+gate = "the_node_error_contract_holds.sh"
+why = """
+Compiles the pdf-node cdylib and the engine under it, then runs jest against the
+result (#587). The push-to-master runner carries light guards only and does no
+build work (07-09-2026, after a build there took the desktop down); the job that
+would build the addon, build-and-test in node-bindings.yml, fires on a release
+tag. So it runs where the workspace is already compiled: the landing lane, as a
+crate gate on pdf-node. What it depends on that a light runner CAN check -- the
+catalogue's Node column against the exported classes -- runs in ci.yml as
+error_catalogue_sync.sh with its mutation test.
+"""
+
+[[exempt]]
+gate = "check_large_blobs.sh"
+why = """
+Judges the files a BRANCH adds against github/master (#599). On the push to
+master that range is empty, so a step there would pass having read nothing --
+the one answer this guard must never give. It runs in the fast lane, where the
+branch is, and refuses outright when it cannot read the base.
+"""
+
+[[exempt]]
+gate = "the_repositories_stand_as_intended.py"
+why = """
+Lists the organisation's repositories including the private ones, which needs gh
+signed in as a member (#637). GITHUB_TOKEN on a hosted runner sees only its own
+repository, so the guard would report SKIPPED (not a pass) on every run. Its TEST
+runs in publication-guards with a fake gh, so the mechanism stays covered.
+"""
+
+[[exempt]]
+gate = "tests_actually_ran.py"
+why = """
+Wraps a compiling cargo suite (`crate_gate clitest`: `cargo test -p pdfluent-cli`)
+to prove it ran at least one test. The push-to-master runner carries light guards
+only and does no build work (07-09-2026), so its CI twin is the `clitest` job in
+ci-ephemeral.yml, on the bought-and-thrown-away instance with the rest of the
+wave (#350). The wrapper itself is light and IS reachable: its own test,
+test_tests_actually_ran.py, runs in ci.yml.
+"""
+
+[[exempt]]
+gate = "semver_gate.sh"
+why = """
+cargo-semver-checks against the v1.0.0 tag, for every published crate, plus the
+new-public-enum check. It builds every crate twice (head and baseline) with a
+pinned nightly rustdoc. The push-to-master runner carries light guards only and
+does no build work (07-09-2026). Its CI twin is the `semver` step in
+publish-crates.yml, which runs before any crate is published. Since 14-10-2026 the
+local landing and full lanes run it too (machine gate), so a 1.x break shows
+before a release rather than at publish.
+"""
+
+[[exempt]]
+gate = "test_new_enums_are_sealed.sh"
+why = """
+Runs check_new_public_enums.py for pdf-engine and pdfluent with the semver gate's
+feature list. Like semver_gate.sh it needs a rustdoc JSON build of both crates and
+the pinned nightly, which the light push-to-master runner does not do. The same
+check runs inside semver_gate.sh in publish-crates.yml before publishing. Locally
+it runs as the `enumseal` gate (landing and full lanes).
 """

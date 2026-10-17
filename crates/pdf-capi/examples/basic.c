@@ -3,15 +3,20 @@
  *
  * Build:
  *   cargo build -p pdf-capi --release
- *   cc -o basic examples/basic.c -L../../target/release -lpdf_capi -I.
+ *   make -C crates/pdf-capi/examples
  *
  * Run:
- *   ./basic input.pdf
+ *   make -C crates/pdf-capi/examples run-basic FILE=input.pdf
  */
 
 #include <stdio.h>
 #include <stdlib.h>
-#include "pdf_capi.h"
+/* The canonical header. `pdf_capi.h` beside it is a compatibility alias kept
+ * for Swift module maps, and its own first lines say new code should include
+ * this one -- so the example a C reader is pointed at includes this one. It
+ * was including the alias, which is not in `include/`, so `make` here could
+ * not find it even once the example list was correct (#515). */
+#include "pdfluent.h"
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {

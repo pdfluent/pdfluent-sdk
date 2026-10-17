@@ -228,12 +228,28 @@ fn payload_length(dict: &Dictionary, data: &[u8]) -> Option<usize> {
 }
 
 pub(crate) fn decode(stream: &[u8]) -> Result<Content<Vec<Operation>>> {
+    decode_impl(stream, false)
+}
+
+/// Require the complete stream to parse before claiming glyph usage or editing positions.
+#[cfg(feature = "pdfa-convert")]
+pub(crate) fn decode_strict(stream: &[u8]) -> Result<Content<Vec<Operation>>> {
+    decode_impl(stream, true)
+}
+
+fn decode_impl(stream: &[u8], strict: bool) -> Result<Content<Vec<Operation>>> {
+    let parse = |bytes: &[u8]| {
+        if strict {
+            Content::decode_strict(bytes)
+        } else {
+            Content::decode(bytes)
+        }
+    };
     if !stream.windows(2).any(|w| w == b"BI") {
         if super::content_editor::content_stream_too_deeply_nested(stream) {
             return Err(invalid());
         }
-        return Content::decode(stream)
-            .map_err(|e| ManipError::Other(format!("content decode: {e}")));
+        return parse(stream).map_err(|e| ManipError::Other(format!("content decode: {e}")));
     }
 
     let mut marker = "PdfManipInlineImage".to_string();
@@ -309,8 +325,8 @@ pub(crate) fn decode(stream: &[u8]) -> Result<Content<Vec<Operation>>> {
     if super::content_editor::content_stream_too_deeply_nested(&rewritten) {
         return Err(invalid());
     }
-    let mut parsed = Content::decode(&rewritten)
-        .map_err(|e| ManipError::Other(format!("content decode: {e}")))?;
+    let mut parsed =
+        parse(&rewritten).map_err(|e| ManipError::Other(format!("content decode: {e}")))?;
     for op in &mut parsed.operations {
         if op.operator == marker {
             let n = op

@@ -4,7 +4,7 @@ XFA-QF1-C: FormCalc residual scan
 =================================
 
 First automated FormCalc-only residual scan for the Quality Factory V1
-programme. Runs `pdfluent flatten` over a corpus with
+programme. Runs `xfa-runner flatten` over a corpus with
 `XFA_FORMCALC_DEBUG=1` so the `crates/pdf-xfa/src/dynamic.rs`
 `execute_formcalc_script` path emits a structured `XFA_FORMCALC_DEBUG
 stage=... activity=... message=...` line for every failed FormCalc
@@ -34,7 +34,7 @@ Scope guarantees (per QF1-C plan):
 
 Usage:
     python3 scripts/xfa_formcalc_residual_scan.py \\
-        --binary ./target/release/pdfluent \\
+        --binary ./target/release/xfa-runner \\
         --corpus-dir crates/xfa-golden-tests/golden \\
         --output-dir benchmarks/runs/xfa_enterprise_plan/quality_factory_v1 \\
         [--extra-corpus-dir corpus] \\
@@ -498,7 +498,7 @@ def write_report(
         '',
         '```bash',
         'python3 scripts/xfa_formcalc_residual_scan.py \\',
-        '    --binary ./target/release/pdfluent \\',
+        '    --binary ./target/release/xfa-runner \\',
         '    --corpus-dir crates/xfa-golden-tests/golden \\',
         '    --output-dir benchmarks/runs/xfa_enterprise_plan/quality_factory_v1',
         '```',
@@ -516,7 +516,7 @@ def write_report(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='XFA-QF1-C FormCalc residual scan')
-    parser.add_argument('--binary', default='./target/release/pdfluent')
+    parser.add_argument('--binary', default='./target/release/xfa-runner')
     parser.add_argument('--corpus-dir', default='crates/xfa-golden-tests/golden')
     parser.add_argument('--extra-corpus-dir', default=None)
     parser.add_argument(

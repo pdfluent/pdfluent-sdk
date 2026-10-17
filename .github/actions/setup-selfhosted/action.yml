@@ -1,0 +1,95 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+name: Set up the self-hosted toolchain
+description: >-
+  Install the release toolchains on a bare self-hosted runner (Linux, macOS,
+  Windows), pinned to #636. Self-hosted jobs must not assume the GitHub image:
+  each one calls this with the tools it needs instead of actions/setup-*.
+
+  The version defaults are the #636 pins (node 20, python 3.12, rust 1.94.0,
+  java 17, maturin 1.15.0, dotnet 8, napi 2.18.0, maven 3.9.9); the release
+  workflows pass the versions they already use (node 24, python 3.11 where
+  that is what the job has) so both pools build alike. wasm-bindgen-cli is
+  always read from Cargo.lock, like wasm.yml does.
+
+  Idempotent: a tool already present at the wanted version is kept, and every
+  tool logs its version. The Windows runner checks the MSVC build tools
+  first and refuses clearly without them; the image provides them.
+
+inputs:
+  tools:
+    description: 'Comma-separated subset of rust node python maturin java dotnet wasm napi zig docker'
+    required: true
+  rust-version:
+    description: 'Rust toolchain (a rustup name: 1.94.0, stable, ...)'
+    required: false
+    default: '1.94.0'
+  rust-targets:
+    description: 'Extra rust targets, space- or comma-separated'
+    required: false
+    default: ''
+  node-version:
+    description: 'Node major (20) or exact version (20.18.1); a major resolves to its latest release'
+    required: false
+    default: '20'
+  python-version:
+    description: 'Python minor (3.11, 3.12, ...)'
+    required: false
+    default: '3.12'
+  maturin-version:
+    description: 'Exact maturin pin'
+    required: false
+    default: '1.15.0'
+  java-version:
+    description: 'Temurin major'
+    required: false
+    default: '17'
+  maven-version:
+    description: 'Exact maven pin'
+    required: false
+    default: '3.9.9'
+  dotnet-version:
+    description: 'Dotnet SDK major'
+    required: false
+    default: '8'
+  napi-version:
+    description: '@napi-rs/cli version (the repo pin wins when the checkout has it)'
+    required: false
+    default: '2.18.0'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up the toolchain (Linux, macOS)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: >-
+        bash "$GITHUB_WORKSPACE/scripts/release/selfhosted_setup.sh"
+        --tools "${{ inputs.tools }}"
+        --rust-version "${{ inputs.rust-version }}"
+        --rust-targets "${{ inputs.rust-targets }}"
+        --node-version "${{ inputs.node-version }}"
+        --python-version "${{ inputs.python-version }}"
+        --maturin-version "${{ inputs.maturin-version }}"
+        --java-version "${{ inputs.java-version }}"
+        --maven-version "${{ inputs.maven-version }}"
+        --dotnet-version "${{ inputs.dotnet-version }}"
+        --napi-version "${{ inputs.napi-version }}"
+    - name: Set up the toolchain (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: >-
+        & "$env:GITHUB_WORKSPACE/scripts/release/selfhosted_setup.ps1"
+        -Tools "${{ inputs.tools }}"
+        -RustVersion "${{ inputs.rust-version }}"
+        -RustTargets "${{ inputs.rust-targets }}"
+        -NodeVersion "${{ inputs.node-version }}"
+        -PythonVersion "${{ inputs.python-version }}"
+        -MaturinVersion "${{ inputs.maturin-version }}"
+        -JavaVersion "${{ inputs.java-version }}"
+        -MavenVersion "${{ inputs.maven-version }}"
+        -DotnetVersion "${{ inputs.dotnet-version }}"
+        -NapiVersion "${{ inputs.napi-version }}"

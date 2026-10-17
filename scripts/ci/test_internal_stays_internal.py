@@ -28,6 +28,7 @@ Exit codes:
 """
 from __future__ import annotations
 
+import shutil
 import pathlib
 import subprocess
 import sys
@@ -38,7 +39,7 @@ GUARD = HERE / "internal_stays_internal.py"
 sys.path.insert(0, str(HERE))
 from fixture_env import sealed_env  # noqa: E402
 
-MINIMUM_CASES = 26  # FLOOR: fewer means a case went missing, not that all is well
+MINIMUM_CASES = 42  # FLOOR: fewer means a case went missing, not that all is well
 
 # Two fixture document names, in the shape the real pattern uses: an eight-hex
 # prefix and a series name. They are invented; naming a real one here would put
@@ -260,6 +261,43 @@ def main() -> int:
     r = case("--tree", tracked=GREEN_TRACKED, manifest_text=GREEN_MANIFEST)
     expect("--tree without a directory is an error, not a pass",
            r.returncode == 1 and "needs a directory" in r.stderr, tail(r))
+
+    # --- the root a stranger meets (#351) -------------------------------
+    # These cases run against the REAL manifest, not a fixture one, because the
+    # thing being asserted is what THIS repository keeps back -- and the way that
+    # breaks is somebody deleting a line from docs/PUBLIC_TREE.toml, which a
+    # fixture manifest cannot notice.
+    #
+    # Measured on the seeded repository the day after it went public: every path
+    # below was in the published root. Planning documents above the README,
+    # the working method, merge scraps, runner tooling, and four guards whose
+    # input (`CLAUDE.md`, `.claude/territories.toml`) this same change keeps
+    # back -- a guard published without what it reads is the defect #222 already
+    # paid for once.
+    with tempfile.TemporaryDirectory() as d:
+        root = scratch(pathlib.Path(d), tracked=GREEN_TRACKED,
+                       manifest_text=(HERE.parent.parent / "docs" /
+                                      "PUBLIC_TREE.toml").read_text(encoding="utf-8"))
+        for pad in ("project briefing.md", "BACKLOG.md", "IMPLEMENTATION_GUIDE.md",
+                    "spec_review_t1_layout.md", "spec_review_cx_formcalc.md",
+                    "CLAUDE.md", ".claude/territories.toml", ".claude/skills/a.md",
+                    "work/1327_ours_new.txt", "infra/reaper/install.sh",
+                    ".gitlab-ci-wasm-dry-run.yml", ".gitlab-ci-wasm-opt-parity.yml",
+                    "scripts/ci/territories_do_not_overlap.py",
+                    "scripts/ci/the_topology_agrees_with_the_mirror_gate.py",
+                    "scripts/ci/origin_is_the_source_in_every_checkout.py",
+                    "scripts/ci/no_tracked_file_names_the_old_repository.py"):
+            tree = pathlib.Path(d) / "sdk"
+            shutil.rmtree(tree, ignore_errors=True)
+            (tree / "src").mkdir(parents=True)
+            (tree / "src" / "lib.rs").write_bytes(b"// nothing to see\n")
+            bestand = tree / pad
+            bestand.parent.mkdir(parents=True, exist_ok=True)
+            bestand.write_bytes(b"internal working material\n")
+            r = run_guard(root, "--tree", str(tree))
+            expect(f"the published tree refuses {pad}",
+                   r.returncode == 1 and "internal path(s) present" in r.stdout,
+                   tail(r))
 
     # --- the floors -----------------------------------------------------
     # A guard reading a shortened list reports success over nothing, and both

@@ -55,17 +55,18 @@ impl Outline {
     }
 }
 
-pub(crate) fn from_bookmark(b: &pdf_manip::bookmarks::Bookmark) -> Outline {
+pub(crate) fn from_outline_entry(b: &pdf_manip::bookmarks::OutlineEntry) -> Outline {
     use pdf_manip::bookmarks::BookmarkAction;
     let page = match &b.action {
         // pdf-manip pages are 1-based; the facade is 0-based.
-        BookmarkAction::GoTo { page, .. } => Some((*page).saturating_sub(1) as usize),
+        Some(BookmarkAction::GoTo { page, .. }) => Some((*page).saturating_sub(1) as usize),
+        // No destination, URI, named or external: no in-document page.
         _ => None,
     };
     Outline {
         title: b.title.clone(),
         page,
-        children: b.children.iter().map(from_bookmark).collect(),
+        children: b.children.iter().map(from_outline_entry).collect(),
     }
 }
 

@@ -20,7 +20,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Run XFA unit tests
         run: cargo test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver --release

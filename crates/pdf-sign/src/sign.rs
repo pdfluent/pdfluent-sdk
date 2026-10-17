@@ -9,6 +9,7 @@
 // the PDFluent Commercial Licence. See the LICENSE file in this repository --
 // that file travels with the copy you received, which a URL does not.
 
+use crate::byte_range::DigestAlgorithm;
 use crate::signer::{PdfSigner, SignError};
 use crate::types::{DocMdpPermission, SubFilter};
 use lopdf::dictionary;
@@ -89,8 +90,18 @@ pub fn sign_pdf_incremental(
         Document::load_mem(pdf_bytes).map_err(|e| SignError::CmsBuild(format!("load: {e}")))?;
     let mut doc = Document::new_from_prev(&prev);
     carry_over_structure(&prev, &mut doc);
+    // See the note in ltv.rs: a table increment can have its offsets corrected,
+    // a stream increment cannot without re-encoding it.
+    doc.reference_table.cross_reference_type = lopdf::xref::XrefType::CrossReferenceTable;
 
     let (buffer, placeholder) = prepare_pdf_with_placeholder(&mut doc, signer, options)?;
+
+    // The save counts its offsets from its own first byte, so correct them for
+    // the position this revision will occupy. Only the startxref value can
+    // change width, and that sits after the placeholder, so the placeholder
+    // offsets below stay valid (#362).
+    let buffer = crate::increment::rebase(&buffer, pdf_bytes.len())
+        .map_err(|e| SignError::CmsBuild(format!("rebase signature increment: {e}")))?;
 
     // Prepend the original bytes.
     let mut result = pdf_bytes.to_vec();
@@ -215,6 +226,12 @@ fn prepare_pdf_with_placeholder(
         "Contents" => Object::String(contents_placeholder, lopdf::StringFormat::Hexadecimal),
     };
 
+    // /M, the time of signing. PAdES baseline requires it in the dictionary
+    // (ETSI EN 319 142-1), and without it verifySignatures reported null.
+    sig_dict.set(
+        "M",
+        Object::string_literal(crate::clock::pdf_date(crate::clock::unix_now_secs())),
+    );
     if let Some(name) = &signer_name {
         sig_dict.set("Name", Object::string_literal(name.as_bytes()));
     }
@@ -727,56 +744,268 @@ fn ensure_acroform(doc: &mut Document, field_id: ObjectId) -> Result<(), SignErr
     Ok(())
 }
 
-/// Sign a PDF with PAdES-LTV (Long-Term Validation) support.
+/// Sign a PDF and embed a timestamp token the caller already holds (PAdES B-T).
 ///
-/// Performs three steps in one call:
-/// 1. Signs the PDF with an enlarged `/Contents` placeholder (≥ 32 KiB) to leave
-///    room for the timestamp token.
-/// 2. Requests an RFC 3161 timestamp from `tsa_config.url`, embeds it as the
-///    `id-smime-aa-timeStampToken` unsigned attribute in the CMS `SignerInfo`,
-///    and patches the modified CMS back into the `/Contents` placeholder.
-/// 3. Appends a DSS (Document Security Store, ISO 32000-2 §12.8.7) containing
-///    the signer's certificate chain as an incremental update, enabling offline
-///    validation without fetching certificates from the network.
+/// Two steps:
+/// 1. Sign with an enlarged `/Contents` placeholder (at least 32 KiB) so the
+///    timestamp token fits alongside the signature.
+/// 2. Embed `timestamp_token` as the `id-smime-aa-timeStampToken` unsigned
+///    attribute on the CMS `SignerInfo`, and patch the widened CMS back into
+///    the placeholder.
 ///
-/// The result is a PAdES-B-LT (Baseline Long-Term) conformant PDF.
+/// The result is a PAdES B-T signature. It carries no validation material, so
+/// a verifier still has to fetch the certificate chain itself; use
+/// [`sign_pdf_ltv_with_token`] for B-LT.
 ///
-/// Requires the `tsa` crate feature (adds `ureq` for HTTP to the TSA endpoint).
-#[cfg(feature = "tsa")]
-///
-/// **No test reaches this, deliberately.** B-LT signing needs a timestamp from
-/// a real authority: the DSS it builds is meaningless without one, so a test
-/// either depends on somebody else's uptime or mocks the very thing under test.
-///
-/// The parts that can be tested on their own are: the increment it appends
-/// (`embed_dss_incremental`, covered in ltv.rs since #252) and the profile
-/// refusal in the facade (#176). What is left here is the ordering between
-/// them, and that wants a fixture with a real timestamp rather than a unit test.
-pub fn sign_pdf_ltv(
+/// `timestamp_token` is a DER-encoded RFC 3161 `TimeStampToken` (a CMS
+/// `ContentInfo`). Where it comes from is the caller's problem on purpose:
+/// fetching one means talking to a timestamp authority over the network, and
+/// the engine has no HTTP client. [`sign_pdf_ltv`] does the fetch behind the
+/// `tsa` feature; this function is the same code path with the network taken
+/// out, which is also what makes it testable without somebody else's uptime.
+pub fn sign_pdf_timestamped(
     pdf_bytes: &[u8],
     signer: &impl PdfSigner,
     options: &SignOptions,
-    tsa_config: &crate::tsa::TsaConfig,
+    timestamp_token: &[u8],
 ) -> Result<Vec<u8>, SignError> {
-    // Step 1: Sign with an enlarged placeholder so the TSA token (~4 KiB) fits.
-    let ltv_options = SignOptions {
+    let (signed, _cms) = sign_and_timestamp(pdf_bytes, signer, options, timestamp_token)?;
+    Ok(signed)
+}
+
+/// Sign a PDF to PAdES B-LT with a timestamp token the caller already holds.
+///
+/// [`sign_pdf_timestamped`], then a DSS (Document Security Store, ISO 32000-2
+/// §12.8.7) appended as an incremental update. The DSS carries the signer's
+/// certificate chain plus whatever revocation material the caller passes, so a
+/// verifier can check the signature years later without fetching anything.
+///
+/// The DSS is appended outside the signed byte range, so an existing signature
+/// stays valid.
+///
+/// `ocsp_responses` and `crls` are DER-encoded and may both be empty; a DSS
+/// with only certificates is still useful, it just leaves revocation checking
+/// to the verifier.
+pub fn sign_pdf_ltv_with_token(
+    pdf_bytes: &[u8],
+    signer: &impl PdfSigner,
+    options: &SignOptions,
+    timestamp_token: &[u8],
+    ocsp_responses: Vec<Vec<u8>>,
+    crls: Vec<Vec<u8>>,
+) -> Result<Vec<u8>, SignError> {
+    let (signed, cms_with_tsa) = sign_and_timestamp(pdf_bytes, signer, options, timestamp_token)?;
+    add_validation_store(signed, &cms_with_tsa, signer, ocsp_responses, crls)
+}
+
+/// Append the DSS that turns a B-T signature into a B-LT one.
+fn add_validation_store(
+    signed: Vec<u8>,
+    cms_with_tsa: &[u8],
+    signer: &impl PdfSigner,
+    ocsp_responses: Vec<Vec<u8>>,
+    crls: Vec<Vec<u8>>,
+) -> Result<Vec<u8>, SignError> {
+    add_validation_store_for_chain(
+        signed,
+        cms_with_tsa,
+        signer.certificate_chain_der().to_vec(),
+        ocsp_responses,
+        crls,
+    )
+}
+
+/// [`add_validation_store`] for a caller that kept the chain rather than the signer.
+fn add_validation_store_for_chain(
+    signed: Vec<u8>,
+    cms_with_tsa: &[u8],
+    certs: Vec<Vec<u8>>,
+    ocsp_responses: Vec<Vec<u8>>,
+    crls: Vec<Vec<u8>>,
+) -> Result<Vec<u8>, SignError> {
+    let vri = crate::ltv::VriEntry {
+        key: crate::ltv::compute_vri_key(cms_with_tsa),
+        certificates: certs.clone(),
+        ocsp_responses: ocsp_responses.clone(),
+        crls: crls.clone(),
+        timestamp: None,
+    };
+
+    crate::ltv::embed_dss_incremental(&signed, certs, ocsp_responses, crls, vec![vri])
+        .map_err(|e| SignError::CmsBuild(format!("DSS embed: {e}")))
+}
+
+/// A signature that exists, waiting for the timestamp that covers it.
+///
+/// This is phase one of a PAdES B-T or B-LT signature, and the reason it is a
+/// type rather than a step inside one function: a timestamp authority stamps a
+/// *signature*, so the signature has to exist before the token can be asked
+/// for. An API that takes the token as an input parameter reverses that order,
+/// and the token it accepts cannot be about the file it produces -- which is
+/// how a document came to advertise B-T and fail the first verifier that
+/// checked the imprint.
+///
+/// Signing again after the fetch is not a way out. The CMS carries a
+/// signing-time attribute with one-second resolution, so a second signature is
+/// a different one, and a token over the first would stamp a signature that
+/// never reaches the file. Hence: sign once, keep the result here, stamp it.
+///
+/// ```no_run
+/// # use pdfluent_sign::{sign_pdf_pending_timestamp, PdfSigner, SignOptions, SignError};
+/// # fn ask_the_authority(_bytes: &[u8]) -> Result<Vec<u8>, SignError> { unimplemented!() }
+/// # fn go(pdf: &[u8], signer: &impl PdfSigner) -> Result<Vec<u8>, SignError> {
+/// let pending = sign_pdf_pending_timestamp(pdf, signer, &SignOptions::default())?;
+/// let token = ask_the_authority(pending.signature_value())?;
+/// pending.timestamped(&token)
+/// # }
+/// ```
+pub struct PendingTimestamp {
+    signed: Vec<u8>,
+    cms_der: Vec<u8>,
+    signature_value: Vec<u8>,
+    certificate_chain: Vec<Vec<u8>>,
+}
+
+impl PendingTimestamp {
+    /// The bytes the authority must stamp.
+    ///
+    /// This is the `signature` field of the CMS `SignerInfo` -- the encrypted
+    /// digest -- which is what a CAdES signature timestamp covers (RFC 5126
+    /// §6.1.1). Hand these to your TSA client; the `messageImprint` in the
+    /// request is their digest, and [`message_imprint`](Self::message_imprint)
+    /// will compute it if your client wants the hash rather than the data.
+    pub fn signature_value(&self) -> &[u8] {
+        &self.signature_value
+    }
+
+    /// The `messageImprint` hash for an RFC 3161 request under `algorithm`.
+    ///
+    /// `None` for [`DigestAlgorithm::Unknown`], which names no digest to take.
+    pub fn message_imprint(&self, algorithm: DigestAlgorithm) -> Option<Vec<u8>> {
+        crate::tsa::message_imprint(&self.signature_value, algorithm).map(|i| i.hash)
+    }
+
+    /// Embed `timestamp_token` and return the PAdES B-T bytes.
+    ///
+    /// Refuses a token whose message imprint is not the digest of
+    /// [`signature_value`](Self::signature_value): a token about other bytes
+    /// makes the B-T claim false, and the file would carry it anyway.
+    pub fn timestamped(self, timestamp_token: &[u8]) -> Result<Vec<u8>, SignError> {
+        let (signed, _cms) = timestamp_signed(self.signed, &self.cms_der, timestamp_token)?;
+        Ok(signed)
+    }
+
+    /// Embed `timestamp_token`, append the DSS, and return the PAdES B-LT bytes.
+    ///
+    /// Same imprint check as [`timestamped`](Self::timestamped): validation
+    /// material on top of a timestamp that stamps nothing in this file is a
+    /// longer-lived false claim, not a stronger one.
+    pub fn long_term(
+        self,
+        timestamp_token: &[u8],
+        ocsp_responses: Vec<Vec<u8>>,
+        crls: Vec<Vec<u8>>,
+    ) -> Result<Vec<u8>, SignError> {
+        let (signed, cms_with_tsa) = timestamp_signed(self.signed, &self.cms_der, timestamp_token)?;
+        add_validation_store_for_chain(
+            signed,
+            &cms_with_tsa,
+            self.certificate_chain,
+            ocsp_responses,
+            crls,
+        )
+    }
+}
+
+/// Sign a PDF and stop, holding the signature open for a timestamp.
+///
+/// Phase one of [`PendingTimestamp`]; see there for why the two phases are
+/// separate. The `/Contents` placeholder is widened to at least 32 KiB so the
+/// token fits without a second signing pass.
+pub fn sign_pdf_pending_timestamp(
+    pdf_bytes: &[u8],
+    signer: &impl PdfSigner,
+    options: &SignOptions,
+) -> Result<PendingTimestamp, SignError> {
+    let (signed, cms_der) = sign_with_room_for_a_timestamp(pdf_bytes, signer, options)?;
+    let signature_value = signature_value_of(&cms_der)?;
+    Ok(PendingTimestamp {
+        signed,
+        cms_der,
+        signature_value,
+        certificate_chain: signer.certificate_chain_der().to_vec(),
+    })
+}
+
+/// The CMS `SignerInfo` signature bytes, which are what a timestamp covers.
+fn signature_value_of(cms_der: &[u8]) -> Result<Vec<u8>, SignError> {
+    let parsed = crate::cms::CmsSignedData::from_der(cms_der).ok_or_else(|| {
+        SignError::CmsBuild(
+            "signed CMS does not parse back; cannot tell what a timestamp \
+                             would have to cover"
+                .into(),
+        )
+    })?;
+    Ok(parsed.signature_value().to_vec())
+}
+
+/// Sign with room for a timestamp, and hand back the CMS that was produced.
+///
+/// Kept separate from [`timestamp_signed`] so a caller that has to *fetch* the
+/// token can do so over the signature it is about to ship. Signing twice would
+/// not do: the CMS carries a signing-time attribute of one-second resolution,
+/// so a second signature made a moment later is a different one, and a token
+/// obtained over the first would timestamp a signature that never reaches the
+/// file.
+fn sign_with_room_for_a_timestamp(
+    pdf_bytes: &[u8],
+    signer: &impl PdfSigner,
+    options: &SignOptions,
+) -> Result<(Vec<u8>, Vec<u8>), SignError> {
+    // A token is roughly 4 KiB, so widen the placeholder before signing rather
+    // than discovering afterwards that it does not fit.
+    let widened = SignOptions {
         placeholder_size: options.placeholder_size.max(32768),
         ..options.clone()
     };
-    let mut signed = sign_pdf(pdf_bytes, signer, &ltv_options)?;
+    let signed = sign_pdf(pdf_bytes, signer, &widened)?;
+    let (_, _, cms_der) = extract_cms_from_signed(&signed)?;
+    Ok((signed, cms_der))
+}
 
-    // Step 2: Extract the CMS DER currently stored in /Contents.
-    let (angle_start, hex_len, cms_der) = extract_cms_from_signed(&signed)?;
+/// Widen the CMS in `/Contents` with `timestamp_token`.
+///
+/// `signed` must be the output of [`sign_with_room_for_a_timestamp`], and
+/// `cms_der` the CMS it returned alongside. Returns the timestamped CMS as
+/// well, because a B-LT caller needs it to key the VRI entry.
+///
+/// Refuses a token that does not stamp the signature in `cms_der`.
+fn timestamp_signed(
+    mut signed: Vec<u8>,
+    cms_der: &[u8],
+    timestamp_token: &[u8],
+) -> Result<(Vec<u8>, Vec<u8>), SignError> {
+    if timestamp_token.is_empty() {
+        return Err(SignError::CmsBuild(
+            "empty timestamp token: a B-T or B-LT signature without a timestamp is a B-B \
+             signature wearing the wrong name"
+                .into(),
+        ));
+    }
 
-    // Step 3: Request a timestamp from the TSA.
-    let tsa_token = crate::tsa::request_timestamp(tsa_config, &cms_der)
-        .map_err(|e| SignError::CmsBuild(format!("TSA request: {e}")))?;
+    // The token travels into the CMS as opaque bytes, so nothing downstream
+    // ever looks at it again. This is the one place that can tell a token
+    // about this signature from a token about anything else, and a B-T claim
+    // rests entirely on the difference.
+    let signature_value = signature_value_of(cms_der)?;
+    crate::tsa::token_stamps(timestamp_token, &signature_value)
+        .map_err(|e| SignError::TimestampMismatch(e.to_string()))?;
 
-    // Step 4: Embed the timestamp token as a CMS unsigned attribute.
-    let cms_with_tsa = crate::tsa::embed_timestamp_in_cms(&cms_der, &tsa_token)
+    let (angle_start, hex_len, _) = extract_cms_from_signed(&signed)?;
+
+    let cms_with_tsa = crate::tsa::embed_timestamp_in_cms(cms_der, timestamp_token)
         .map_err(|e| SignError::CmsBuild(format!("TSA embed: {e}")))?;
 
-    // Step 5: Patch the modified CMS back into the /Contents placeholder.
     let new_hex = hex_encode(&cms_with_tsa);
     if new_hex.len() > hex_len {
         return Err(SignError::CmsBuild(format!(
@@ -790,23 +1019,67 @@ pub fn sign_pdf_ltv(
     signed[hex_start..hex_start + new_hex.len()].copy_from_slice(&new_hex);
     signed[hex_start + new_hex.len()..hex_start + hex_len].fill(b'0');
 
-    // Step 6: Build a VRI entry from the signer's certificate chain.
-    let certs = signer.certificate_chain_der().to_vec();
-    let vri_key = crate::ltv::compute_vri_key(&cms_with_tsa);
-    let vri = crate::ltv::VriEntry {
-        key: vri_key,
-        certificates: certs.clone(),
-        ocsp_responses: vec![],
-        crls: vec![],
-        timestamp: None,
-    };
-
-    // Step 7: Append DSS as an incremental update (preserves existing signatures).
-    crate::ltv::embed_dss_incremental(&signed, certs, vec![], vec![], vec![vri])
-        .map_err(|e| SignError::CmsBuild(format!("DSS embed: {e}")))
+    Ok((signed, cms_with_tsa))
 }
 
+/// Sign, then widen the CMS in `/Contents` with `timestamp_token`.
+///
+/// Returns the signed bytes and the timestamped CMS, because the caller needs
+/// the latter to key the VRI entry.
+fn sign_and_timestamp(
+    pdf_bytes: &[u8],
+    signer: &impl PdfSigner,
+    options: &SignOptions,
+    timestamp_token: &[u8],
+) -> Result<(Vec<u8>, Vec<u8>), SignError> {
+    if timestamp_token.is_empty() {
+        return Err(SignError::CmsBuild(
+            "empty timestamp token: a B-T or B-LT signature without a timestamp is a B-B \
+             signature wearing the wrong name"
+                .into(),
+        ));
+    }
+    let (signed, cms_der) = sign_with_room_for_a_timestamp(pdf_bytes, signer, options)?;
+    timestamp_signed(signed, &cms_der, timestamp_token)
+}
+
+/// Sign a PDF to PAdES B-LT, fetching the timestamp from a TSA over HTTP.
+///
+/// [`sign_pdf_ltv_with_token`] with the token fetched from `tsa_config.url`,
+/// except that the fetch has to sit *between* signing and embedding: the
+/// authority stamps a signature, and it must stamp the one that ends up in the
+/// file. This is the only signing path that touches the network, which is why
+/// it sits behind the `tsa` crate feature (it pulls in `ureq`). A build without
+/// that feature has no HTTP client anywhere in the signing code.
+///
+/// **No test reaches this, deliberately.** What is unique to it is the fetch,
+/// and a test for that either depends on somebody else's uptime or mocks the
+/// thing under test. Every step either side is shared code and covered: signing
+/// with room for a token and the embed (`sign_pdf_timestamped`), the DSS
+/// increment (`embed_dss_incremental`, since #252) and the ordering between
+/// them (`sign_pdf_ltv_with_token`).
 #[cfg(feature = "tsa")]
+pub fn sign_pdf_ltv(
+    pdf_bytes: &[u8],
+    signer: &impl PdfSigner,
+    options: &SignOptions,
+    tsa_config: &crate::tsa::TsaConfig,
+) -> Result<Vec<u8>, SignError> {
+    // The authority stamps the signature, so it is asked over the signature
+    // that signing produced -- and then that very signature has to be the one
+    // shipped. Signing a second time after the fetch would produce a different
+    // one (the signing-time attribute has one-second resolution), and the token
+    // would then cover a signature that is not in the file. It used to ask over
+    // the whole CMS, which is not what CAdES §6.1.1 says a signature timestamp
+    // covers and which no verifier would have recomputed.
+    let pending = sign_pdf_pending_timestamp(pdf_bytes, signer, options)?;
+
+    let tsa_token = crate::tsa::request_timestamp(tsa_config, pending.signature_value())
+        .map_err(|e| SignError::CmsBuild(format!("TSA request: {e}")))?;
+
+    pending.long_term(&tsa_token, vec![], vec![])
+}
+
 /// Locate and extract the CMS DER from the `/Contents` hex string in a signed PDF.
 ///
 /// Returns `(angle_start, hex_len, cms_der)`:
@@ -814,17 +1087,33 @@ pub fn sign_pdf_ltv(
 /// - `hex_len` — total hex chars between `<` and `>` (= placeholder size × 2).
 /// - `cms_der` — decoded CMS DER bytes, trimmed to actual DER length (no zero pad).
 ///
-/// Uses the **last** occurrence of `/Contents <` to skip pre-existing signatures.
+/// Uses the **last** `/Contents` followed by a hex string, so a pre-existing
+/// signature earlier in the file is skipped.
+///
+/// The whitespace between the key and the `<` is optional in the PDF grammar
+/// and lopdf writes none, so matching the literal `/Contents <` found nothing
+/// and every call failed with "/Contents not found in signed PDF" (#362). A
+/// page's `/Contents 4 0 R` is skipped by the same rule that finds the
+/// signature: the value has to start with `<`, not with a digit.
 fn extract_cms_from_signed(buffer: &[u8]) -> Result<(usize, usize, Vec<u8>), SignError> {
-    let needle = b"/Contents <";
-    let pos = buffer
-        .windows(needle.len())
+    const KEY: &[u8] = b"/Contents";
+    let angle_start = buffer
+        .windows(KEY.len())
         .enumerate()
         .rev()
-        .find_map(|(i, w)| if w == needle { Some(i) } else { None })
-        .ok_or_else(|| SignError::CmsBuild("/Contents not found in signed PDF".into()))?;
-
-    let angle_start = pos + b"/Contents ".len();
+        .find_map(|(i, w)| {
+            if w != KEY {
+                return None;
+            }
+            let mut j = i + KEY.len();
+            while buffer.get(j).is_some_and(u8::is_ascii_whitespace) {
+                j += 1;
+            }
+            (buffer.get(j) == Some(&b'<')).then_some(j)
+        })
+        .ok_or_else(|| {
+            SignError::CmsBuild("/Contents hex string not found in signed PDF".into())
+        })?;
     let angle_end = buffer[angle_start + 1..]
         .iter()
         .position(|&b| b == b'>')
@@ -861,7 +1150,6 @@ fn extract_cms_from_signed(buffer: &[u8]) -> Result<(usize, usize, Vec<u8>), Sig
     Ok((angle_start, hex_len, decoded[..actual_len].to_vec()))
 }
 
-#[cfg(feature = "tsa")]
 /// Compute the total byte length of the outermost DER TLV from its header.
 fn parse_der_outer_length(data: &[u8]) -> Option<usize> {
     if data.len() < 2 {
@@ -883,7 +1171,6 @@ fn parse_der_outer_length(data: &[u8]) -> Option<usize> {
     header_len.checked_add(content_len)
 }
 
-#[cfg(feature = "tsa")]
 fn hex_nibble(b: u8) -> Option<u8> {
     match b {
         b'0'..=b'9' => Some(b - b'0'),
@@ -987,6 +1274,32 @@ mod tests {
             matches!(results[0].status, crate::types::ValidationStatus::Valid),
             "expected Valid, got {:?}",
             results[0].status
+        );
+    }
+
+    /// /M is the time of signing that readers show in their signature panel.
+    /// It was never written, so `verifySignatures()` in the browser reported
+    /// `signing_time: null` on every signature we made (#617).
+    #[test]
+    fn a_signature_says_when_it_was_made() {
+        let Some(fixture) = corpus_path("simple.pdf") else {
+            eprintln!("SKIPPED (not a pass): repository fixture tree not present");
+            return;
+        };
+        let pdf = std::fs::read(fixture).unwrap();
+        let signer = load_rsa_signer();
+        let signed =
+            sign_pdf_incremental(&pdf, &signer, &SignOptions::default()).expect("incremental sign");
+        let parsed = pdf_syntax::Pdf::new(signed).expect("parse signed result");
+        let fields = crate::signature_fields(&parsed);
+        assert_eq!(fields.len(), 1, "exactly one signature expected");
+        let m = fields[0]
+            .sig
+            .signing_time()
+            .expect("the signature dictionary carries /M");
+        assert!(
+            m.starts_with("D:20") && m.ends_with('Z') && m.len() == 17,
+            "/M must be a UTC PDF date, got {m:?}"
         );
     }
 
@@ -1224,10 +1537,13 @@ mod tests {
     /// with OpenSSL as an independent external oracle. Covers issue #536 Task 3.
     #[test]
     fn sign_xfa_form_roundtrip() {
-        let Some(path) = corpus_path("xfa-form.pdf") else {
-            // The repository fixture tree is optional; skip gracefully.
-            return;
-        };
+        // The fixture is tracked in the repository's test fixture tree, so its
+        // absence is a broken checkout or a wrong PDFLUENT_TEST_FIXTURES, not
+        // a skip.
+        let path = corpus_path("xfa-form.pdf").expect(
+            "xfa-form.pdf not found in the repository's test fixture tree \
+             (root: PDFLUENT_TEST_FIXTURES, else the repository's tests/)",
+        );
         let pdf = std::fs::read(&path).expect("read xfa-form.pdf");
         let signer = load_rsa_signer();
 
@@ -1244,8 +1560,9 @@ mod tests {
             results[0].status
         );
 
-        // External oracle: openssl smime -verify. Skip if not installed.
-        if let Some(bin) = find_openssl_bin() {
+        // External oracle: openssl smime -verify. Required, not optional.
+        {
+            let bin = find_openssl_bin();
             let sigs = crate::signature_fields(&parsed);
             let first = &sigs[0];
             let [off1, len1, off2, len2] = first.sig.byte_range().expect("ByteRange");
@@ -1261,7 +1578,7 @@ mod tests {
             std::fs::write(&sig_path, &der).unwrap();
             std::fs::write(&content_path, &content).unwrap();
 
-            let status = std::process::Command::new(bin)
+            let status = std::process::Command::new(&bin)
                 .arg("smime")
                 .arg("-verify")
                 .arg("-inform")
@@ -1286,7 +1603,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "tsa")]
     #[test]
     fn extract_cms_from_signed_roundtrip() {
         let Some(fixture) = corpus_path("simple.pdf") else {
@@ -1350,7 +1666,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "tsa")]
     #[test]
     fn parse_der_outer_length_basic() {
         // Short form: SEQUENCE of 10 bytes → total 12.
@@ -1368,7 +1683,6 @@ mod tests {
         assert_eq!(parse_der_outer_length(&[0x30u8]), None);
     }
 
-    #[cfg(feature = "tsa")]
     #[test]
     fn hex_nibble_coverage() {
         assert_eq!(hex_nibble(b'0'), Some(0));
@@ -1381,26 +1695,94 @@ mod tests {
         assert_eq!(hex_nibble(b' '), None);
     }
 
-    /// Find an OpenSSL binary for external-oracle tests.
-    fn find_openssl_bin() -> Option<&'static str> {
-        const CANDIDATES: &[&str] = &[
-            "/opt/anaconda3/bin/openssl",
-            "/usr/local/bin/openssl",
-            "/usr/bin/openssl",
-        ];
-        for &bin in CANDIDATES {
-            if std::path::Path::new(bin).exists() {
-                return Some(bin);
+    /// Environment variable that names the OpenSSL binary used as the external
+    /// oracle. Without it the oracle is looked up as `openssl` on `PATH`.
+    const OPENSSL_BIN_ENV: &str = "OPENSSL_BIN";
+
+    /// Find the OpenSSL binary the external-oracle tests require:
+    /// `$OPENSSL_BIN` first, then `openssl` on `PATH`. A candidate counts only
+    /// if `<bin> version` actually runs and succeeds.
+    ///
+    /// # Panics
+    ///
+    /// When no usable binary exists. The oracle is part of what these tests
+    /// assert, so a missing oracle fails the test instead of skipping it.
+    fn find_openssl_bin() -> std::ffi::OsString {
+        match resolve_openssl_bin(std::env::var_os(OPENSSL_BIN_ENV)) {
+            Ok(found) => found,
+            Err(OpensslLookup::ExplicitUnusable(why)) => {
+                panic!("{OPENSSL_BIN_ENV} is set but unusable: {why}")
+            }
+            Err(OpensslLookup::Absent(why)) => panic!(
+                "OpenSSL oracle not found ({why}); set {OPENSSL_BIN_ENV} to an openssl binary or put openssl on PATH"
+            ),
+        }
+    }
+
+    #[derive(Debug)]
+    enum OpensslLookup {
+        /// The explicitly named binary does not run.
+        ExplicitUnusable(String),
+        /// Nothing was named and `openssl` on `PATH` does not run.
+        Absent(String),
+    }
+
+    /// The lookup behind [`find_openssl_bin`], with the environment passed in
+    /// so tests can drive it without touching process-wide state.
+    fn resolve_openssl_bin(
+        explicit: Option<std::ffi::OsString>,
+    ) -> Result<std::ffi::OsString, OpensslLookup> {
+        fn runs(bin: &std::ffi::OsStr) -> Result<(), String> {
+            match std::process::Command::new(bin).arg("version").output() {
+                Ok(out) if out.status.success() => Ok(()),
+                Ok(out) => Err(format!(
+                    "`{} version` exited with {}",
+                    bin.to_string_lossy(),
+                    out.status
+                )),
+                Err(e) => Err(format!(
+                    "`{} version` could not start: {e}",
+                    bin.to_string_lossy()
+                )),
             }
         }
-        if std::process::Command::new("openssl")
-            .arg("version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            return Some("openssl");
+        if let Some(bin) = explicit {
+            return runs(&bin)
+                .map(|()| bin)
+                .map_err(OpensslLookup::ExplicitUnusable);
         }
-        None
+        let bin = std::ffi::OsString::from("openssl");
+        runs(&bin).map(|()| bin).map_err(OpensslLookup::Absent)
+    }
+
+    #[test]
+    fn openssl_lookup_rejects_an_explicit_binary_that_does_not_exist() {
+        let missing = std::env::temp_dir().join("pdfluent-no-such-openssl-binary");
+        let got = resolve_openssl_bin(Some(missing.into_os_string()));
+        assert!(
+            matches!(got, Err(OpensslLookup::ExplicitUnusable(ref why)) if why.contains("could not start")),
+            "a missing explicit binary must be reported as unusable, got {got:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn openssl_lookup_rejects_an_explicit_binary_whose_version_fails() {
+        // `false version` starts and exits non-zero: present is not the same
+        // as usable, which is the whole point of running it.
+        let got = resolve_openssl_bin(Some("false".into()));
+        assert!(
+            matches!(got, Err(OpensslLookup::ExplicitUnusable(ref why)) if why.contains("exited with")),
+            "a binary whose `version` fails must be reported as unusable, got {got:?}"
+        );
+    }
+
+    #[test]
+    fn openssl_lookup_accepts_an_explicit_binary_that_runs() {
+        // The oracle the other tests use, passed back in explicitly: the
+        // accepting branch must hold for a binary that is known to run.
+        let on_path = find_openssl_bin();
+        let got = resolve_openssl_bin(Some(on_path.clone()));
+        assert_eq!(got.ok(), Some(on_path));
     }
 }

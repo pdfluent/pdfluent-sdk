@@ -124,6 +124,12 @@ if [ -s "$TREFFERS" ]; then
     echo "  $TOTAAL file(s). A reader who clones this gets paths into a machine" >&2
     echo "  they do not have. Exclude the file in docs/PUBLIC_TREE.toml if it is" >&2
     echo "  internal, or make the path relative if the file has to ship." >&2
+    # Repeated, because both readers of this log read its edges: the gate
+    # prints the last fifteen lines, and the failed-gates block the first
+    # lines saying fail -- and neither the verdict nor the trailer above
+    # says either. Without this a red audit reports only the assembly
+    # lines that came before it (#636).
+    echo "[snapshot] FAIL: the path audit found $TOTAAL file(s) naming a path outside the published tree" >&2
     exit 1
 fi
 

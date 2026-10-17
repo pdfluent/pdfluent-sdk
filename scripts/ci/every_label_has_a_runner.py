@@ -36,10 +36,40 @@ import yaml
 
 FLOWS = pathlib.Path(".github/workflows")
 # Created when an instance registers itself, so absent by design between runs.
-EFEMEER = re.compile(r"needs\.|matrix\.|^hetzner$|^gh-runner-")
+# Case-insensitive, like every comparison in this file: GitHub matches labels
+# without regard to case, so `Linux` on the runner answers `linux` in the job.
+EFEMEER = re.compile(r"needs\.|matrix\.|^hetzner$|^gh-runner-", re.IGNORECASE)
+
+# The pool label only the ephemeral release VMs register (#636). A runner
+# carrying it is transient -- up for one dispatch, gone after -- and its
+# presence or absence never fails this guard either way.
+POOL_LABEL = "pdfluent-release"
 
 
-def geregistreerd() -> set[str] | None:
+def geregistreerd() -> tuple[set[str], set[str], set[str]] | None:
+    """The labels runners carry, and the labels of the ones answering now.
+
+    REGISTERED, NOT ONLINE, is what this guard judges against, and the
+    difference cost the whole repository a morning. This asked for
+    `select(.status=="online")` alone: on 09-09-2026 the desktop runner rebooted,
+    `xfa-fast` stopped being online for twenty minutes, and every push -- on
+    every branch, by every terminal -- went red on this guard for something no
+    push contained.
+
+    The failure this file was written for is a label NO runner carries: those
+    runs queue until GitHub abandons them roughly a day later and nothing ever
+    drains the queue. A registered runner that is offline is a different fact
+    about a different thing: the job waits for a machine that exists and comes
+    back, which is a delay, not a gate that never runs. So an offline-only label
+    is reported, loudly, and does not refuse.
+
+    The third set is the transient one: labels of runners carrying
+    `pdfluent-release`, which `main` judges nothing against. Transient
+    capacity must not satisfy durable demand -- a job naming bare platform
+    labels would queue whenever no VM runs, which is the failure this guard
+    exists for -- so those labels stay out of both sets above, and the
+    release VMs may come and go without moving this guard either way.
+    """
     # `gh` is not installed on the desktop runner, and OSError from subprocess is
     # not a return code -- an uncaught one exits before a single line is printed,
     # which is a crash pretending to be a failed check. Missing tooling has to
@@ -47,7 +77,7 @@ def geregistreerd() -> set[str] | None:
     try:
         r = subprocess.run(
             ["gh", "api", "repos/{owner}/{repo}/actions/runners", "--jq",
-             "[.runners[] | select(.status==\"online\") | .labels[].name] | unique"],
+             "[.runners[] | {status: .status, labels: [.labels[].name]}]"],
             capture_output=True, text=True, check=False, timeout=60,
         )
     except (OSError, subprocess.SubprocessError):
@@ -55,9 +85,25 @@ def geregistreerd() -> set[str] | None:
     if r.returncode != 0:
         return None
     try:
-        return set(json.loads(r.stdout))
+        runners = json.loads(r.stdout)
     except json.JSONDecodeError:
         return None
+    if not isinstance(runners, list):
+        return None
+    alle: set[str] = set()
+    nu: set[str] = set()
+    tijdelijk: set[str] = set()
+    for runner in runners:
+        if not isinstance(runner, dict):
+            return None
+        labels = {str(x) for x in runner.get("labels") or []}
+        if any(l.lower() == POOL_LABEL for l in labels):
+            tijdelijk |= labels
+            continue
+        alle |= labels
+        if runner.get("status") == "online":
+            nu |= labels
+    return alle, nu, tijdelijk
 
 
 # Labels inside a per-event expression, e.g.
@@ -77,7 +123,46 @@ _LOSSE_STRING = re.compile(r"""(?<!\.)'([A-Za-z0-9][A-Za-z0-9._-]*)'""")
 
 
 # Runner images GitHub hosts. `-latest` and the pinned forms.
-GEHOST = re.compile(r"^(ubuntu|windows|macos)-(latest|\d[\w.-]*)$")
+# Case-insensitive: hosted names are labels too, and GitHub matches those
+# without regard to case as well.
+GEHOST = re.compile(r"^(ubuntu|windows|macos)-(latest|\d[\w.-]*)$", re.IGNORECASE)
+
+
+# The self-hosted release runners (#636): `[self-hosted, linux|macos|windows,
+# x64|arm64, pdfluent-release]`, routed through the `runner_pool` input. The
+# labels exist only while the COS's VM runs -- rented on demand, like the
+# hetzner ephemeral runners -- so they are correctly absent from the
+# registered list between runs, and the exemption names them rather than the
+# register growing rows for machines that are gone by design.
+#
+# NARROW ON PURPOSE. Both halves must hold: the release set AND the
+# `runner_pool` routing. A hardcoded `[self-hosted, linux, x64]` with no
+# github fallback queues until GitHub abandons it whenever no VM runs, which
+# is the failure this guard exists for -- only the routed shape excuses it.
+# And the pool values 'self'/'github' ride along: they are the input the
+# branch tests, not labels, but the loose-string parse below cannot tell a
+# value from a name, so they are dropped with the set they choose.
+#
+# The pool label rides with the set, not the platform: only the ephemeral
+# release VMs register `pdfluent-release`, which is what keeps a release run
+# off the WSL desktop runner that answers the same platform labels (GitHub
+# compares labels case-insensitively, run 37299529520).
+_POOL_SET = re.compile(
+    r"self-hosted[\"',\s\[\]]+(linux|macos|windows)[\"',\s\[\]]+(x64|arm64)",
+    re.IGNORECASE,
+)
+
+
+def release_pool_labels(runs_on) -> set[str]:
+    """Labels of a runner_pool-routed release set: exempt, not missing."""
+    text = str(runs_on or "")
+    if "inputs.runner_pool" not in text:
+        return set()
+    uit = set()
+    for m in _POOL_SET.finditer(text):
+        uit.update(("self-hosted", m.group(1).lower(), m.group(2).lower(),
+                    "self", "github", "pdfluent-release"))
+    return uit
 
 
 def _weigert(step) -> bool:
@@ -293,8 +378,8 @@ def main() -> int:
         return 1
     print(f"[labels] register: {len(REGISTER)} row(s), reason holds -- {hoezo}.")
 
-    online = geregistreerd()
-    if online is None:
+    lijsten = geregistreerd()
+    if lijsten is None:
         print("SKIPPED (not a pass): could not read the runner list, so no label was "
               "checked against anything.", file=sys.stderr)
         # Say where this can and cannot work, because the answer is structural
@@ -322,7 +407,14 @@ def main() -> int:
             return 1
         return 0
 
+    ingeschreven, online, tijdelijk = lijsten
+    # GitHub matches labels without regard to case; the sets keep their
+    # spelling for the report below and are compared lowered.
+    ingeschreven_l = {l.lower() for l in ingeschreven}
+    online_l = {l.lower() for l in online}
+
     ontbreekt = []
+    offline_alleen = []
     for pad in sorted(FLOWS.glob("*.yml")) + sorted(FLOWS.glob("*.yaml")):
         try:
             doc = yaml.safe_load(pad.read_text()) or {}
@@ -351,10 +443,19 @@ def main() -> int:
             if not isinstance(job, dict):
                 continue
             labels = gevraagd(job)
-            if "self-hosted" not in labels:
+            if all(l.lower() != "self-hosted" for l in labels):
                 continue
+            # A job that requires the pool label runs ONLY on the ephemeral
+            # release VMs: dispatch-only, served by GCP/Mac runners that are
+            # gone by design between runs. Judged like the routed sets, not
+            # as "no runner" -- their presence or absence never fails this.
+            if any(l.lower() == POOL_LABEL for l in labels):
+                continue
+            vrijgesteld = {v.lower() for v in release_pool_labels(job.get("runs-on"))}
             for label in labels:
-                if label == "self-hosted" or EFEMEER.search(label):
+                if label.lower() in vrijgesteld:
+                    continue
+                if label.lower() == "self-hosted" or EFEMEER.search(label):
                     continue
                 # GitHub provides these; no runner of ours registers them. They
                 # turn up here because a per-event `runs-on` names BOTH branches
@@ -369,11 +470,26 @@ def main() -> int:
                     continue
                 if GEHOST.match(label):
                     continue
-                if label not in online:
+                if label.lower() not in ingeschreven_l:
                     ontbreekt.append((pad.name, naam, label, vanzelf,
                                       geparkeerd(doc, job)))
+                elif label.lower() not in online_l:
+                    offline_alleen.append((pad.name, naam, label))
 
-    print(f"[labels] online labels: {', '.join(sorted(online)) or 'none'}")
+    print(f"[labels] registered labels: {', '.join(sorted(ingeschreven)) or 'none'}")
+    print(f"[labels] answering now: {', '.join(sorted(online)) or 'none'}")
+    if tijdelijk:
+        print(f"[labels] transient ({POOL_LABEL}, ignored by design): "
+              f"{', '.join(sorted(tijdelijk))}")
+    # LOUD, AND NOT A REFUSAL. A machine that is down holds up the jobs pointed
+    # at it and nothing else; saying nothing would leave whoever waits for them
+    # guessing, and refusing would close the repository for a reboot.
+    if offline_alleen:
+        print(f"[labels] WARNING: {len(offline_alleen)} job(s) point at a label whose "
+              "runners are all offline right now. Registered, so their queue drains "
+              "when the machine is back; this is not a refusal.")
+        for workflow, job, label in sorted(offline_alleen):
+            print(f"  {workflow} :: {job} waits for `{label}`")
     if not ontbreekt:
         print("[labels] OK: every self-hosted label any job asks for has a runner.")
         return 0

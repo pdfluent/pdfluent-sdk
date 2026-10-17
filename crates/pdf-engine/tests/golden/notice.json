@@ -1,0 +1,47 @@
+{
+  "blocks": [
+    {
+      "index": 0,
+      "kind": "heading",
+      "level": 1,
+      "page": 0,
+      "bbox": [72, 680, 220.47999963378908, 696],
+      "text": "Notice to occupiers",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Notice to occupiers", "x": 72, "y": 680, "width": 148.47999963378908, "height": 16, "fontSize": 16, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 1,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [72, 614, 215.9599993801117, 660],
+      "text": "# 14 and # 16 are served by the rear staircase while the lift is out of use. The work is expected to run to the end of the month.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "# 14 and # 16 are served by the", "x": 72, "y": 650, "width": 141.1999986743927, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "rear staircase while the lift is", "x": 72, "y": 638, "width": 125.58999943733215, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "out of use. The work is expected", "x": 72, "y": 626, "width": 143.9599993801117, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "to run to the end of the month.", "x": 72, "y": 614, "width": 133.97999861717224, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 2,
+      "kind": "listItem",
+      "level": 0,
+      "ordinal": null,
+      "page": 0,
+      "bbox": [360, 614, 496.1899991607666, 660],
+      "text": "deliveries are taken at the front desk until six o'clock, and 1998 was the last year the yard gate was in use at all.",
+      "continuesPrevious": false,
+      "confidence": 0.5515560361223919,
+      "spans": [
+        { "text": "- deliveries are taken at the", "x": 360, "y": 650, "width": 120.60999899864197, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "front desk until six o'clock,", "x": 360, "y": 638, "width": 115.83999934673307, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "and 1998 was the last year the", "x": 360, "y": 626, "width": 136.1899991607666, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "yard gate was in use at all.", "x": 360, "y": 614, "width": 118.38999941825864, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    }
+  ]
+}

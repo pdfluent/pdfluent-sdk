@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Package the public `pdfluent-cli` into a reproducible release artifact set.
+# Package the public `pdfluent` CLI into a reproducible release artifact set.
 #
-# NO PUBLISH. NO BINARY RENAME. Output goes to a build directory (default
-# /tmp/pdfluent-cli-dist), never the repo tree. Generates: staged binary,
-# LICENSE + docs, SHA256SUMS, a JSON release manifest, and tar.gz + zip.
+# NO PUBLISH. Output goes to a build directory (default /tmp/pdfluent-cli-dist),
+# never the repo tree. Generates: staged binaries (`pdfluent` plus the
+# `pdfluent-cli` compatibility alias), LICENSE + docs, SHA256SUMS, a JSON
+# release manifest, and tar.gz + zip.
 #
 # Usage:
 #   scripts/release/pdfluent_cli_package.sh            # dry-run (build + stage + checksums + manifest, no archives kept beyond OUTDIR)
@@ -14,7 +15,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."   # repo root
 CRATE="crates/pdfluent-cli"
-BIN="pdfluent-cli"
+BIN="pdfluent"
+ALIAS="pdfluent-cli"
 OUTDIR="${PDFLUENT_CLI_DIST:-/tmp/pdfluent-cli-dist}"
 ARCHIVES=0
 [ "${1:-}" = "--archives" ] && ARCHIVES=1
@@ -29,7 +31,7 @@ CARGO_VER="$(grep -m1 '^version' "$CRATE/Cargo.toml" | sed -E 's/.*"([^"]+)".*/\
 TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
 [ -n "$TRIPLE" ] || { echo "FAIL: cannot determine host triple"; exit 2; }
 
-echo "== pdfluent-cli package =="
+echo "== pdfluent CLI package =="
 echo "version=$CARGO_VER triple=$TRIPLE outdir=$OUTDIR archives=$ARCHIVES"
 
 # --- reproducible-ish build (path remapping comes from .cargo/config.toml) --
@@ -39,6 +41,8 @@ cargo build -p pdfluent-cli --release >/dev/null
 
 BINPATH="target/release/$BIN"
 [ -x "$BINPATH" ] || { echo "FAIL: $BINPATH not built"; exit 3; }
+ALIASPATH="target/release/$ALIAS"
+[ -x "$ALIASPATH" ] || { echo "FAIL: $ALIASPATH not built"; exit 3; }
 
 RT_VER="$("$BINPATH" --version | tr -d '\n')"
 echo "$RT_VER" | grep -q "$CARGO_VER" || { echo "FAIL: --version ($RT_VER) != Cargo version ($CARGO_VER)"; exit 4; }
@@ -48,6 +52,7 @@ NAME="${BIN}-${CARGO_VER}-${TRIPLE}"
 STAGE="$OUTDIR/$NAME"
 rm -rf "$STAGE"; mkdir -p "$STAGE"
 cp "$BINPATH" "$STAGE/$BIN"
+cp "$ALIASPATH" "$STAGE/$ALIAS"
 cp "$CRATE/LICENSE" "$STAGE/LICENSE" 2>/dev/null || { echo "FAIL: $CRATE/LICENSE missing (required in package)"; exit 5; }
 [ -f docs/en/cli.md ] && cp docs/en/cli.md "$STAGE/CLI.md"
 # Bundle generated completions for offline install.
@@ -72,6 +77,7 @@ cat > "$STAGE/release_manifest.json" <<JSON
 {
   "artifact": "$NAME",
   "binary": "$BIN",
+  "alias_binary": "$ALIAS",
   "version": "$CARGO_VER",
   "target_triple": "$TRIPLE",
   "binary_sha256": "$BIN_SHA",
@@ -81,7 +87,7 @@ cat > "$STAGE/release_manifest.json" <<JSON
   "workspace_packages": $DEPS_COUNT,
   "publish": false,
   "source_date_epoch": "$SOURCE_DATE_EPOCH",
-  "notes": "no-publish packaging dry-run; binary name is pdfluent-cli (NOT pdfluent)"
+  "notes": "no-publish packaging dry-run; binary name is pdfluent (alias pdfluent-cli staged alongside)"
 }
 JSON
 

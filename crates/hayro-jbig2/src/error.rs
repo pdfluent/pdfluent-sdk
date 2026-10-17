@@ -20,7 +20,7 @@ pub enum DecodeError {
     /// Errors related to symbol handling.
     Symbol(SymbolError),
     /// Arithmetic overflow in calculations.
-    Overflow,
+    Overflow(OverflowError),
     /// Feature not yet implemented.
     Unsupported,
 }
@@ -43,6 +43,8 @@ pub enum FormatError {
     MissingPageInfo,
     /// Page height unknown with no stripe segments.
     UnknownPageHeight,
+    /// Page has zero width or height.
+    EmptyPage,
 }
 
 /// Errors related to segment processing.
@@ -71,10 +73,10 @@ pub enum HuffmanError {
     MissingTables,
     /// Unexpected out-of-band value.
     UnexpectedOob,
-    /// Malformed Huffman table (JBIG2-HUF-01): a code path tries to branch
-    /// through a node that is already a leaf, indicating a collision in the
-    /// prefix-code assignment of a crafted JBIG2 stream.
-    MalformedTable,
+    /// Huffman tree has conflicting codes (one code is a prefix of another).
+    ConflictingCodes,
+    /// Prefix length exceeds maximum supported value.
+    PrefixLengthTooLarge,
 }
 
 /// Errors related to region parameters.
@@ -84,6 +86,8 @@ pub enum RegionError {
     InvalidCombinationOperator,
     /// Region with invalid dimension.
     InvalidDimension,
+    /// MMR (Modified Modified Read) decoding failed.
+    InvalidMmrData,
     /// Gray-scale value exceeds pattern count.
     GrayScaleOutOfRange,
 }
@@ -112,6 +116,25 @@ pub enum SymbolError {
     UnexpectedOob,
     /// An invalid symbol was encountered.
     Invalid,
+    /// Strip delta multiplication overflowed.
+    InvalidStripDelta,
+}
+
+/// Arithmetic overflow errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverflowError {
+    /// Bitmap dimension computation overflowed.
+    BitmapDimension,
+    /// Halftone grid dimension computation overflowed.
+    GridDimension,
+    /// Placement coordinate computation overflowed.
+    PlacementCoordinate,
+    /// Reference offset computation overflowed.
+    ReferenceOffset,
+    /// Index computation overflowed.
+    Index,
+    /// A symbol dictionary has too many symbols.
+    SymbolCount,
 }
 
 impl fmt::Display for DecodeError {
@@ -124,8 +147,21 @@ impl fmt::Display for DecodeError {
             Self::Region(e) => write!(f, "{e}"),
             Self::Template(e) => write!(f, "{e}"),
             Self::Symbol(e) => write!(f, "{e}"),
-            Self::Overflow => write!(f, "arithmetic overflow"),
+            Self::Overflow(e) => write!(f, "{e}"),
             Self::Unsupported => write!(f, "unsupported feature"),
+        }
+    }
+}
+
+impl fmt::Display for OverflowError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BitmapDimension => write!(f, "overflow in bitmap dimension computation"),
+            Self::PlacementCoordinate => write!(f, "overflow in placement coordinate computation"),
+            Self::ReferenceOffset => write!(f, "overflow in reference offset computation"),
+            Self::Index => write!(f, "overflow in index computation"),
+            Self::GridDimension => write!(f, "overflow in grid dimension computation"),
+            Self::SymbolCount => write!(f, "a symbol dictionary has too many symbols"),
         }
     }
 }
@@ -145,6 +181,7 @@ impl fmt::Display for FormatError {
             Self::ReservedBits => write!(f, "reserved bits must be zero"),
             Self::MissingPageInfo => write!(f, "missing page information segment"),
             Self::UnknownPageHeight => write!(f, "page height unknown with no stripe segments"),
+            Self::EmptyPage => write!(f, "page has zero width or height"),
         }
     }
 }
@@ -168,10 +205,8 @@ impl fmt::Display for HuffmanError {
             Self::InvalidSelection => write!(f, "invalid Huffman table selection"),
             Self::MissingTables => write!(f, "not enough referred Huffman tables"),
             Self::UnexpectedOob => write!(f, "unexpected out-of-band value"),
-            Self::MalformedTable => write!(
-                f,
-                "malformed Huffman table: code branches through a leaf node"
-            ),
+            Self::ConflictingCodes => write!(f, "conflicting Huffman codes"),
+            Self::PrefixLengthTooLarge => write!(f, "Huffman prefix length too large"),
         }
     }
 }
@@ -181,6 +216,7 @@ impl fmt::Display for RegionError {
         match self {
             Self::InvalidCombinationOperator => write!(f, "invalid combination operator"),
             Self::InvalidDimension => write!(f, "invalid dimension value"),
+            Self::InvalidMmrData => write!(f, "invalid MMR-encoded data"),
             Self::GrayScaleOutOfRange => write!(f, "gray-scale value exceeds pattern count"),
         }
     }
@@ -204,6 +240,7 @@ impl fmt::Display for SymbolError {
             Self::TooManySymbols => write!(f, "symbol dictionary contains too many symbols"),
             Self::TooManyInstances => write!(f, "text region declares too many symbol instances"),
             Self::Invalid => write!(f, "invalid symbol encountered"),
+            Self::InvalidStripDelta => write!(f, "strip delta overflow"),
         }
     }
 }
@@ -216,6 +253,7 @@ impl core::error::Error for HuffmanError {}
 impl core::error::Error for RegionError {}
 impl core::error::Error for TemplateError {}
 impl core::error::Error for SymbolError {}
+impl core::error::Error for OverflowError {}
 
 impl From<ParseError> for DecodeError {
     fn from(e: ParseError) -> Self {
@@ -256,6 +294,12 @@ impl From<TemplateError> for DecodeError {
 impl From<SymbolError> for DecodeError {
     fn from(e: SymbolError) -> Self {
         Self::Symbol(e)
+    }
+}
+
+impl From<OverflowError> for DecodeError {
+    fn from(e: OverflowError) -> Self {
+        Self::Overflow(e)
     }
 }
 

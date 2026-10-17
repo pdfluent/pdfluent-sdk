@@ -63,31 +63,34 @@ pub fn run(input: &Path, pages: Option<&str>, json: bool) -> Result<()> {
             return Ok(());
         }
 
-        let mut output = String::new();
+        let mut page_texts = Vec::with_capacity(page_indices.len());
         for &idx in &page_indices {
-            let page_text = doc
-                .extract_text(idx)
-                .context(format!("failed to extract text from page {}", idx + 1))?;
-
-            if !output.is_empty() {
-                while !output.ends_with("\n\n") {
-                    output.push('\n');
-                }
-                output.push('\u{000C}');
-            }
-
-            output.push_str(&page_text);
+            page_texts.push(
+                doc.extract_text(idx)
+                    .context(format!("failed to extract text from page {}", idx + 1))?,
+            );
         }
 
-        // Append AcroForm field values (pdftotext includes these).
+        // Append AcroForm field values (pdftotext includes these). On the last
+        // selected page rather than behind its separator: one convention with
+        // `extract_all_text`, and no phantom page for a consumer counting them.
         let acroform_text = doc.extract_acroform_text();
         if !acroform_text.is_empty() {
-            if !output.is_empty() && !output.ends_with('\n') {
-                output.push('\n');
+            match page_texts.last_mut() {
+                Some(last) => {
+                    if !last.is_empty() && !last.ends_with('\n') {
+                        last.push('\n');
+                    }
+                    last.push_str(&acroform_text);
+                }
+                None => page_texts.push(acroform_text),
             }
-            output.push_str(&acroform_text);
         }
-        print!("{output}");
+
+        print!(
+            "{}",
+            pdf_engine::join_page_texts(page_texts.iter().map(String::as_str))
+        );
     }
 
     Ok(())

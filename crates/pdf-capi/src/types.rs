@@ -110,21 +110,139 @@ impl PdfALevel {
         }
     }
 
-    /// The conformance the conversion pipeline should write.
+    /// The conformance the conversion pipeline writes for this level, or
+    /// `None` when the conversion does not deliver it.
     ///
-    /// The pipeline writes B-level XMP for every part. The A and U levels add
-    /// requirements (a tagged structure tree, complete Unicode mapping) that
-    /// conversion cannot manufacture from an untagged source, so claiming them
-    /// in the metadata would produce a file that fails validation for the level
-    /// it advertises. Part 4 has no separate B level and maps to A3b, the
-    /// closest profile the pipeline can actually produce.
-    pub(crate) fn to_convert_conformance(self) -> pdf_manip::pdfa_xmp::PdfAConformance {
+    /// The pipeline writes B-level XMP. The A and U levels add requirements --
+    /// a tagged structure tree, a complete Unicode mapping -- that conversion
+    /// cannot manufacture from an untagged source, and part 4 has no B level at
+    /// all. Until 09-09-2026 this mapped all eleven values onto the B level of
+    /// their part: a caller asking for 2u got a file whose XMP said 2b, with no
+    /// error and nothing in the header saying so, and Node, Python, Java and
+    /// .NET all convert through here. An accepted level that is quietly
+    /// something else is worse than a refusal, because the caller archives it.
+    ///
+    /// Validation is a separate question and still covers all eleven: see
+    /// [`Self::to_compliance_level`].
+    pub(crate) fn convert_conformance(self) -> Option<pdf_manip::pdfa_xmp::PdfAConformance> {
         use pdf_manip::pdfa_xmp::PdfAConformance;
         match self {
-            Self::A1b | Self::A1a => PdfAConformance::A1b,
-            Self::A2b | Self::A2u | Self::A2a => PdfAConformance::A2b,
-            Self::A3b | Self::A3u | Self::A3a => PdfAConformance::A3b,
-            Self::A4 | Self::A4f | Self::A4e => PdfAConformance::A3b,
+            Self::A1b => Some(PdfAConformance::A1b),
+            Self::A2b => Some(PdfAConformance::A2b),
+            Self::A3b => Some(PdfAConformance::A3b),
+            Self::A1a
+            | Self::A2u
+            | Self::A2a
+            | Self::A3u
+            | Self::A3a
+            | Self::A4
+            | Self::A4f
+            | Self::A4e => None,
+        }
+    }
+
+    /// The levels the conversion delivers, in the words the header uses.
+    ///
+    /// Named once, so the refusal message and the header guard cannot drift
+    /// apart from the mapping above.
+    pub const DELIVERED_FOR_CONVERSION: &'static [&'static str] =
+        &["PDF_A_LEVEL_1B", "PDF_A_LEVEL_2B", "PDF_A_LEVEL_3B"];
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every level of the enum, so a level added later cannot slip past the
+    /// checks below by not being in a list.
+    const ALL: &[(PdfALevel, &str)] = &[
+        (PdfALevel::A1b, "PDF_A_LEVEL_1B"),
+        (PdfALevel::A1a, "PDF_A_LEVEL_1A"),
+        (PdfALevel::A2b, "PDF_A_LEVEL_2B"),
+        (PdfALevel::A2u, "PDF_A_LEVEL_2U"),
+        (PdfALevel::A2a, "PDF_A_LEVEL_2A"),
+        (PdfALevel::A3b, "PDF_A_LEVEL_3B"),
+        (PdfALevel::A3u, "PDF_A_LEVEL_3U"),
+        (PdfALevel::A3a, "PDF_A_LEVEL_3A"),
+        (PdfALevel::A4, "PDF_A_LEVEL_4"),
+        (PdfALevel::A4f, "PDF_A_LEVEL_4F"),
+        (PdfALevel::A4e, "PDF_A_LEVEL_4E"),
+    ];
+
+    #[test]
+    fn conversion_delivers_the_b_levels_and_claims_no_other() {
+        use pdf_manip::pdfa_xmp::PdfAConformance;
+        assert_eq!(
+            PdfALevel::A1b.convert_conformance(),
+            Some(PdfAConformance::A1b)
+        );
+        assert_eq!(
+            PdfALevel::A2b.convert_conformance(),
+            Some(PdfAConformance::A2b)
+        );
+        assert_eq!(
+            PdfALevel::A3b.convert_conformance(),
+            Some(PdfAConformance::A3b)
+        );
+        // The eight that used to be written as their part's B level. A2u asked
+        // for Unicode mapping and got a file whose XMP said 2b (#447).
+        for level in [
+            PdfALevel::A1a,
+            PdfALevel::A2u,
+            PdfALevel::A2a,
+            PdfALevel::A3u,
+            PdfALevel::A3a,
+            PdfALevel::A4,
+            PdfALevel::A4f,
+            PdfALevel::A4e,
+        ] {
+            assert_eq!(
+                level.convert_conformance(),
+                None,
+                "{level:?} is not delivered and must not be written as anything else"
+            );
+        }
+    }
+
+    #[test]
+    fn the_delivered_list_is_the_mapping() {
+        let from_mapping: Vec<&str> = ALL
+            .iter()
+            .filter(|(level, _)| level.convert_conformance().is_some())
+            .map(|(_, name)| *name)
+            .collect();
+        assert_eq!(
+            from_mapping,
+            PdfALevel::DELIVERED_FOR_CONVERSION,
+            "the refusal message names a different set than the conversion delivers"
+        );
+    }
+
+    /// The header is what a C caller reads, and it is the half that was wrong:
+    /// it documented eleven levels and said nothing about eight of them being
+    /// written as something else. So the words in it are checked against the
+    /// mapping rather than trusted to be kept up by hand.
+    #[test]
+    fn the_header_says_of_each_level_what_the_code_does() {
+        const HEADER: &str = include_str!("../include/pdfluent.h");
+        for (level, name) in ALL {
+            let line = HEADER
+                .lines()
+                .zip(HEADER.lines().skip(1))
+                .find(|(_, decl)| decl.trim_start().starts_with(&format!("{name} ")))
+                .map(|(doc, _)| doc.trim().to_string())
+                .unwrap_or_else(|| panic!("{name} is not declared in pdfluent.h"));
+            if level.convert_conformance().is_some() {
+                assert!(
+                    line.contains("Converts and validates."),
+                    "{name} converts; its header line reads {line:?}"
+                );
+            } else {
+                assert!(
+                    line.contains("Validates only."),
+                    "{name} is refused by conversion; its header line reads {line:?}"
+                );
+            }
         }
     }
 }

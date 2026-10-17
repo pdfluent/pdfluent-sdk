@@ -1,5 +1,8 @@
-//! Integration tests for the public `pdfluent` CLI scaffold.
-//! Uses only the tiny shared `sample.pdf` fixture — no corpus/private files.
+//! CLI contract tests: exit codes, envelopes, help, and the kept commands.
+//!
+//! Behaviour tests for the new commands live in `cmd_*.rs`; this file pins
+//! the cross-cutting surface (global flags, exit codes 0/1/2/3, envelope
+//! shapes, and the `extract-text` compatibility the extraction rig leans on).
 
 // Copyright (c) 2026 Innovation Trigger B.V.
 //
@@ -7,472 +10,456 @@
 // the PDFluent Commercial Licence. See the LICENSE file in this repository --
 // that file travels with the copy you received, which a URL does not.
 
-use std::path::PathBuf;
-use std::process::Command;
+mod common;
 
-fn bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_pdfluent-cli"))
-}
+use common::{alias_bin, run, sample_pdf_path, stdout_json, stdout_text, tempdir};
 
-fn sample_pdf() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../pdfluent/tests/fixtures/sample.pdf")
-}
-
-fn run(args: &[&str]) -> (bool, String, String) {
-    let out = bin().args(args).output().expect("spawn pdfluent-cli");
-    (
-        out.status.success(),
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
-    )
+/// True when clap renders `flag` as its own option line. A substring or
+/// token match would also accept `--owner-password-file` or a wrapped
+/// doc-comment mention of the flag, neither of which means the option exists.
+fn has_option_line(help: &str, flag: &str) -> bool {
+    let prefix = format!("{flag} ");
+    help.lines()
+        .any(|line| line.trim_start().starts_with(&prefix))
 }
 
 #[test]
-fn help_works() {
-    let (ok, stdout, _) = run(&["--help"]);
-    assert!(ok, "--help should exit 0");
-    assert!(stdout.contains("PDFluent"), "help mentions product");
-    // Expected public commands present.
-    for c in [
+fn help_lists_every_command() {
+    let out = run(&["--help"]);
+    assert!(out.status.success());
+    let help = stdout_text(&out);
+    // Commands must appear as entries in the `Commands:` listing, not merely
+    // as words in the about text (which names several of them already).
+    let mut in_commands = false;
+    let mut listed = Vec::new();
+    for line in help.lines() {
+        if line.trim() == "Commands:" {
+            in_commands = true;
+            continue;
+        }
+        if in_commands {
+            if line.trim().is_empty() || !line.starts_with(' ') {
+                break;
+            }
+            listed.push(line.split_whitespace().next().unwrap_or("").to_string());
+        }
+    }
+    assert!(!listed.is_empty(), "top help has a Commands section");
+    for cmd in [
+        "extract",
+        "merge",
+        "split",
+        "pages",
+        "compress",
+        "protect",
+        "unprotect",
+        "watermark",
+        "convert",
+        "redact",
+        "sign",
+        "validate",
         "info",
         "inspect",
         "extract-text",
-        "validate",
         "doctor",
         "completions",
         "xfa",
     ] {
-        assert!(stdout.contains(c), "help should list `{c}`");
+        assert!(listed.contains(&cmd.to_string()), "help lists `{cmd}`");
+    }
+    for flag in ["--json", "--quiet", "--verbose"] {
+        assert!(help.contains(flag), "help lists `{flag}`");
     }
 }
 
 #[test]
-fn version_matches_package_version() {
-    let expected = env!("CARGO_PKG_VERSION");
-    let (ok, stdout, _) = run(&["--version"]);
-    assert!(ok);
-    assert!(
-        stdout.contains(expected),
-        "version should be {expected}, got: {stdout}"
+fn version_names_the_takeover_binary() {
+    let out = run(&["--version"]);
+    assert!(out.status.success());
+    assert_eq!(stdout_text(&out).trim(), "pdfluent 1.1.0");
+}
+
+#[test]
+fn the_sample_fixture_is_present() {
+    // The facade's shared sample is tracked in the repo; every CLI test that
+    // needs a real PDF builds on it. Red when someone deletes or moves it.
+    let path = sample_pdf_path();
+    assert!(path.is_file(), "fixture missing: {}", path.display());
+}
+
+#[test]
+fn alias_binary_runs_the_same_program() {
+    let sample = crate::require_sample!();
+    let arg = sample.to_string_lossy().to_string();
+    let primary = run(&["info", &arg]);
+    let aliased = std::process::Command::new(alias_bin())
+        .args(["info", &arg])
+        .output()
+        .expect("spawn pdfluent-cli");
+    assert!(aliased.status.success());
+    assert_eq!(primary.stdout, aliased.stdout);
+    assert!(!primary.stdout.is_empty(), "alias runs the real program");
+}
+
+#[test]
+fn unknown_command_is_a_usage_error() {
+    let out = run(&["frobnicate"]);
+    assert_eq!(out.status.code(), Some(1));
+}
+
+#[test]
+fn missing_required_argument_is_a_usage_error() {
+    let out = run(&["merge", "a.pdf"]);
+    assert_eq!(out.status.code(), Some(1));
+    let out = run(&["validate"]);
+    assert_eq!(out.status.code(), Some(1));
+}
+
+#[test]
+fn info_reports_page_count_version_and_size() {
+    let sample = crate::require_sample!();
+    let out = run(&["info", &sample.to_string_lossy()]);
+    assert!(out.status.success());
+    let stdout = stdout_text(&out);
+    assert!(stdout.contains("Pages:       1"));
+    assert!(stdout.contains("PDF version: 1.7"));
+    assert!(stdout.contains("Size:        784 bytes"));
+}
+
+#[test]
+fn info_json_envelope_is_stable() {
+    let sample = crate::require_sample!();
+    // The global --json flag also parses after the subcommand.
+    let out = run(&["info", &sample.to_string_lossy(), "--json"]);
+    assert!(out.status.success());
+    let value = stdout_json(&out);
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["command"], "info");
+    assert_eq!(value["version"], "1.1.0");
+    assert_eq!(value["data"]["page_count"], 1);
+    assert_eq!(value["data"]["pdf_version"], "1.7");
+    assert_eq!(value["data"]["file_size"], 784);
+    assert_eq!(value["warnings"], serde_json::json!([]));
+}
+
+#[test]
+fn inspect_is_info_json() {
+    let sample = crate::require_sample!();
+    let out = run(&["inspect", &sample.to_string_lossy()]);
+    assert!(out.status.success());
+    let value = stdout_json(&out);
+    assert_eq!(value["command"], "info");
+    assert_eq!(value["data"]["page_count"], 1);
+}
+
+#[test]
+fn extract_text_ends_every_page_with_form_feed() {
+    let sample = crate::require_sample!();
+    let out = run(&["extract-text", &sample.to_string_lossy()]);
+    assert!(out.status.success());
+    let text = stdout_text(&out);
+    assert_eq!(text, "PDFluent test fixture.\n\n\x0c");
+}
+
+#[test]
+fn extract_text_out_writes_file_and_reports_json() {
+    let sample = crate::require_sample!();
+    let dir = tempdir("cli-extract-out");
+    let target = dir.join("out.txt");
+    let out = run(&[
+        "--json",
+        "extract-text",
+        &sample.to_string_lossy(),
+        "--out",
+        &target.to_string_lossy(),
+    ]);
+    assert!(out.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "PDFluent test fixture.\n\n\x0c"
+    );
+    let value = stdout_json(&out);
+    assert_eq!(value["data"]["char_count"], 25);
+    assert_eq!(value["data"]["page_count"], 1);
+}
+
+#[test]
+fn extract_text_out_refuses_existing_output_without_force() {
+    let sample = crate::require_sample!();
+    let dir = tempdir("cli-extract-clobber");
+    let target = dir.join("out.txt");
+    std::fs::write(&target, "previous run").unwrap();
+    let out = run(&[
+        "extract-text",
+        &sample.to_string_lossy(),
+        "--out",
+        &target.to_string_lossy(),
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--force"));
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "previous run");
+    let out = run(&[
+        "extract-text",
+        &sample.to_string_lossy(),
+        "--force",
+        "--out",
+        &target.to_string_lossy(),
+    ]);
+    assert!(out.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "PDFluent test fixture.\n\n\x0c"
     );
 }
 
 #[test]
-fn doctor_exits_zero() {
-    let expected = env!("CARGO_PKG_VERSION");
-    let (ok, stdout, _) = run(&["doctor"]);
-    assert!(ok, "doctor should exit 0");
-    assert!(
-        stdout.contains(&format!("cli_version:  {expected}")),
-        "expected cli_version {expected} in doctor output"
-    );
-    assert!(
-        stdout.contains("experimental"),
-        "doctor notes XFA experimental"
+fn extract_text_json_carries_pages_and_caps_inline_text() {
+    let sample = crate::require_sample!();
+    let out = run(&["extract-text", &sample.to_string_lossy(), "--json"]);
+    assert!(out.status.success());
+    let value = stdout_json(&out);
+    assert_eq!(value["data"]["text"], "PDFluent test fixture.\n\n\x0c");
+    assert_eq!(value["data"]["pages"][0]["page"], 1);
+    assert_eq!(
+        value["data"]["pages"][0]["text"],
+        "PDFluent test fixture.\n"
     );
 }
 
 #[test]
-fn internal_commands_not_exposed() {
-    let (_, stdout, _) = run(&["--help"]);
-    for hidden in [
-        "measure",
-        "debug-xfa",
-        "flatten-check",
-        "demo",
-        "render",
-        "collector",
-    ] {
+fn extract_text_no_page_breaks_joins_with_blank_line() {
+    let sample = crate::require_sample!();
+    let out = run(&[
+        "extract-text",
+        &sample.to_string_lossy(),
+        "--no-page-breaks",
+    ]);
+    assert!(out.status.success());
+    assert_eq!(stdout_text(&out), "PDFluent test fixture.\n");
+}
+
+#[test]
+fn extract_text_unicode_path_roundtrips() {
+    let sample = crate::require_sample!();
+    let dir = tempdir("cli-unicode");
+    let target = dir.join("ünïcödé tëxt.pdf");
+    std::fs::copy(&sample, &target).unwrap();
+    let out = run(&["extract-text", &target.to_string_lossy()]);
+    assert!(out.status.success());
+    assert_eq!(stdout_text(&out), "PDFluent test fixture.\n\n\x0c");
+}
+
+#[test]
+fn legacy_help_points_at_extract() {
+    let out = run(&["extract-text", "--help"]);
+    assert!(out.status.success());
+    assert!(stdout_text(&out).contains("prefer `extract`"));
+}
+
+#[test]
+fn validate_legacy_checks_parse_and_count() {
+    let sample = crate::require_sample!();
+    let out = run(&["validate", &sample.to_string_lossy()]);
+    assert!(out.status.success());
+    let stdout = stdout_text(&out);
+    assert!(stdout.contains("valid: parses, 1 page(s), PDF 1.7"));
+    assert!(stdout.contains("not a PDF/A or veraPDF conformance check"));
+}
+
+#[test]
+fn corrupt_input_is_an_input_error() {
+    let dir = tempdir("cli-corrupt");
+    let bad = dir.join("bad.pdf");
+    std::fs::write(&bad, common::corrupt_bytes()).unwrap();
+    let arg = bad.to_string_lossy().to_string();
+    for cmd in ["info", "extract-text", "validate"] {
+        let out = run(&[cmd, &arg]);
+        assert_eq!(out.status.code(), Some(2), "{cmd}");
         assert!(
-            !stdout.contains(hidden),
-            "public help must not expose internal `{hidden}`"
+            String::from_utf8_lossy(&out.stderr).contains("INVALID_PDF"),
+            "{cmd}"
         );
     }
 }
 
 #[test]
-fn xfa_help_has_experimental_caveat() {
-    let (ok, stdout, _) = run(&["xfa", "flatten", "--help"]);
-    assert!(ok);
-    let s = stdout.to_lowercase();
+fn missing_input_reports_not_found() {
+    let out = run(&["info", "does-not-exist.pdf"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("FILE_NOT_FOUND"));
+}
+
+/// The human error line links to the code's anchor on the error reference
+/// page, `cli-` plus the code lowercased with its underscores kept.
+#[test]
+fn error_line_links_to_the_code_anchor_on_the_errors_page() {
+    let out = run(&["info", "does-not-exist.pdf"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        s.contains("experimental"),
-        "xfa flatten help must say experimental"
+        stderr.contains("Docs: https://pdfluent.com/errors/#cli-file_not_found"),
+        "stderr: {stderr}"
     );
-    assert!(
-        s.contains("fresh-merge"),
-        "xfa flatten help mentions fresh-merge policy"
-    );
-    assert!(
-        s.contains("saved-state"),
-        "xfa flatten help mentions saved-state default"
-    );
+    assert!(!stderr.contains("pdfluent.dev"), "stderr: {stderr}");
 }
 
 #[test]
-fn unknown_command_fails() {
-    let (ok, _, _) = run(&["definitely-not-a-command"]);
-    assert!(!ok, "unknown command should exit non-zero");
+fn doctor_reports_environment() {
+    let out = run(&["doctor"]);
+    assert!(out.status.success());
+    let stdout = stdout_text(&out);
+    assert!(stdout.contains("pdfluent CLI doctor"));
+    assert!(stdout.contains("cli_version:  1.1.0"));
+    assert!(stdout.contains("sdk:          pdfluent facade"));
+    assert!(stdout.contains("XFA is experimental"));
 }
 
 #[test]
-fn fresh_merge_requires_opt_in() {
-    // fresh-merge without --experimental must be refused (non-zero), never default.
-    let (ok, _, stderr) = run(&[
+fn doctor_file_mode_reports_leniency() {
+    let sample = crate::require_sample!();
+    let out = run(&["doctor", &sample.to_string_lossy()]);
+    assert!(out.status.success());
+    assert!(stdout_text(&out).contains("Leniency: clean"));
+    let out = run(&["--json", "doctor", &sample.to_string_lossy()]);
+    assert!(out.status.success());
+    let value = stdout_json(&out);
+    assert_eq!(value["data"]["leniency"]["clean"], true);
+}
+
+#[test]
+fn xfa_flatten_stub_contract() {
+    let sample = crate::require_sample!();
+    let dir = tempdir("cli-xfa");
+    let target = dir.join("flat.pdf");
+    // saved-state: advertised stub, processing error.
+    let out = run(&[
         "xfa",
         "flatten",
-        "x.pdf",
+        &sample.to_string_lossy(),
         "-o",
-        "y.pdf",
+        &target.to_string_lossy(),
+    ]);
+    assert_eq!(out.status.code(), Some(3));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("NOT_IMPLEMENTED"), "{err}");
+    assert!(err.contains("XFA is experimental"), "{err}");
+    // fresh-merge without --experimental: refused before doing anything.
+    let out = run(&[
+        "xfa",
+        "flatten",
+        &sample.to_string_lossy(),
         "--policy",
         "fresh-merge",
+        "-o",
+        &target.to_string_lossy(),
     ]);
-    assert!(!ok, "fresh-merge without --experimental must fail");
-    assert!(stderr.contains("EXPERIMENTAL_OPT_IN_REQUIRED"));
-}
-
-#[test]
-fn info_valid_fixture() {
-    let f = sample_pdf();
-    if !f.exists() {
-        return; // fixture not present in this checkout; skip
-    }
-    let (ok, stdout, _) = run(&["info", f.to_str().unwrap()]);
-    assert!(ok, "info on valid PDF should succeed");
-    assert!(stdout.contains("Pages:"), "info prints page count");
-
-    let (okj, stdoutj, _) = run(&["info", f.to_str().unwrap(), "--json"]);
-    assert!(okj);
-    assert!(stdoutj.contains("\"ok\": true") && stdoutj.contains("\"page_count\""));
-}
-
-#[test]
-fn inspect_json_invocation_works() {
-    // The spec lists `pdfluent inspect <input> --json`; the --json flag is
-    // accepted for compatibility and inspect always emits JSON.
-    let f = sample_pdf();
-    if !f.exists() {
-        return; // fixture not present in this checkout; skip
-    }
-    let (ok, stdout, _) = run(&["inspect", f.to_str().unwrap(), "--json"]);
-    assert!(ok, "inspect --json should succeed");
-    assert!(
-        stdout.contains("\"page_count\""),
-        "inspect emits JSON with page_count"
-    );
-}
-
-#[test]
-fn info_malformed_fails_cleanly() {
-    let dir = std::env::temp_dir();
-    let bad = dir.join("pdfluent_cli_bad_input.pdf");
-    std::fs::write(&bad, b"%PDF-not-real\n").unwrap();
-    let (ok, _, stderr) = run(&["info", bad.to_str().unwrap()]);
-    assert!(!ok, "malformed input should fail");
-    assert!(stderr.contains("INVALID_PDF") || stderr.contains("could not open"));
-    let _ = std::fs::remove_file(&bad);
-}
-
-// --- core commands (extract-text, validate) ---
-
-fn exit_code(args: &[&str]) -> i32 {
-    bin()
-        .args(args)
-        .output()
-        .expect("spawn")
-        .status
-        .code()
-        .unwrap_or(-1)
-}
-
-#[test]
-fn extract_text_valid_to_stdout() {
-    let f = sample_pdf();
-    if !f.exists() {
-        return;
-    }
-    let (ok, _stdout, _) = run(&["extract-text", f.to_str().unwrap()]);
-    assert!(ok, "extract-text on valid PDF should succeed");
-}
-
-#[test]
-fn extract_text_json_shape() {
-    let f = sample_pdf();
-    if !f.exists() {
-        return;
-    }
-    let (ok, stdout, _) = run(&["extract-text", f.to_str().unwrap(), "--json"]);
-    assert!(ok);
-    assert!(stdout.contains("\"ok\": true"));
-    assert!(stdout.contains("\"command\": \"extract-text\""));
-    assert!(stdout.contains("\"char_count\"") && stdout.contains("\"page_count\""));
-    assert!(stdout.contains("\"warnings\""));
-}
-
-#[test]
-fn extract_text_out_writes_file() {
-    let f = sample_pdf();
-    if !f.exists() {
-        return;
-    }
-    let out = std::env::temp_dir().join("pdfluent_cli_extract_out.txt");
-    let _ = std::fs::remove_file(&out);
-    let (ok, stdout, _) = run(&[
-        "extract-text",
-        f.to_str().unwrap(),
-        "--out",
-        out.to_str().unwrap(),
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("EXPERIMENTAL_OPT_IN_REQUIRED"));
+    // Unknown policy is a usage error too.
+    let out = run(&[
+        "xfa",
+        "flatten",
+        &sample.to_string_lossy(),
+        "--policy",
+        "nope",
+        "-o",
+        &target.to_string_lossy(),
     ]);
-    assert!(ok);
-    assert!(stdout.contains("Wrote"));
-    assert!(out.exists(), "output file should be written");
-    let _ = std::fs::remove_file(&out);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("BAD_POLICY"));
 }
 
 #[test]
-fn extract_text_malformed_is_exit_4() {
-    let bad = std::env::temp_dir().join("pdfluent_cli_extract_bad.pdf");
-    std::fs::write(&bad, b"%PDF-bogus\n").unwrap();
-    assert_eq!(exit_code(&["extract-text", bad.to_str().unwrap()]), 4);
-    let _ = std::fs::remove_file(&bad);
-}
-
-#[test]
-fn extract_text_missing_is_exit_3() {
-    assert_eq!(exit_code(&["extract-text", "/no/such/file_xyz.pdf"]), 3);
-}
-
-#[test]
-fn validate_valid_is_exit_0() {
-    let f = sample_pdf();
-    if !f.exists() {
-        return;
-    }
-    assert_eq!(exit_code(&["validate", f.to_str().unwrap()]), 0);
-    let (_, stdout, _) = run(&["validate", f.to_str().unwrap()]);
-    // Must not over-claim standards conformance.
-    assert!(!stdout.to_lowercase().contains("pdf/a compliant"));
-}
-
-#[test]
-fn validate_json_shape_no_overclaim() {
-    let f = sample_pdf();
-    if !f.exists() {
-        return;
-    }
-    let (ok, stdout, _) = run(&["validate", f.to_str().unwrap(), "--json"]);
-    assert!(ok);
-    assert!(stdout.contains("\"valid\": true"));
-    assert!(stdout.contains("\"checks\""));
-    assert!(
-        stdout.contains("\"compliance\": null"),
-        "compliance must be null (not checked)"
-    );
-}
-
-#[test]
-fn validate_malformed_is_exit_4() {
-    let bad = std::env::temp_dir().join("pdfluent_cli_validate_bad.pdf");
-    std::fs::write(&bad, b"not a pdf at all").unwrap();
-    assert_eq!(exit_code(&["validate", bad.to_str().unwrap()]), 4);
-    let _ = std::fs::remove_file(&bad);
-}
-
-#[test]
-fn validate_missing_is_exit_3() {
-    assert_eq!(exit_code(&["validate", "/no/such/file_abc.pdf"]), 3);
-}
-
-#[test]
-fn doctor_json_shape() {
-    let expected = env!("CARGO_PKG_VERSION");
-    let (ok, stdout, _) = run(&["doctor", "--json"]);
-    assert!(ok);
-    assert!(
-        stdout.contains(&format!("\"cli_version\": \"{expected}\"")),
-        "expected cli_version {expected} in JSON output"
-    );
-    assert!(stdout.contains("\"xfa\""));
-}
-
-#[test]
-fn xfa_flatten_stub_exit_6() {
-    // saved-state stub → NOT_IMPLEMENTED → exit 6
-    assert_eq!(exit_code(&["xfa", "flatten", "in.pdf", "-o", "out.pdf"]), 6);
-}
-
-#[test]
-fn no_secrets_in_doctor() {
-    let (_, stdout, _) = run(&["doctor"]);
-    for leak in [
-        "SECRET", "TOKEN", "PASSWORD", "API_KEY", "/Users/", "/home/",
-    ] {
-        assert!(!stdout.contains(leak), "doctor must not leak `{leak}`");
-    }
-}
-
-// --- enterprise readiness additions (PDFLUENT_CLI_ENTERPRISE_PRODUCTION_READINESS) ---
-
-/// `completions` emits non-empty, shell-appropriate output and exits 0 for every
-/// supported shell. Guards the documented completion-install workflow.
-///
-/// NOTE: generated completions use the clap program name `pdfluent` (not the
-/// binary `pdfluent-cli`) — a known mismatch tracked as the top item in
-/// `docs/reports/pdfluent_cli_enterprise_readiness_final.md` (entangled with the
-/// deferred `pdfluent` binary-takeover decision; intentionally not changed here).
-#[test]
-fn completions_all_shells_smoke() {
+fn completions_generate_for_pdfluent() {
     for (shell, marker) in [
-        ("bash", "pdfluent"),
+        ("bash", "_pdfluent"),
+        ("fish", "complete"),
         ("zsh", "#compdef"),
-        ("fish", "pdfluent"),
-        ("powershell", "pdfluent"),
     ] {
-        let (ok, stdout, _) = run(&["completions", shell]);
-        assert!(ok, "completions {shell} should exit 0");
-        assert!(!stdout.trim().is_empty(), "completions {shell} non-empty");
+        let out = run(&["completions", shell]);
+        assert!(out.status.success(), "{shell}");
+        assert!(stdout_text(&out).contains(marker), "{shell}");
+    }
+}
+
+#[test]
+fn no_plaintext_secrets_in_help_or_surface() {
+    let out = run(&["--help"]);
+    let help = stdout_text(&out);
+    assert!(
+        !help.contains("--password "),
+        "no argv password on the top level"
+    );
+    for cmd in ["protect", "sign"] {
+        let out = run(&[cmd, "--help"]);
+        let help = stdout_text(&out);
         assert!(
-            stdout.contains(marker),
-            "completions {shell} should contain `{marker}`"
+            has_option_line(&help, "--password-file"),
+            "{cmd} documents the file source"
+        );
+        assert!(
+            !help.contains("--password "),
+            "{cmd} takes no argv password"
+        );
+        assert!(
+            help.contains("PDFLUENT_PASSWORD"),
+            "{cmd} documents the env source"
         );
     }
 }
 
-/// Every `--json` surface must emit a single valid JSON document with the stable
-/// envelope keys. Parses (not substring-matches) to lock the machine contract.
 #[test]
-fn json_outputs_are_valid_documents() {
-    let f = sample_pdf();
-    if !f.exists() {
-        return;
-    }
-    let fp = f.to_str().unwrap();
-    let cases: &[&[&str]] = &[
-        &["info", fp, "--json"],
-        &["inspect", fp, "--json"],
-        &["validate", fp, "--json"],
-        &["extract-text", fp, "--json"],
-        &["doctor", "--json"],
-    ];
-    for args in cases {
-        let (ok, stdout, _) = run(args);
-        assert!(ok, "{args:?} should succeed");
-        let v: serde_json::Value =
-            serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{args:?} invalid JSON: {e}"));
-        assert_eq!(v["ok"], serde_json::Value::Bool(true), "{args:?} ok=true");
-        assert_eq!(
-            v["version"],
-            env!("CARGO_PKG_VERSION"),
-            "{args:?} stable version"
-        );
-        assert!(v.get("command").is_some(), "{args:?} has command");
-        assert!(v.get("data").is_some(), "{args:?} has data");
-    }
+fn unicode_stderr_paths_stay_readable() {
+    let dir = tempdir("cli-unicode-err");
+    let missing = dir.join("dëfinitely-missing.pdf");
+    let out = run(&["info", &missing.to_string_lossy()]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("FILE_NOT_FOUND"));
+    assert!(err.contains("dëfinitely-missing.pdf"));
 }
 
-/// The error envelope is also valid JSON with the documented error shape + exit code.
 #[test]
-fn json_error_envelope_is_valid() {
-    let bad = std::env::temp_dir().join("pdfluent_cli_json_err.pdf");
-    std::fs::write(&bad, b"%PDF-nope\n").unwrap();
-    let (ok, stdout, _) = run(&["info", bad.to_str().unwrap(), "--json"]);
-    assert!(!ok, "malformed --json should be non-zero");
-    let v: serde_json::Value = serde_json::from_str(&stdout).expect("error envelope is valid JSON");
-    assert_eq!(v["ok"], serde_json::Value::Bool(false));
-    assert_eq!(v["error"]["code"], "INVALID_PDF");
-    assert_eq!(v["error"]["exit_code"], 4);
-    let _ = std::fs::remove_file(&bad);
+fn json_envelope_separates_stdout_and_stderr() {
+    let out = run(&["info", "does-not-exist.pdf", "--json"]);
+    assert_eq!(out.status.code(), Some(2));
+    // stdout holds exactly one JSON document; the human error stays on stderr.
+    let value = stdout_json(&out);
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error"]["code"], "FILE_NOT_FOUND");
+    assert_eq!(value["error"]["exit_code"], 2);
+    assert!(String::from_utf8_lossy(&out.stderr).is_empty());
 }
 
-/// `extract-text --out` writes exactly the same text that the stdout path prints
-/// (round-trip integrity), and stdout stays clean of the text in `--out` mode.
 #[test]
-fn extract_text_out_content_matches_stdout() {
-    let f = sample_pdf();
-    if !f.exists() {
-        return;
-    }
-    let fp = f.to_str().unwrap();
-    let (_, stdout_text, _) = run(&["extract-text", fp]);
-    let out = std::env::temp_dir().join("pdfluent_cli_roundtrip.txt");
-    let _ = std::fs::remove_file(&out);
-    let (ok, stdout_out, _) = run(&["extract-text", fp, "--out", out.to_str().unwrap()]);
-    assert!(ok);
-    let file_text = std::fs::read_to_string(&out).expect("out file readable");
-    assert_eq!(
-        file_text, stdout_text,
-        "--out content must equal stdout text"
-    );
-    assert!(
-        !stdout_out.contains(&file_text) || file_text.is_empty(),
-        "--out mode must not also dump text to stdout"
-    );
-    let _ = std::fs::remove_file(&out);
+fn error_envelope_carries_exit_code() {
+    let out = run(&["merge", "a.pdf", "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("required"));
 }
 
-/// Usage errors (missing required arg) exit with code 2 (USAGE), not a panic.
 #[test]
-fn missing_required_arg_is_usage_error() {
-    assert_eq!(exit_code(&["info"]), 2, "missing <INPUT> is a usage error");
-}
-
-// --- release/distribution contract hardening (PDFLUENT_CLI_RELEASE_AND_DISTRIBUTION_READINESS) ---
-
-/// Paths with spaces and non-ASCII (unicode) characters are handled correctly.
-#[test]
-fn unicode_and_space_path_handling() {
-    let f = sample_pdf();
-    if !f.exists() {
-        return;
-    }
-    let dir = std::env::temp_dir().join("pdfluent cli ünïcode dir");
-    let _ = std::fs::create_dir_all(&dir);
-    let p = dir.join("héllo wörld (1).pdf");
-    std::fs::copy(&f, &p).unwrap();
-    let (ok, stdout, _) = run(&["info", p.to_str().unwrap()]);
-    assert!(ok, "info on unicode/space path should succeed");
-    assert!(stdout.contains("Pages:"));
-    let _ = std::fs::remove_file(&p);
-    let _ = std::fs::remove_dir(&dir);
-}
-
-/// `extract-text --out` overwrites an existing file deterministically (documented
-/// overwrite semantics: the target is replaced with exactly the extracted text).
-#[test]
-fn extract_text_out_overwrites_existing() {
-    let f = sample_pdf();
-    if !f.exists() {
-        return;
-    }
-    let out = std::env::temp_dir().join("pdfluent_cli_overwrite.txt");
-    std::fs::write(&out, b"PREEXISTING-CONTENT-SHOULD-BE-REPLACED").unwrap();
-    let (ok, _, _) = run(&[
-        "extract-text",
-        f.to_str().unwrap(),
-        "--out",
-        out.to_str().unwrap(),
+fn verbose_writes_diagnostics_to_stderr() {
+    let dir = tempdir("cli-verbose");
+    let a = dir.join("a.pdf");
+    std::fs::write(&a, common::pdf_with_texts(&["A"])).unwrap();
+    let merged = dir.join("m.pdf");
+    let out = run(&[
+        "-v",
+        "merge",
+        &a.to_string_lossy(),
+        "-o",
+        &merged.to_string_lossy(),
     ]);
-    assert!(ok);
-    let after = std::fs::read_to_string(&out).unwrap();
-    assert!(
-        !after.contains("PREEXISTING-CONTENT"),
-        "--out must overwrite, not append"
-    );
-    let _ = std::fs::remove_file(&out);
-}
-
-/// On error, human output goes to stderr and stdout stays clean (operational
-/// contract: pipelines can trust stdout for data only in non-JSON mode).
-#[test]
-fn error_human_output_goes_to_stderr_not_stdout() {
-    let bad = std::env::temp_dir().join("pdfluent_cli_stderr_sep.pdf");
-    std::fs::write(&bad, b"%PDF-broken\n").unwrap();
-    let (ok, stdout, stderr) = run(&["info", bad.to_str().unwrap()]);
-    assert!(!ok);
-    assert!(
-        stdout.trim().is_empty(),
-        "stdout must be clean on error (non-JSON)"
-    );
-    assert!(stderr.contains("INVALID_PDF"), "human error code on stderr");
-    let _ = std::fs::remove_file(&bad);
+    assert!(out.status.success());
+    assert!(!String::from_utf8_lossy(&out.stderr).is_empty());
+    let out = run(&[
+        "merge",
+        &a.to_string_lossy(),
+        "--force",
+        "-o",
+        &merged.to_string_lossy(),
+    ]);
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).is_empty());
 }

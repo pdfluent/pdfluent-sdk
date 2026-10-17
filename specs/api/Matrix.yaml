@@ -1,0 +1,255 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for Matrix, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: Matrix
+rust_path: pdfluent::compat::Matrix
+names: {python: Matrix, node: Matrix, java: Matrix, dotnet: Matrix}
+members:
+  - name: __abs__
+    kind: operator
+    signature: "()"
+    names: {python: __abs__, node: abs, java: abs, dotnet: Abs}
+    rust: "Matrix::abs"
+    tier: unranked
+    lane: P0
+    status: missing
+    tests: [p0-matrix-abs]
+  - name: __add__
+    kind: operator
+    signature: "(m)"
+    names: {python: __add__, node: add, java: add, dotnet: Add}
+    rust: "Matrix::Add"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-add]
+  - name: __bool__
+    kind: operator
+    signature: "()"
+    names: {python: __bool__, node: bool, java: bool, dotnet: Bool}
+    rust: "Matrix::to_bool"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-bool]
+  - name: __eq__
+    kind: operator
+    signature: "(mat)"
+    names: {python: __eq__, node: eq, java: eq, dotnet: Eq}
+    rust: "Matrix::PartialEq"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-eq]
+  - name: __ge__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ge__, node: ge, java: ge, dotnet: Ge}
+    rust: "Matrix::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-ge]
+  - name: __getitem__
+    kind: operator
+    signature: "(i)"
+    names: {python: __getitem__, node: getitem, java: getitem, dotnet: Getitem}
+    rust: "Matrix::Index"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-getitem]
+  - name: __gt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __gt__, node: gt, java: gt, dotnet: Gt}
+    rust: "Matrix::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-gt]
+  - name: __init__
+    kind: constructor
+    signature: "(*args, a=None, b=None, c=None, d=None, e=None, f=None)"
+    names: {python: __init__, node: Matrix, java: Matrix, dotnet: Matrix}
+    rust: "Matrix::new"
+    tier: T1
+    lane: P0
+    status: missing
+    tests: [p0-matrix-init]
+  - name: __invert__
+    kind: operator
+    signature: "()"
+    names: {python: __invert__, node: invertOp, java: invertOp, dotnet: InvertOp}
+    rust: "Matrix::invert"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-invert]
+  - name: __le__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __le__, node: le, java: le, dotnet: Le}
+    rust: "Matrix::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-le]
+  - name: __len__
+    kind: operator
+    signature: "()"
+    names: {python: __len__, node: len, java: len, dotnet: Len}
+    rust: "Matrix::len"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-len]
+  - name: __lt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __lt__, node: lt, java: lt, dotnet: Lt}
+    rust: "Matrix::compare"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-lt]
+  - name: __mul__
+    kind: operator
+    signature: "(m)"
+    names: {python: __mul__, node: mul, java: mul, dotnet: Mul}
+    rust: "Matrix::Mul"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-mul]
+  - name: __ne__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ne__, node: ne, java: ne, dotnet: Ne}
+    rust: "Matrix::PartialEq"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-ne]
+  - name: __neg__
+    kind: operator
+    signature: "()"
+    names: {python: __neg__, node: neg, java: neg, dotnet: Neg}
+    rust: "Matrix::Neg"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-neg]
+  - name: __pos__
+    kind: operator
+    signature: "()"
+    names: {python: __pos__, node: pos, java: pos, dotnet: Pos}
+    rust: "Matrix::pos"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-pos]
+  - name: __setitem__
+    kind: operator
+    signature: "(i, v)"
+    names: {python: __setitem__, node: setitem, java: setitem, dotnet: Setitem}
+    rust: "Matrix::IndexMut"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-setitem]
+  - name: __sub__
+    kind: operator
+    signature: "(m)"
+    names: {python: __sub__, node: sub, java: sub, dotnet: Sub}
+    rust: "Matrix::Sub"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-sub]
+  - name: __truediv__
+    kind: operator
+    signature: "(m)"
+    names: {python: __truediv__, node: truediv, java: truediv, dotnet: Truediv}
+    rust: "Matrix::Div"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-truediv]
+  - name: concat
+    kind: method
+    signature: "(one, two)"
+    names: {python: concat, node: concat, java: concat, dotnet: Concat}
+    rust: "Matrix::concat"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-concat]
+  - name: invert
+    kind: method
+    signature: "(src=None)"
+    names: {python: invert, node: invert, java: invert, dotnet: Invert}
+    rust: "Matrix::invert"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-invert-2]
+  - name: is_rectilinear
+    kind: property
+    signature: "()"
+    names: {python: is_rectilinear, node: isRectilinear, java: isRectilinear, dotnet: IsRectilinear}
+    rust: "Matrix::is_rectilinear"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-is-rectilinear]
+  - name: norm
+    kind: method
+    signature: "()"
+    names: {python: norm, node: norm, java: norm, dotnet: Norm}
+    rust: "Matrix::norm"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-norm]
+  - name: prerotate
+    kind: method
+    signature: "(theta)"
+    names: {python: prerotate, node: prerotate, java: prerotate, dotnet: Prerotate}
+    rust: "Matrix::prerotate"
+    tier: T2
+    lane: P0
+    status: missing
+    tests: [p0-matrix-prerotate]
+  - name: prescale
+    kind: method
+    signature: "(sx, sy)"
+    names: {python: prescale, node: prescale, java: prescale, dotnet: Prescale}
+    rust: "Matrix::prescale"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-prescale]
+  - name: preshear
+    kind: method
+    signature: "(h, v)"
+    names: {python: preshear, node: preshear, java: preshear, dotnet: Preshear}
+    rust: "Matrix::preshear"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-preshear]
+  - name: pretranslate
+    kind: method
+    signature: "(tx, ty)"
+    names: {python: pretranslate, node: pretranslate, java: pretranslate, dotnet: Pretranslate}
+    rust: "Matrix::pretranslate"
+    tier: T3
+    lane: P0
+    status: missing
+    tests: [p0-matrix-pretranslate]

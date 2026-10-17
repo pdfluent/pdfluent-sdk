@@ -10,7 +10,7 @@ use std::fmt;
 pub struct CliError {
     pub message: String,      // "Could not convert PDF to PDF/A"
     pub why: Option<String>,  // "Font 'Helvetica' is not embedded"
-    pub fix: Option<String>,  // "Embed the font before converting: pdfluent fonts embed input.pdf"
+    pub fix: Option<String>, // "Embed the font before converting: xfa-runner fonts embed input.pdf"
     pub docs: Option<String>, // "https://docs.pdfluent.com/errors/E001"
 }
 

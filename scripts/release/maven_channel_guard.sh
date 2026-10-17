@@ -13,9 +13,26 @@
 #     (distributionManagement, nexus-staging, or a non-skipped deploy);
 #   - any CI/publish script wires `mvn deploy` against the deprecated path.
 #
-# No network, no build, no publish. Pure static invariant check.
+# No network, no build, no publish. Pure static invariant check, plus — when a
+# built jar is present — the artefact gate over its contents (m30 fix 2: the
+# guard used to read the POM and never open the jar, so the 1.0.0 jar with no
+# natives at all passed).
+#
+#   maven_channel_guard.sh [--require-jar]
+#
+# Without --require-jar a missing jar is a warning (dev lane: nothing built
+# yet). With it — the release lane, runbook §3.6 — a missing jar is a failure,
+# and so is a jar that misses a /native/<platform>/ entry.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
+
+REQUIRE_JAR=0
+for arg in "$@"; do
+  case "$arg" in
+    --require-jar) REQUIRE_JAR=1 ;;
+    *) echo "MAVEN-GUARD-FAIL: unknown flag $arg"; exit 1 ;;
+  esac
+done
 
 CANON="bindings/java/pom.xml"
 LEGACY="crates/pdf-java/pom.xml"
@@ -46,8 +63,32 @@ else
   grep -qx '[[:space:]]*<name>AGPL-3.0-only OR LicenseRef-PDFluent-Commercial</name>[[:space:]]*' "$CANON" \
     && ok "canonical license=AGPL or commercial (exact)" \
     || fail "canonical <name> must be exactly 'AGPL-3.0-only OR LicenseRef-PDFluent-Commercial' ($CANON)"
-  grep -qE '<version>1\.0\.0-beta\.[0-9]+</version>' "$CANON" && ok "canonical version on RC line" \
-    || fail "canonical version must be 1.0.0-beta.N ($CANON)"
+  # THE VERSION IS COMPARED, NOT RECOGNISED (#358).
+  #
+  # This used to be `grep -qE '<version>1\.0\.0-beta\.[0-9]+</version>'`, and it
+  # was wrong twice over. It named one release, so it went stale the day the
+  # channel became 1.0.0 and refused a pom that
+  # every_registry_names_the_same_release.py had just approved -- with section
+  # 3.6 of the registry runbook running this guard immediately before
+  # `mvn deploy`. And it matched ANY <version> element in the file, so a plugin
+  # or a dependency on a beta number satisfied it while the project's own
+  # coordinates said something else.
+  #
+  # Both halves are read by the functions the six-manifest guard uses, so the
+  # two cannot disagree about what a release is, nor about which <version> in a
+  # pom is the project's own.
+  version_pair="$(python3 scripts/release/maven_canonical_version_pair.py "$CANON")" \
+    || version_pair=""
+  if [ -z "$version_pair" ]; then
+    fail "could not read the release version and the pom version ($CANON)"
+  else
+    release="${version_pair%% *}"; pom_names="${version_pair##* }"
+    if [ "$release" = "$pom_names" ]; then
+      ok "canonical version is the release ($release)"
+    else
+      fail "canonical version must be the release $release, not $pom_names ($CANON)"
+    fi
+  fi
 fi
 
 # --- 2. deprecated pom must stay non-publishable -------------------------
@@ -77,6 +118,25 @@ if grep -REn 'crates/pdf-java[^|]*mvn[[:space:]]+deploy|cd[[:space:]]+crates/pdf
   fail "a CI/publish script still runs 'mvn deploy' in crates/pdf-java (deprecated channel)"
 else
   ok "no script deploys the deprecated crates/pdf-java path"
+fi
+
+# --- 4. the built jar covers every platform (m30 fix 2) -----------------
+# The POM checks above say what SHOULD ship. This opens what DID ship: the
+# main jar in bindings/java/target must carry /native/<platform>/ for all
+# seven platforms. Checked by the shared artefact gate, not by a second list
+# here, so the matrix has exactly one definition per channel.
+jar="$(ls -t bindings/java/target/*.jar 2>/dev/null \
+  | grep -v -e '-sources' -e '-javadoc' | head -n 1 || true)"
+if [ -z "$jar" ]; then
+  if [ "$REQUIRE_JAR" -eq 1 ]; then
+    fail "no built jar in bindings/java/target (release lane: run mvn package first)"
+  else
+    echo "  warn: no built jar in bindings/java/target — contents unchecked (dev lane)"
+  fi
+elif python3 scripts/release/artifacts_cover_every_platform.py --jar "$jar"; then
+  ok "jar covers every platform ($jar)"
+else
+  fail "jar misses a platform (see ARTIFACT-GATE above): $jar"
 fi
 
 echo "----------------------------------------"

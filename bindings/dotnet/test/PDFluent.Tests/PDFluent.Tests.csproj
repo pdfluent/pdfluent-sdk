@@ -11,6 +11,8 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
     <PackageReference Include="xunit" Version="2.7.0" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.7" />
+    <!-- Independent PNG/JPEG decoder for the compat file tests (Unlicense OR MIT). -->
+    <PackageReference Include="StbImageSharp" Version="2.30.16" />
   </ItemGroup>
 
   <ItemGroup>

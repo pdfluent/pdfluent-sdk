@@ -156,8 +156,92 @@ impl StructureTree {
     }
 }
 
+/// Per-element values parsed beside a [`StructureTree`], keyed by element path.
+///
+/// [`StructElement`] is constructible by downstream crates -- every field is
+/// `pub` -- so it cannot grow a field without breaking their struct
+/// literals. The values the `use_tags` evidence reads per element travel
+/// here instead: each marked-content reference's own page, and the table
+/// spans. The key is the element's path, the child indices from a root, so
+/// the second child of the first root is `[0, 1]`.
+///
+/// [`parse_with_details`] records an entry for every element it parses.
+/// Elements without an entry -- hand-built trees -- read as defaults:
+/// spans `(1, 1)`, and every MCID falling back to the element's
+/// [`StructElement::page_index`].
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct StructureTreeDetails {
+    by_path: HashMap<Vec<usize>, ElementDetails>,
+}
+
+/// The per-element values beside one [`StructElement`].
+///
+/// See [`StructureTreeDetails`] for how these are keyed and what a missing
+/// entry reads as.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ElementDetails {
+    /// Per-MCID page index, parallel to [`StructElement::mcids`], from each
+    /// marked content reference's own `/Pg`. `None` entries fall back to
+    /// [`StructElement::page_index`].
+    pub mcid_pages: Vec<Option<usize>>,
+    /// Table row span from the `/A` attributes (`/RowSpan`), 1 unless the
+    /// document says otherwise. Only meaningful on `TD`/`TH`.
+    pub row_span: u16,
+    /// Table column span from the `/A` attributes (`/ColSpan`), 1 unless the
+    /// document says otherwise. Only meaningful on `TD`/`TH`.
+    pub col_span: u16,
+}
+
+impl ElementDetails {
+    /// The details for one element: its references' own pages and its spans.
+    pub fn new(mcid_pages: Vec<Option<usize>>, row_span: u16, col_span: u16) -> Self {
+        Self {
+            mcid_pages,
+            row_span,
+            col_span,
+        }
+    }
+}
+
+impl StructureTreeDetails {
+    /// The details recorded for the element at `path`, if any.
+    pub fn get(&self, path: &[usize]) -> Option<&ElementDetails> {
+        self.by_path.get(path)
+    }
+
+    /// Record the details for the element at `path`.
+    pub fn insert(&mut self, path: &[usize], details: ElementDetails) {
+        self.by_path.insert(path.to_vec(), details);
+    }
+
+    /// The page the `index`-th MCID of the element at `path` resolves to
+    /// from its own `/Pg`, or `None` where the caller falls back to the
+    /// element's [`StructElement::page_index`].
+    pub fn mcid_page(&self, path: &[usize], index: usize) -> Option<usize> {
+        self.get(path)?.mcid_pages.get(index).copied().flatten()
+    }
+
+    /// The `(row_span, col_span)` of the element at `path`, `(1, 1)` where
+    /// no details were recorded.
+    pub fn spans(&self, path: &[usize]) -> (u16, u16) {
+        self.get(path)
+            .map(|d| (d.row_span, d.col_span))
+            .unwrap_or((1, 1))
+    }
+}
+
 /// Parse the structure tree from a PDF document.
 pub fn parse(pdf: &Pdf) -> Option<StructureTree> {
+    parse_with_details(pdf).map(|(tree, _)| tree)
+}
+
+/// Parse the structure tree and the per-element details beside it.
+///
+/// [`parse`] drops the details; the `use_tags` evidence keeps them (see
+/// [`StructureTreeDetails`]).
+pub fn parse_with_details(pdf: &Pdf) -> Option<(StructureTree, StructureTreeDetails)> {
     let xref = pdf.xref();
     let catalog: Dict<'_> = xref.get(xref.root_id())?;
     let tree_root = catalog.get::<Dict<'_>>(keys::STRUCT_TREE_ROOT)?;
@@ -165,21 +249,42 @@ pub fn parse(pdf: &Pdf) -> Option<StructureTree> {
     // Parse role mapping
     let role_map = parse_role_map(&tree_root);
 
+    // Page order, so `/Pg` references resolve to 0-based page indices.
+    let pages = page_order(&catalog);
+
     // Parse children (K entry). `visited` guards against cyclic /K references
-    // and shared-node "tree bombs"; `depth` bounds deep nesting.
+    // and shared-node "tree bombs"; `depth` bounds deep nesting. `path` is
+    // the details key under construction: the child indices from a root.
     let mut visited = BTreeSet::new();
-    let root_elements = parse_children(&tree_root, &role_map, 0, &mut visited);
+    let ctx = ParseContext {
+        role_map: &role_map,
+        pages: &pages,
+    };
+    let mut details = StructureTreeDetails::default();
+    let mut path = Vec::new();
+    let root_elements = parse_children(
+        &tree_root,
+        &ctx,
+        0,
+        &mut visited,
+        None,
+        &mut path,
+        &mut details,
+    );
 
     // Get document language
     let lang = catalog
         .get::<pdf_syntax::object::String>(keys::LANG)
         .and_then(|s| std::string::String::from_utf8(s.as_bytes().to_vec()).ok());
 
-    Some(StructureTree {
-        root_elements,
-        role_map,
-        lang,
-    })
+    Some((
+        StructureTree {
+            root_elements,
+            role_map,
+            lang,
+        },
+        details,
+    ))
 }
 
 /// Parse the RoleMap dictionary.
@@ -197,12 +302,71 @@ fn parse_role_map(tree_root: &Dict<'_>) -> HashMap<String, String> {
     map
 }
 
+/// Shared state for one structure-tree parse.
+struct ParseContext<'a> {
+    role_map: &'a HashMap<String, String>,
+    /// Page object identifiers in document order, for `/Pg` resolution.
+    pages: &'a [Option<ObjectIdentifier>],
+}
+
+/// Page object identifiers in document order, by walking the `/Pages` tree.
+///
+/// Entries that are not indirect objects (inline page dicts, which no `/Pg`
+/// can reference) come back as `None`.
+fn page_order(catalog: &Dict<'_>) -> Vec<Option<ObjectIdentifier>> {
+    let mut out = Vec::new();
+    if let Some(pages) = catalog.get::<Dict<'_>>(keys::PAGES) {
+        collect_pages(&pages, &mut out, 0);
+    }
+    out
+}
+
+/// Depth of `/Pages` intermediate nodes. Real trees are a handful deep; this
+/// bounds adversarial ones the way [`MAX_STRUCTURE_DEPTH`] bounds the tree.
+const MAX_PAGE_TREE_DEPTH: usize = 64;
+
+fn collect_pages(node: &Dict<'_>, out: &mut Vec<Option<ObjectIdentifier>>, depth: usize) {
+    if depth >= MAX_PAGE_TREE_DEPTH {
+        return;
+    }
+    let Some(kids) = node.get::<Object<'_>>(keys::KIDS) else {
+        // No `/Kids`: a page (or a malformed node holding no pages).
+        out.push(node.obj_id());
+        return;
+    };
+    let Object::Array(arr) = kids else {
+        out.push(node.obj_id());
+        return;
+    };
+    for kid in arr.iter::<Object<'_>>() {
+        if let Object::Dict(kid_dict) = kid {
+            // An intermediate node carries `/Kids` of its own; anything else
+            // is a page.
+            if kid_dict.contains_key(keys::KIDS) {
+                collect_pages(&kid_dict, out, depth + 1);
+            } else {
+                out.push(kid_dict.obj_id());
+            }
+        }
+    }
+}
+
+/// Resolve a `/Pg` entry on `dict` to a 0-based page index.
+fn resolve_page(dict: &Dict<'_>, pages: &[Option<ObjectIdentifier>]) -> Option<usize> {
+    let page = dict.get::<Dict<'_>>(keys::PG)?;
+    let id = page.obj_id()?;
+    pages.iter().position(|p| *p == Some(id))
+}
+
 /// Parse children from a structure element's /K entry.
 fn parse_children(
     dict: &Dict<'_>,
-    role_map: &HashMap<String, String>,
+    ctx: &ParseContext<'_>,
     depth: usize,
     visited: &mut BTreeSet<ObjectIdentifier>,
+    parent_page: Option<usize>,
+    path: &mut Vec<usize>,
+    details: &mut StructureTreeDetails,
 ) -> Vec<StructElement> {
     let mut elements = Vec::new();
 
@@ -210,19 +374,49 @@ fn parse_children(
         return elements;
     };
 
+    // A `/Pg` on this element is what its bare-integer `/K` entries (and,
+    // where they carry none of their own, its children's) refer to.
+    let page = resolve_page(dict, ctx.pages).or(parent_page);
+
     match k {
         Object::Dict(child_dict) => {
-            if let Some(elem) = parse_struct_elem(&child_dict, role_map, depth, visited) {
-                elements.push(elem);
+            // A lone content reference as `/K`: content, not a child element.
+            if !child_dict.contains_key(keys::MCID) {
+                path.push(elements.len());
+                if let Some(elem) =
+                    parse_struct_elem(&child_dict, ctx, depth, visited, page, path, details)
+                {
+                    elements.push(elem);
+                }
+                path.pop();
             }
         }
         Object::Array(arr) => {
             for item in arr.iter::<Object<'_>>() {
                 match item {
                     Object::Dict(child_dict) => {
-                        if let Some(elem) = parse_struct_elem(&child_dict, role_map, depth, visited)
-                        {
-                            elements.push(elem);
+                        // A content reference (`/Type /MCR` or `/OBJR`) is
+                        // content, not a child element; only structure
+                        // elements recurse. (`/MCID` alone says MCR: no
+                        // structure element carries one.)
+                        let is_reference = child_dict.contains_key(keys::MCID)
+                            || child_dict
+                                .get::<Name>(keys::TYPE)
+                                .is_some_and(|t| t.as_ref() == b"MCR" || t.as_ref() == b"OBJR");
+                        if !is_reference {
+                            path.push(elements.len());
+                            if let Some(elem) = parse_struct_elem(
+                                &child_dict,
+                                ctx,
+                                depth,
+                                visited,
+                                page,
+                                path,
+                                details,
+                            ) {
+                                elements.push(elem);
+                            }
+                            path.pop();
                         }
                     }
                     Object::Number(_) => {
@@ -244,9 +438,12 @@ fn parse_children(
 /// Parse a single StructElem dictionary.
 fn parse_struct_elem(
     dict: &Dict<'_>,
-    role_map: &HashMap<String, String>,
+    ctx: &ParseContext<'_>,
     depth: usize,
     visited: &mut BTreeSet<ObjectIdentifier>,
+    parent_page: Option<usize>,
+    path: &mut Vec<usize>,
+    details: &mut StructureTreeDetails,
 ) -> Option<StructElement> {
     // Bound deep nesting (defends against adversarial chains of distinct nodes).
     if depth >= MAX_STRUCTURE_DEPTH {
@@ -275,7 +472,8 @@ fn parse_struct_elem(
         .unwrap_or_default();
 
     // Resolve standard type via role map
-    let standard_type = role_map
+    let standard_type = ctx
+        .role_map
         .get(&struct_type)
         .cloned()
         .unwrap_or_else(|| struct_type.clone());
@@ -295,11 +493,27 @@ fn parse_struct_elem(
         .get::<pdf_syntax::object::String>(keys::LANG)
         .and_then(|s| std::string::String::from_utf8(s.as_bytes().to_vec()).ok());
 
-    // Collect MCIDs from /K
-    let mcids = collect_mcids(dict);
+    // The page this element's bare-integer `/K` entries refer to: its own
+    // `/Pg`, else its parent's. On a one-page document there is nowhere else
+    // they could be.
+    let page_index = resolve_page(dict, ctx.pages)
+        .or(parent_page)
+        .or_else(|| (ctx.pages.len() == 1).then_some(0));
+
+    // Collect MCIDs from /K, with each reference's own page where it has one.
+    let refs = collect_mcids(dict, ctx.pages);
+    let (mcids, mcid_pages): (Vec<i32>, Vec<Option<usize>>) = refs.into_iter().unzip();
+
+    // Table spans from the /A attributes.
+    let (row_span, col_span) = parse_spans(dict);
 
     // Parse child structure elements
-    let children = parse_children(dict, role_map, depth + 1, visited);
+    let children = parse_children(dict, ctx, depth + 1, visited, page_index, path, details);
+
+    // The values beside the element, under this element's path. Recording
+    // them here is safe: every early return is above (depth, cycle, type),
+    // so a failed element never leaves orphan entries behind.
+    details.insert(path, ElementDetails::new(mcid_pages, row_span, col_span));
 
     Some(StructElement {
         struct_type,
@@ -308,13 +522,24 @@ fn parse_struct_elem(
         actual_text,
         lang,
         mcids,
-        page_index: None,
+        page_index,
         children,
     })
 }
 
-/// Collect MCID values from the /K entry of a struct element.
-fn collect_mcids(dict: &Dict<'_>) -> Vec<i32> {
+/// Collect `(MCID, page)` pairs from the /K entry of a struct element.
+///
+/// Bare integers take the element's own page (`None` here, resolved by the
+/// caller to the element's `page_index`); marked content reference dicts
+/// resolve their own `/Pg`.
+fn collect_mcids(dict: &Dict<'_>, pages: &[Option<ObjectIdentifier>]) -> Vec<(i32, Option<usize>)> {
+    fn mcid_of(d: &Dict<'_>, pages: &[Option<ObjectIdentifier>]) -> Option<(i32, Option<usize>)> {
+        let Object::Number(n) = d.get::<Object<'_>>(keys::MCID)? else {
+            return None;
+        };
+        Some((n.as_i64() as i32, resolve_page(d, pages)))
+    }
+
     let mut mcids = Vec::new();
 
     let Some(k) = dict.get::<Object<'_>>(keys::K) else {
@@ -323,23 +548,23 @@ fn collect_mcids(dict: &Dict<'_>) -> Vec<i32> {
 
     match k {
         Object::Number(n) => {
-            mcids.push(n.as_i64() as i32);
+            mcids.push((n.as_i64() as i32, None));
         }
         Object::Dict(d) => {
             // MCR (marked content reference): dict with /MCID key
-            if let Some(Object::Number(n)) = d.get::<Object<'_>>(keys::MCID) {
-                mcids.push(n.as_i64() as i32);
+            if let Some(pair) = mcid_of(&d, pages) {
+                mcids.push(pair);
             }
         }
         Object::Array(arr) => {
             for item in arr.iter::<Object<'_>>() {
                 match item {
                     Object::Number(n) => {
-                        mcids.push(n.as_i64() as i32);
+                        mcids.push((n.as_i64() as i32, None));
                     }
                     Object::Dict(d) => {
-                        if let Some(Object::Number(n)) = d.get::<Object<'_>>(keys::MCID) {
-                            mcids.push(n.as_i64() as i32);
+                        if let Some(pair) = mcid_of(&d, pages) {
+                            mcids.push(pair);
                         }
                     }
                     _ => {}
@@ -352,6 +577,49 @@ fn collect_mcids(dict: &Dict<'_>) -> Vec<i32> {
     mcids
 }
 
+/// Read `/RowSpan` and `/ColSpan` from a structure element's `/A` attributes.
+///
+/// Either may sit in a lone attribute dict or in an array of them; a missing
+/// or unparsable span is 1, and a span below 1 is clamped to it.
+fn parse_spans(dict: &Dict<'_>) -> (u16, u16) {
+    fn span_of(d: &Dict<'_>, key: &[u8]) -> Option<u16> {
+        let n = d.get::<Object<'_>>(key)?;
+        let Object::Number(n) = n else {
+            return None;
+        };
+        let v = n.as_i64().clamp(1, u16::MAX as i64);
+        Some(v as u16)
+    }
+
+    fn from_dict(d: &Dict<'_>) -> (Option<u16>, Option<u16>) {
+        (span_of(d, b"RowSpan"), span_of(d, b"ColSpan"))
+    }
+
+    let Some(a) = dict.get::<Object<'_>>(keys::A) else {
+        return (1, 1);
+    };
+    let mut row_span = None;
+    let mut col_span = None;
+    match a {
+        Object::Dict(d) => {
+            (row_span, col_span) = from_dict(&d);
+        }
+        Object::Array(arr) => {
+            // Attribute objects may carry a revision number beside each dict;
+            // only the dicts are read.
+            for item in arr.iter::<Object<'_>>() {
+                if let Object::Dict(d) = item {
+                    let (r, c) = from_dict(&d);
+                    row_span = row_span.or(r);
+                    col_span = col_span.or(c);
+                }
+            }
+        }
+        _ => {}
+    }
+    (row_span.unwrap_or(1), col_span.unwrap_or(1))
+}
+
 fn name_to_string(name: &Name) -> String {
     std::str::from_utf8(name.as_ref())
         .unwrap_or("<invalid>")
@@ -361,6 +629,80 @@ fn name_to_string(name: &Name) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Assemble a minimal one-page PDF from indirect object bodies.
+    fn pdf_of(objs: &[&[u8]]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let mut offsets = Vec::with_capacity(objs.len() + 1);
+        offsets.push(0);
+        buf.extend_from_slice(b"%PDF-1.7\n");
+        for (i, body) in objs.iter().enumerate() {
+            offsets.push(buf.len());
+            buf.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            buf.extend_from_slice(body);
+            buf.extend_from_slice(b"\nendobj\n");
+        }
+        let xref_off = buf.len();
+        buf.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes(),
+        );
+        for o in &offsets[1..] {
+            buf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+        }
+        buf.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_off}\n%%EOF",
+                objs.len() + 1
+            )
+            .as_bytes(),
+        );
+        buf
+    }
+
+    #[test]
+    fn page_index_resolves_through_pg() {
+        // A bare-integer /K under a /Pg, and an MCR carrying its own /Pg.
+        let bytes = pdf_of(&[
+            b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 4 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+            b"<< /Type /StructTreeRoot /K [5 0 R 6 0 R] >>",
+            b"<< /Type /StructElem /S /H1 /Pg 3 0 R /K 0 >>",
+            b"<< /Type /StructElem /S /P /K <</Type /MCR /Pg 3 0 R /MCID 7>> >>",
+        ]);
+        let pdf = Pdf::new(bytes).expect("load tagged PDF");
+        let (tree, details) = parse_with_details(&pdf).expect("structure tree parses");
+        assert_eq!(tree.root_elements.len(), 2);
+        let h1 = &tree.root_elements[0];
+        assert_eq!(h1.mcids, vec![0]);
+        assert_eq!(h1.page_index, Some(0));
+        // A bare-integer /K carries no page of its own: the details say
+        // `None` and the element's page is the fallback.
+        assert_eq!(details.mcid_page(&[0], 0), None);
+        assert_eq!(details.mcid_page(&[0], 0).or(h1.page_index), Some(0));
+        let p = &tree.root_elements[1];
+        assert_eq!(p.mcids, vec![7]);
+        assert_eq!(details.mcid_page(&[1], 0), Some(0));
+    }
+
+    #[test]
+    fn row_and_column_spans_come_from_attributes() {
+        let bytes = pdf_of(&[
+            b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 4 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+            b"<< /Type /StructTreeRoot /K [5 0 R 6 0 R] >>",
+            b"<< /Type /StructElem /S /TD /Pg 3 0 R /K 0 /A <</O /Table /RowSpan 2 /ColSpan 3>> >>",
+            b"<< /Type /StructElem /S /TD /Pg 3 0 R /K 1 >>",
+        ]);
+        let pdf = Pdf::new(bytes).expect("load tagged PDF");
+        let (tree, details) = parse_with_details(&pdf).expect("structure tree parses");
+        assert_eq!(tree.root_elements.len(), 2);
+        assert_eq!(details.spans(&[0]), (2, 3));
+        assert_eq!(details.spans(&[1]), (1, 1));
+        // A path the parse never recorded still reads as defaults.
+        assert_eq!(details.spans(&[7]), (1, 1));
+    }
 
     #[test]
     fn empty_struct_element() {

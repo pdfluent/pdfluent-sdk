@@ -33,7 +33,7 @@ CONTRIBUTING = "Fork, branch, sign off with `git commit -s`, which certifies " \
                "the Developer Certificate of Origin.\n"
 SECURITY = """# Security Policy
 
-Report to security@pdfluent.com. Do not open a public GitHub issue for a
+Report to hello@pdfluent.com. Do not open a public GitHub issue for a
 vulnerability.
 
 ### There is no bug bounty
@@ -140,6 +140,18 @@ def main() -> int:
         fatal, _ = guard.judge(tree(base / "quiet", **{"SECURITY.md": quiet}), [])
         case("saying nothing about a bounty is fatal too",
              any("no bug bounty" in f for f in fatal), str(fatal))
+
+        # --- an address with no mailbox behind it -----------------------------
+        dead = SECURITY.replace("hello@pdfluent.com", "security@pdfluent.com")
+        fatal, _ = guard.judge(tree(base / "dead-address", **{"SECURITY.md": dead}), [])
+        case("a SECURITY.md that names the retired address is fatal",
+             any("names security@pdfluent.com" in f for f in fatal), str(fatal))
+
+        fatal, _ = guard.judge(
+            tree(base / "dead-readme",
+                 **{"README.md": "Report security problems to security@pdfluent.com.\n"}), [])
+        case("a README that names the retired address is fatal",
+             any("README.md names security@pdfluent.com" in f for f in fatal), str(fatal))
 
         # --- what the seeding does to it -------------------------------------
         # `.gitlab-ci.yml` is the real regression: SECURITY.md described the fuzz

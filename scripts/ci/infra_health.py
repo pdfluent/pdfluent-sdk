@@ -65,7 +65,16 @@ PER_UUR_ALARM = 3
 
 
 def gh(pad: str):
-    r = subprocess.run(["gh", "api", pad], capture_output=True, text=True, check=False)
+    # A MISSING BINARY IS AN ANSWER, not a crash. This report is advisory and it
+    # now runs in two places: on the operator's Mac, where `gh` and the keychain
+    # are, and on a throwaway gate instance, where neither is (#474). There it
+    # died on FileNotFoundError before printing a line, so every remote gate run
+    # reported nothing at all -- and an advisory line that is absent reads like
+    # an advisory line that found nothing.
+    try:
+        r = subprocess.run(["gh", "api", pad], capture_output=True, text=True, check=False)
+    except OSError:
+        return None
     if r.returncode != 0:
         return None
     try:
@@ -77,10 +86,16 @@ def gh(pad: str):
 def hetzner_token() -> str | None:
     if os.environ.get("HCLOUD_TOKEN"):
         return os.environ["HCLOUD_TOKEN"]
-    r = subprocess.run(
-        ["security", "find-generic-password", "-s", "HCLOUD_TOKEN", "-w"],
-        capture_output=True, text=True, check=False,
-    )
+    # `security` is macOS. On any other machine there is no keychain to ask, and
+    # the honest answer is "no token", which main() already reports as SKIPPED
+    # (not a pass) -- not a traceback that takes the whole report with it.
+    try:
+        r = subprocess.run(
+            ["security", "find-generic-password", "-s", "HCLOUD_TOKEN", "-w"],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        return None
     return r.stdout.strip() or None
 
 

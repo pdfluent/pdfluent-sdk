@@ -1,0 +1,20 @@
+{
+  "images": [
+    {
+      "bpc": 8,
+      "colorspace": "DeviceRGB",
+      "components": 3,
+      "height": 5,
+      "sha256": "7b9735715f7ddaf02dfd372916be2274132be92586adec6ee8885ae25eb67388",
+      "width": 7
+    },
+    {
+      "bpc": 8,
+      "colorspace": "DeviceGray",
+      "components": 1,
+      "height": 3,
+      "sha256": "7529b9f55d92c551987071c8fe41234c4e0c6381008a4585a1d85f547f3c5786",
+      "width": 4
+    }
+  ]
+}

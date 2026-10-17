@@ -24,7 +24,7 @@ use crate::error::{ParseError, XrefError};
 use crate::load_options::{FilterFunc, LoadOptions};
 use crate::object_stream::ObjectStream;
 use crate::parser;
-use crate::xref::XrefEntry;
+use crate::xref::{Xref, XrefEntry, XrefType};
 use crate::{Dictionary, Document, Error, IncrementalDocument, Object, ObjectId, Result};
 
 #[cfg(not(feature = "async"))]
@@ -516,6 +516,144 @@ pub struct Reader<'a> {
 /// Maximum allowed embedding of literal strings.
 pub const MAX_BRACKET: usize = 100;
 
+/// How many objects a rebuilt cross-reference table may name.
+///
+/// A scan over a hostile file finds an object header for as many `N G obj`
+/// runs as it has bytes for. The engine refuses any document above the same
+/// bound, so a rebuild that ran past it would only build a table the rest of
+/// the pipeline throws away — while the memory it took was already spent.
+const MAX_REBUILT_OBJECTS: usize = 500_000;
+
+/// Is this byte the end of a PDF token — whitespace or a delimiter?
+fn is_token_boundary(b: u8) -> bool {
+    b.is_ascii_whitespace()
+        || b == 0
+        || matches!(b, b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%')
+}
+
+/// A place in the file where an object header was found.
+#[derive(Clone, Copy)]
+struct Candidate {
+    offset: u32,
+    generation: u16,
+    /// Found between a `stream` and its `endstream`, so probably not a header
+    /// at all. Probably, not certainly -- which is why this orders candidates
+    /// rather than removing them.
+    in_payload: bool,
+}
+
+/// The `stream` ... `endstream` spans in a file, in order and without overlap.
+///
+/// Used to keep the rebuild from taking an object header out of stream data.
+///
+/// A span opens only where the file actually opens a stream: the keyword has
+/// to follow the `>>` of a stream dictionary and be followed by an end of
+/// line, which is the grammar in ISO 32000-1 §7.3.8.1. The six letters on
+/// their own are not enough -- `<< /Label (stream) >>` puts them in a string,
+/// `/stream` in a name, `% stream` in a comment -- and a span opened on one of
+/// those would run to the next real `endstream` and swallow every object
+/// between, which turns a repairable file into a silently incomplete one.
+///
+/// Two further limits, both erring towards including a header rather than
+/// dropping one, for the same reason: a payload holding the literal
+/// `endstream` ends its span early, and a `stream` with no `endstream` after
+/// it at all ends the scan instead of swallowing the rest of the file.
+fn stream_payloads(buffer: &[u8]) -> Vec<(usize, usize)> {
+    const STREAM: &[u8] = b"stream";
+    const ENDSTREAM: &[u8] = b"endstream";
+
+    let mut spans = Vec::new();
+    let mut at = 0;
+
+    while let Some(start) = find_from(buffer, STREAM, at) {
+        at = start + STREAM.len();
+
+        // `endstream` ends in the same six letters; that one closes a payload,
+        // it does not open one.
+        if start >= 3 && &buffer[start - 3..start] == b"end" {
+            continue;
+        }
+        if !opens_a_stream(buffer, start) {
+            continue;
+        }
+
+        let Some(close) = find_from(buffer, ENDSTREAM, at) else {
+            break;
+        };
+        let end = close + ENDSTREAM.len();
+        spans.push((start, end));
+        at = end;
+    }
+
+    spans
+}
+
+/// Whether the `stream` keyword at `at` is the one that opens a payload.
+///
+/// `stream` follows the dictionary that describes the payload and is followed
+/// by CRLF or LF -- never by CR alone, and never by anything else (ISO 32000-1
+/// §7.3.8.1). Both halves are checked, because either alone still admits the
+/// six letters sitting in a string, a name or a comment.
+fn opens_a_stream(buffer: &[u8], at: usize) -> bool {
+    let after = at + b"stream".len();
+    match buffer.get(after) {
+        Some(b'\n') => {}
+        Some(b'\r') if buffer.get(after + 1) == Some(&b'\n') => {}
+        _ => return false,
+    }
+
+    let mut before = at;
+    while before > 0 && buffer[before - 1].is_ascii_whitespace() {
+        before -= 1;
+    }
+    before >= 2 && &buffer[before - 2..before] == b">>"
+}
+
+/// The first occurrence of `needle` in `buffer` at or after `from`.
+fn find_from(buffer: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    if from >= buffer.len() {
+        return None;
+    }
+    buffer[from..]
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .map(|at| from + at)
+}
+
+/// Every position where the three letters `obj` occur.
+fn memchr_obj(buffer: &[u8]) -> impl Iterator<Item = usize> + '_ {
+    buffer
+        .windows(3)
+        .enumerate()
+        .filter_map(|(i, w)| (w == b"obj").then_some(i))
+}
+
+/// Read a decimal number that ends just before `end`, skipping the whitespace
+/// between it and `end`. Returns the value and the offset of its first digit.
+fn read_number_backwards(buffer: &[u8], end: usize) -> Option<(u64, usize)> {
+    let mut pos = end;
+
+    while pos > 0 && buffer[pos - 1].is_ascii_whitespace() {
+        pos -= 1;
+    }
+    if pos == end {
+        // A header separates its parts with whitespace; `1 0obj` is not one.
+        return None;
+    }
+
+    let digits_end = pos;
+    while pos > 0 && buffer[pos - 1].is_ascii_digit() {
+        pos -= 1;
+    }
+    if pos == digits_end || digits_end - pos > 10 {
+        return None;
+    }
+
+    let value = std::str::from_utf8(&buffer[pos..digits_end]).ok()?.parse().ok()?;
+
+    Some((value, pos))
+}
+
 /// How deep an array or dictionary may nest before the parser refuses to
 /// descend further.
 ///
@@ -629,6 +767,23 @@ const STANDARD_INFO_KEYS: &[&[u8]] = &[
     b"Trapped",
 ];
 
+/// Inherit trailer keys from an older revision (ISO 32000-1 section 7.5.6).
+///
+/// An incremental update overrides only the keys it carries; every other
+/// trailer key persists from the earlier revisions. The revision walk runs
+/// newest-first, so filling in just the missing keys leaves the newest value
+/// in place each time. `Prev` and `XRefStm` are byte offsets into this file
+/// revision, consumed as chain links while walking — a stale inherited one
+/// would corrupt later reads, so both are skipped.
+fn inherit_trailer_keys(trailer: &mut Dictionary, older: &Dictionary) {
+    for (key, value) in older.iter() {
+        if key.as_slice() == b"Prev" || key.as_slice() == b"XRefStm" || trailer.has(key) {
+            continue;
+        }
+        trailer.set(key.clone(), value.clone());
+    }
+}
+
 impl Reader<'_> {
     /// Read metadata (title and page count) without loading the entire document.
     /// This is much faster for large PDFs when you only need basic information.
@@ -671,6 +826,7 @@ impl Reader<'_> {
                 xref.merge(prev_xref);
             }
 
+            inherit_trailer_keys(&mut trailer, &prev_trailer);
             prev_xref_start = prev_trailer.get(b"Prev").cloned().ok();
         }
         let xref_entry_count = xref.max_id().checked_add(1).ok_or(ParseError::InvalidXref)?;
@@ -869,17 +1025,42 @@ impl Reader<'_> {
             self.document.binary_mark = binary_mark;
         }
 
-        let xref_start = Self::get_xref_start(self.buffer)?;
-        if xref_start > self.buffer.len() {
-            return Err(Error::Xref(XrefError::Start));
-        }
-        self.document.xref_start = xref_start;
+        let table = Self::get_xref_start(self.buffer)
+            .and_then(|xref_start| {
+                if xref_start > self.buffer.len() {
+                    return Err(Error::Xref(XrefError::Start));
+                }
+                let table = parser::xref_and_trailer(&self.buffer[xref_start..], &self)?;
+                Ok((xref_start, table))
+            })
+            .map(|(xref_start, table)| {
+                self.document.xref_start = xref_start;
+                table
+            });
 
-        let (mut xref, mut trailer) = parser::xref_and_trailer(&self.buffer[xref_start..], &self)?;
+        // A cross-reference table we cannot read is not a document we cannot
+        // read: the objects are still in the file, and every other reader
+        // rebuilds the table by scanning for them (#433). Keep the original
+        // error if the scan finds nothing, so a file that is not a PDF at all
+        // still fails saying so.
+        let mut rebuilt = false;
+        let (mut xref, mut trailer) = match table {
+            Ok(table) => table,
+            Err(err) => match self.rebuild_xref() {
+                Some(rebuilt_table) => {
+                    rebuilt = true;
+                    rebuilt_table
+                }
+                None => return Err(err),
+            },
+        };
 
         // Read previous Xrefs of linearized or incremental updated document.
+        // A rebuilt table already covers every revision in the file, and the
+        // `Prev` offset it inherited from the recovered trailer points into the
+        // same broken structure we just gave up on, so do not follow it.
         let mut already_seen = HashSet::new();
-        let mut prev_xref_start = trailer.remove(b"Prev");
+        let mut prev_xref_start = if rebuilt { None } else { trailer.remove(b"Prev") };
         while let Some(prev) = prev_xref_start.and_then(|offset| offset.as_i64().ok()) {
             if already_seen.contains(&prev) {
                 break;
@@ -903,6 +1084,7 @@ impl Reader<'_> {
                 xref.merge(prev_xref);
             }
 
+            inherit_trailer_keys(&mut trailer, &prev_trailer);
             prev_xref_start = prev_trailer.get(b"Prev").cloned().ok();
         }
         let xref_entry_count = xref.max_id().checked_add(1).ok_or(ParseError::InvalidXref)?;
@@ -1395,9 +1577,244 @@ impl Reader<'_> {
         parser::indirect_object(self.buffer, offset, expected_id, self, already_seen)
     }
 
+    /// Rebuild the cross-reference table by scanning the file for `N G obj`
+    /// headers, the way every C reader does when the table is unusable.
+    ///
+    /// Returns `None` when the scan finds no objects, or finds no trailer that
+    /// names a document catalogue — a file we have no business calling a PDF.
+    /// A later definition of an object number wins over an earlier one, which
+    /// is what makes an incrementally updated file come out at its newest
+    /// revision.
+    fn rebuild_xref(&mut self) -> Option<(Xref, Dictionary)> {
+        let headers = Self::scan_object_headers(self.buffer);
+        if headers.is_empty() {
+            return None;
+        }
+        warn!("cross-reference table unusable; rebuilt from {} objects", headers.len());
+
+        // Every candidate for an object number, oldest first. A header is not
+        // proof on its own -- two numbers and `obj` occur inside stream data as
+        // well -- so the newest one that parses is what the table gets, and an
+        // object number whose newest candidate is rubbish falls back to an
+        // older definition instead of going missing.
+        let mut candidates: BTreeMap<u32, Vec<Candidate>> = BTreeMap::new();
+        for ((id, generation), offset, in_payload) in headers {
+            let Ok(offset) = u32::try_from(offset) else {
+                continue;
+            };
+            candidates.entry(id).or_default().push(Candidate {
+                offset,
+                generation,
+                in_payload,
+            });
+        }
+
+        let mut xref = Xref::new(0, XrefType::CrossReferenceTable);
+        for (id, found) in &candidates {
+            let newest = Self::newest(found, |_| true).expect("a candidate list is never empty");
+            xref.insert(
+                *id,
+                XrefEntry::Normal {
+                    offset: newest.offset,
+                    generation: newest.generation,
+                },
+            );
+        }
+
+        // Reading an object to find the trailer resolves references and stream
+        // lengths through the table, so publish it before looking.
+        self.document.reference_table = xref.clone();
+
+        // Now that references resolve, keep the newest candidate that actually
+        // parses. Newest first is the rule an incremental update asks for; a
+        // candidate that does not parse was never a definition of the object.
+        //
+        // Candidates found inside a stream payload go last rather than being
+        // dropped. `1 0 obj` in a payload is not a definition, so a real header
+        // has to beat it -- but deciding what is a payload means reading the
+        // file linearly, which is what the table is being rebuilt to make
+        // possible, so that decision is a guess and sometimes a wrong one.
+        // Ordering makes a wrong guess cost nothing: the real header still
+        // wins, and an object whose only header we mistook for payload keeps a
+        // definition instead of disappearing from a document that then reads as
+        // complete.
+        for (id, found) in &candidates {
+            let parses = |c: &Candidate| self.read_object(c.offset as usize, None, &mut HashSet::new()).is_ok();
+            let Some(chosen) =
+                Self::newest(found, |c| !c.in_payload && parses(c)).or_else(|| Self::newest(found, parses))
+            else {
+                xref.entries.remove(id);
+                continue;
+            };
+            xref.insert(
+                *id,
+                XrefEntry::Normal {
+                    offset: chosen.offset,
+                    generation: chosen.generation,
+                },
+            );
+        }
+        self.document.reference_table = xref.clone();
+
+        let trailer = self.recover_trailer(&xref)?;
+
+        Some((xref, trailer))
+    }
+
+    /// The last candidate in file order that `keep` accepts.
+    fn newest(found: &[Candidate], keep: impl FnMut(&Candidate) -> bool) -> Option<Candidate> {
+        let mut keep = keep;
+        found.iter().rev().find(|c| keep(c)).copied()
+    }
+
+    /// Every `N G obj` header in the file, in the order they appear.
+    ///
+    /// The scan is anchored on `obj` and read backwards, because the two
+    /// numbers in front of it are what tell a header apart from the same three
+    /// letters inside a name or a string.
+    fn scan_object_headers(buffer: &[u8]) -> Vec<(ObjectId, usize, bool)> {
+        let mut found = Vec::new();
+        // Stream payloads are arbitrary bytes, and `1 0 obj` occurring in one
+        // is not a definition of object 1. Left first in line, such a candidate
+        // is the newest one for that number and, if it happens to parse,
+        // replaces the real object -- which for a catalogue or a page tree is a
+        // corrupted document recovered from a repairable one. The flag says
+        // which side of that a header was found on; the caller uses it to
+        // order candidates, not to discard them.
+        let payloads = stream_payloads(buffer);
+        let mut payload = payloads.iter().peekable();
+
+        for keyword in memchr_obj(buffer) {
+            if found.len() >= MAX_REBUILT_OBJECTS {
+                warn!("stopped rebuilding the cross-reference table at {MAX_REBUILT_OBJECTS} objects");
+                break;
+            }
+
+            // `obj` must end the token: `object` is not a header.
+            match buffer.get(keyword + 3) {
+                None => {}
+                Some(&b) if is_token_boundary(b) => {}
+                Some(_) => continue,
+            }
+
+            let mut pos = keyword;
+            let Some((generation, gen_start)) = read_number_backwards(buffer, pos) else {
+                continue;
+            };
+            pos = gen_start;
+            let Some((number, num_start)) = read_number_backwards(buffer, pos) else {
+                continue;
+            };
+            // The header must start a token as well, or `12 0 obj` inside a
+            // longer run of digits would be read as one.
+            if num_start > 0 && !is_token_boundary(buffer[num_start - 1]) {
+                continue;
+            }
+
+            // Headers arrive in order, so the payloads are walked alongside
+            // them rather than searched: drop the ones already behind us, then
+            // ask whether this header starts inside the next.
+            while payload.peek().is_some_and(|(_, end)| *end <= num_start) {
+                payload.next();
+            }
+            let in_payload = payload
+                .peek()
+                .is_some_and(|(start, end)| num_start >= *start && num_start < *end);
+
+            let (Ok(number), Ok(generation)) = (u32::try_from(number), u16::try_from(generation)) else {
+                continue;
+            };
+            found.push(((number, generation), num_start, in_payload));
+        }
+
+        found
+    }
+
+    /// Find a trailer dictionary for a file whose table we had to rebuild.
+    ///
+    /// Three shapes, in the order a real file offers them: the `trailer`
+    /// keyword of a classic table, the dictionary of a cross-reference stream,
+    /// and — when neither survived — a synthesised trailer pointing at the
+    /// catalogue object the scan found.
+    fn recover_trailer(&self, xref: &Xref) -> Option<Dictionary> {
+        if let Some(trailer) = self.trailer_after_keyword() {
+            return Some(trailer);
+        }
+
+        let mut catalog = None;
+
+        for (id, entry) in &xref.entries {
+            let XrefEntry::Normal { offset, generation } = *entry else {
+                continue;
+            };
+            let Ok((_, object)) = self.read_object(offset as usize, None, &mut HashSet::new()) else {
+                continue;
+            };
+
+            let dict = match &object {
+                Object::Dictionary(dict) => dict,
+                Object::Stream(stream) => &stream.dict,
+                _ => continue,
+            };
+
+            // A cross-reference stream carries the trailer entries itself.
+            if dict.has(b"Root") {
+                return Some(dict.clone());
+            }
+
+            if catalog.is_none() && dict.has_type(b"Catalog") {
+                catalog = Some((*id, generation));
+            }
+        }
+
+        let catalog = catalog?;
+        let mut trailer = Dictionary::new();
+        trailer.set(b"Root".to_vec(), Object::Reference(catalog));
+
+        Some(trailer)
+    }
+
+    /// The last `trailer` keyword in the file whose dictionary names a `/Root`.
+    fn trailer_after_keyword(&self) -> Option<Dictionary> {
+        let mut end = self.buffer.len();
+
+        while let Some(pos) = Self::search_substring(&self.buffer[..end], b"trailer", 0) {
+            end = pos;
+
+            let mut dict_start = pos + b"trailer".len();
+            while self.buffer.get(dict_start).is_some_and(|b| b.is_ascii_whitespace()) {
+                dict_start += 1;
+            }
+
+            if let Some(Object::Dictionary(dict)) = parser::direct_object(&self.buffer[dict_start..])
+                && dict.has(b"Root")
+            {
+                return Some(dict);
+            }
+
+            if pos == 0 {
+                break;
+            }
+        }
+
+        None
+    }
+
     fn get_xref_start(buffer: &[u8]) -> Result<usize> {
+        // The tail first: `%%EOF` belongs at the end of the file, and on a
+        // well-formed document 512 bytes find it without reading the rest.
+        //
+        // Then the whole buffer, because trailing bytes behind `%%EOF` are a
+        // shape that exists. PDFBox's `data-000001.pdf` carries 530 zero bytes
+        // behind its marker, which puts it just outside the window: we refused
+        // the document for an "invalid start value" while its cross-reference
+        // table was intact and correctly pointed at, and we were the only
+        // reader of seven in the #390 comparison that refused it (#450). The
+        // second search costs one backwards scan, and only on a file the first
+        // one has already failed to read.
         let seek_pos = buffer.len() - cmp::min(buffer.len(), 512);
         Self::search_substring(buffer, b"%%EOF", seek_pos)
+            .or_else(|| Self::search_substring(buffer, b"%%EOF", 0))
             .filter(|&eof_pos| eof_pos > 25)
             .and_then(|eof_pos| Self::search_substring(&buffer[..eof_pos], b"startxref", eof_pos - 25))
             .ok_or(Error::Xref(XrefError::Start))
@@ -1585,6 +2002,101 @@ fn search_substring_finds_last_occurrence() {
 #[cfg(all(test, not(feature = "async")))]
 fn minimal_pdf_bytes() -> &'static [u8] {
     include_bytes!("../assets/example.pdf")
+}
+
+/// A minimal one-page document with a classic cross-reference table.
+///
+/// Written out by hand so a test may damage one part of it and leave the rest
+/// exactly where it was.
+#[cfg(all(test, not(feature = "async")))]
+fn hand_written_pdf(tail: &str) -> String {
+    let body = "%PDF-1.4\n\
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n\
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n\
+3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]>>endobj\n";
+
+    format!("{body}{tail}")
+}
+
+/// A `startxref` that points nowhere costs the table, not the document (#433).
+#[cfg(all(test, not(feature = "async")))]
+#[test]
+fn a_table_we_cannot_read_is_rebuilt_by_scanning() {
+    let doc = hand_written_pdf("startxref\n999999\n%%EOF");
+
+    let doc = Document::load_mem(doc.as_bytes()).expect("the objects are all still there");
+
+    assert_eq!(doc.objects.len(), 3, "every object in the file is found");
+    assert_eq!(doc.get_pages().len(), 1);
+    assert!(
+        doc.catalog().is_ok(),
+        "the catalogue is found without a trailer to name it"
+    );
+}
+
+/// The trailer, when the file still has one, is the trailer we use.
+#[cfg(all(test, not(feature = "async")))]
+#[test]
+fn a_rebuild_prefers_the_trailer_the_file_carries() {
+    let doc = hand_written_pdf("trailer\n<</Size 4/Root 1 0 R>>\nstartxref\n999999\n%%EOF");
+
+    let doc = Document::load_mem(doc.as_bytes()).expect("the document opens");
+
+    assert_eq!(doc.trailer.get(b"Size").unwrap().as_i64().unwrap(), 4);
+    assert_eq!(doc.get_pages().len(), 1);
+}
+
+/// A later definition of an object number wins, the way an incremental update
+/// means it to.
+#[cfg(all(test, not(feature = "async")))]
+#[test]
+fn the_last_definition_of_an_object_is_the_one_that_counts() {
+    let doc =
+        hand_written_pdf("3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 42 42]>>endobj\nstartxref\n999999\n%%EOF");
+
+    let doc = Document::load_mem(doc.as_bytes()).expect("the document opens");
+    let page = doc.get_object((3, 0)).unwrap().as_dict().unwrap();
+    let media_box = page.get(b"MediaBox").unwrap().as_array().unwrap();
+
+    assert_eq!(media_box[2].as_i64().unwrap(), 42, "the newer page won");
+}
+
+/// A newer header that does not parse is not a definition, so the older one
+/// that does still counts.
+#[cfg(all(test, not(feature = "async")))]
+#[test]
+fn a_redefinition_that_is_rubbish_does_not_erase_the_object() {
+    let doc = hand_written_pdf("3 0 obj<<<<<< nothing closes this\nstartxref\n999999\n%%EOF");
+
+    let doc = Document::load_mem(doc.as_bytes()).expect("the document opens");
+
+    assert_eq!(
+        doc.get_pages().len(),
+        1,
+        "the page survives a later header that defines nothing"
+    );
+}
+
+/// `obj` inside a name is not an object header.
+#[cfg(all(test, not(feature = "async")))]
+#[test]
+fn the_scan_reads_headers_and_not_the_letters_o_b_j() {
+    let headers = Reader::scan_object_headers(b"%PDF-1.4\n/objects 1 0 obj<<>>endobj\n12 0object\n7 0 obj<<>>endobj\n");
+
+    let ids: Vec<ObjectId> = headers.iter().map(|(id, _, _)| *id).collect();
+    assert_eq!(ids, vec![(1, 0), (7, 0)]);
+}
+
+/// Rubbish with no object in it stays rubbish, and keeps its own error.
+#[cfg(all(test, not(feature = "async")))]
+#[test]
+fn scanning_does_not_turn_a_non_pdf_into_a_document() {
+    let err = Document::load_mem(b"%PDF-1.4\nno object lives here\n%%EOF").expect_err("nothing to rebuild from");
+
+    assert!(
+        matches!(err, Error::Xref(_) | Error::Parse(_)),
+        "the original cross-reference failure is what the caller hears, got {err:?}"
+    );
 }
 
 #[cfg(all(test, not(feature = "async")))]

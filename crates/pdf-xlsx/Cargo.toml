@@ -11,7 +11,7 @@ readme = "README.md"
 [dependencies]
 lopdf.workspace = true
 thiserror.workspace = true
-pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0" }
+pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.1.0" }
 rust_xlsxwriter = "0.94"
 
 # rust_xlsxwriter builds a workbook's DocProperties with ExcelDateTime::utc_now(),

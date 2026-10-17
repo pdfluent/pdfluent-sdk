@@ -5,7 +5,7 @@ PDF page operators (text-show, path-paint, image-draw, etc.) into a
 typed event stream that a renderer or extractor can consume.
 
 `pdf-interpret` is one of the open-source foundation crates used by the
-[PDFluent](https://pdfluent.com) commercial Rust PDF SDK. It is published as
+[PDFluent](https://pdfluent.com) Rust PDF SDK. It is published as
 **MIT OR Apache-2.0** so it can also be used standalone.
 
 This crate is a **fork of [`hayro-interpret`](https://github.com/LaurenzV/hayro)**

@@ -27,7 +27,7 @@ Textract, Azure Document Intelligence, a self-hosted service, a local binary —
 and pass it to `make_searchable` together with a page-render callback. You get
 back an `OcrReport` per page.
 
-Two local backends ship behind their own feature flags, and they are not
+Three local backends ship behind their own feature flags, and they are not
 equivalent:
 
 **`paddle`** — PaddleOCR via ONNX. Detection with DBNet, recognition with SVTR,
@@ -40,6 +40,13 @@ no cloud calls.
 
 **`tesseract`** — Tesseract 4 or 5 through `leptess`. Requires the Tesseract and
 Leptonica system libraries to be installed.
+
+**`tesseract-cli`** — the system `tesseract` binary as a subprocess
+(`TesseractCliEngine`): the page raster goes to its stdin as PNG and the TSV
+comes back as words. Standard library only, so it adds no dependency and
+nothing to the package. The binary is found on `PATH` or at
+`PDFLUENT_TESSERACT`; where neither names one, constructing the engine fails
+and the caller runs without OCR.
 
 Neither is on by default, and the `pdfluent` facade wires neither, so a plain
 `pdfluent` dependency pulls in no system libraries and downloads no models.

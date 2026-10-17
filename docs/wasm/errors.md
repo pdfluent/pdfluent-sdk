@@ -97,6 +97,8 @@ SCREAMING_SNAKE_CASE identifier such as `"INVALID_PDF"`. From 1.0 onwards:
 | `LICENSE_ERROR`         | `E-LICENSE-INVALID`              | Matches catalogue.                     |
 | `LICENSE_ALREADY_SET`   | `E-LICENSE-INVALID`              | Matches catalogue.                     |
 | _(no legacy)_           | `E-LICENSE-FEATURE-NOT-IN-TIER`  | New: tier-gating failures.             |
+| `DECRYPTION_FAILED`     | `E-SECURITY-DECRYPTION-FAILED`   | New in 1.1.0: `decryptPdf`, `signPdf`. |
+| `SIGN_FAILED`           | `E-WASM-SIGN-FAILED`             | New in 1.1.0: `signPdf`.               |
 
 ## Catalogue gaps closed
 

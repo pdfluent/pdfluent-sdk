@@ -1,0 +1,33 @@
+# Header-band / header-decode subset (#574, T4 04-10): pages the rule-based track parked for the table models (tracks A/B).
+# Report per page: record match (PB) or TEDS (FTN), base vs model arm.
+# ParseBench tuning (docs/table/<name>.pdf)
+Home Depot 10-k unrestricted_page3
+Home Depot 10-k unrestricted_page33
+Home Depot 10-k unrestricted_page45
+Home Depot 10-k unrestricted_page46
+Home Depot 10-k unrestricted_page47
+Home Depot 10-k unrestricted_page57
+Home Depot 10-k unrestricted_page58
+Home Depot 10-k unrestricted_page71
+Home Depot 10-k unrestricted_page72
+Home Depot 10-k unrestricted_page106
+METLIFE-10Q-20240205 unrestricted_page8
+METLIFE-10Q-20240205 unrestricted_page16
+JNPR.2010.page_167.pdf_111113_page1
+JNPR.2011.page_114.pdf_110685_page1
+# FinTabNet (614 deciding set pages; lattice header band at region assembly, m253)
+ABC_2005_page_44
+ABC_2005_page_51
+FE_2009_page_91
+NKE_2013_page_32
+SWK_2006_page_72
+TROW_2005_page_34
+TXT_2009_page_96
+UAA_2018_page_98
+# Header marks not set / joined into the header (m268/m270, rule track closed 04-10)
+AZ LIC Rate Tables 2.0.v2_page105
+AZ LIC Rate Tables 2.0.v2_page47
+blackrock-funds-i-icav-annual-report-2022_page25
+203924_fb04e77929bf4bbc93dbd659653a4f01_page12
+203924_fb04e77929bf4bbc93dbd659653a4f01_page21
+203924_fb04e77929bf4bbc93dbd659653a4f01_page25

@@ -52,9 +52,26 @@
 # holds the three files to that table (#304).
 
 [[crate]]
+name = "docx-extract"
+dir = "crates/docx-extract"
+side = "ours"
+publish_false = true
+
+[[crate]]
+name = "epub-extract"
+dir = "crates/epub-extract"
+side = "ours"
+
+[[crate]]
 name = "formcalc-interpreter"
 dir = "crates/formcalc-interpreter"
 side = "ours"
+
+[[crate]]
+name = "markup-extract"
+dir = "crates/markup-extract"
+side = "ours"
+publish_false = true
 
 [[crate]]
 name = "pdf-annot"
@@ -119,6 +136,11 @@ dir = "crates/pdf-pptx"
 side = "ours"
 
 [[crate]]
+name = "pptx-extract"
+dir = "crates/pptx-extract"
+side = "ours"
+
+[[crate]]
 name = "pdf-python"
 dir = "crates/pdf-python"
 side = "ours"
@@ -140,6 +162,11 @@ dir = "crates/pdf-standard-fonts"
 side = "ours"
 
 [[crate]]
+name = "pdf-substitute-fonts"
+dir = "crates/pdf-substitute-fonts"
+side = "ours"
+
+[[crate]]
 name = "pdf-text-format"
 dir = "crates/pdf-text-format"
 side = "ours"
@@ -155,6 +182,11 @@ dir = "crates/pdf-xlsx"
 side = "ours"
 
 [[crate]]
+name = "xlsx-extract"
+dir = "crates/xlsx-extract"
+side = "ours"
+
+[[crate]]
 name = "pdfluent"
 dir = "crates/pdfluent"
 side = "ours"
@@ -163,7 +195,6 @@ side = "ours"
 name = "pdfluent-cli"
 dir = "crates/pdfluent-cli"
 side = "ours"
-publish_false = true
 
 [[crate]]
 name = "xfa-cli"
@@ -300,6 +331,12 @@ side = "internal"
 publish_false = true
 
 [[crate]]
+name = "pdf-learned"
+dir = "crates/pdf-learned"
+side = "internal"
+publish_false = true
+
+[[crate]]
 name = "pdf-desktop"
 dir = "crates/pdf-desktop"
 side = "internal"
@@ -399,6 +436,37 @@ side = "ours"
 
 [[package]]
 manifest = "bindings/dotnet/src/PDFluent/PDFluent.csproj"
+side = "ours"
+
+# The LangChain and LlamaIndex loaders (#630): PyPI packages of our own code,
+# carrying the same expression as the pdfluent wheel they wrap.
+
+[[package]]
+manifest = "integrations/langchain-pdfluent/pyproject.toml"
+side = "ours"
+
+[[package]]
+manifest = "integrations/llama-index-readers-pdfluent/pyproject.toml"
+side = "ours"
+
+# The MCP server for agents (#625): a PyPI package of our own code, carrying
+# the same expression as the pdfluent wheel it wraps.
+
+[[package]]
+manifest = "integrations/pdfluent-mcp/pyproject.toml"
+side = "ours"
+
+# The extract wrappers (#636): a PyPI package of our own code carrying the
+# canonical expression, and its npm twin carrying SEE LICENSE IN
+# LICENSE-OFFER — npm refuses a LicenseRef (see [channel_representation]),
+# so the pointer is the documented exception, not a lesser licence.
+
+[[package]]
+manifest = "integrations/pdfluent-extract/pyproject.toml"
+side = "ours"
+
+[[package]]
+manifest = "integrations/pdfluent-extract-js/package.json"
 side = "ours"
 
 # Test harnesses, benchmarks and probes. Unpublishable by marker, declare nothing.

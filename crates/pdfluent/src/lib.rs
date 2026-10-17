@@ -59,6 +59,7 @@ pub use pdf_manip::unicode_font;
 
 #[cfg(feature = "async-tokio")]
 pub mod async_io;
+pub mod compat;
 pub mod compliance;
 
 /// PDF/A profiles and validation reports — an alias for [`compliance`].
@@ -101,6 +102,7 @@ pub mod document;
 pub mod encrypt;
 pub mod error;
 pub mod form;
+pub mod images;
 pub mod merger;
 pub mod metadata;
 mod page_labels;
@@ -112,6 +114,7 @@ pub mod structure;
 #[cfg(feature = "pdfa")]
 pub mod tagged;
 pub mod watermark;
+mod words;
 pub mod xfa;
 
 // ---------------------------------------------------------------------------
@@ -127,11 +130,12 @@ pub use crate::document::{
 pub use crate::encrypt::{EncryptOptions, EncryptionAlgorithm, Permissions};
 pub use crate::error::{Error, ResourceLimitKind, Result};
 pub use crate::form::{FieldType, FormField, PdfFormMut};
+pub use crate::images::{DecodedImage, ExtractedImage, ImageColorSpace, ImageId, ImageInfo};
 pub use crate::merger::{BookmarkMergeStrategy, MergeOptions, PdfMerger};
 pub use crate::metadata::{Metadata, MetadataMut};
 pub use crate::parity::{
     CompressOptions, CompressReport, FontSubsetReport, ImageFormat, ImageInsert, ImageInsertReport,
-    InsertImageFormat, ToImagesOptions, ToImagesReport,
+    InsertImageFormat, RenderPageOptions, ToImagesOptions, ToImagesReport,
 };
 pub use crate::redact::RedactOptions;
 pub use crate::signer::{
@@ -143,9 +147,43 @@ pub use crate::xfa::{
     XfaField, XfaFieldOption, XfaFieldType, XfaFieldValue, XfaFormModel, XfaRect, XfaSetOutcome,
     XfaWidget,
 };
+/// Re-export of [`pdf_engine::join_page_texts`]: the form-feed convention every
+/// PDF text reader emits, for callers that hold the pages from
+/// [`PdfDocument::extract_text_pages`] and want the flat form of them.
+pub use pdf_engine::join_page_texts;
+/// The model tiers' shared surface, re-exported from `pdf-engine`: the model
+/// specs, the failure types and the install paths (#641).
+///
+/// One definition and not a facade copy, for the reason the block model is
+/// re-exported rather than mirrored: a caller matching a [`model::ModelError`]
+/// from the facade and one from the engine must be matching the same type.
+pub use pdf_engine::model;
+/// Rasterization precision/speed trade-off for render paths, re-exported
+/// from the engine (one definition, not a facade copy, so callers holding
+/// a value from either crate hold the same type).
+pub use pdf_engine::render::RasterQuality;
 /// Re-export of [`pdf_engine::ProcessingLimits`] for use with
 /// [`OpenOptions::with_processing_limits`].
 pub use pdf_engine::ProcessingLimits;
+/// The TATR test seam, hidden as in the engine: the CLI's own wiring test
+/// names it to prove the flag maps to the options the library output tests
+/// run with, and no caller does.
+#[doc(hidden)]
+pub use pdf_engine::TatrTestHook;
+/// The block model and both serialisations of it, re-exported from
+/// `pdf-engine`: what [`PdfDocument::extract_blocks`] hands back, which pages
+/// it hands back, and the two ways to write them out (#573).
+///
+/// One definition and not a facade copy of it, for the reason
+/// [`ProcessingLimits`] is re-exported rather than mirrored: a caller holding
+/// a `Block` from the facade and one from the engine must be holding the same
+/// type, or every consumer of both has to convert between two shapes that
+/// carry identical fields.
+pub use pdf_engine::{
+    to_docling_json, to_json, to_json_with_words, to_markdown, to_markdown_with_code,
+    to_markdown_with_options, to_words_json_lines, Block, BlockKind, DoclingPage, ExtractOptions,
+    MarkdownOptions, OcrMode, OptionsError, PageSeparators, Quality, TatrOptions, Word,
+};
 
 /// The SDK version at compile time. Bindings check this at runtime to ensure
 /// compatibility with the loaded `pdfluent` dynamic library.

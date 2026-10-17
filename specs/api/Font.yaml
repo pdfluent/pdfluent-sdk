@@ -1,0 +1,315 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for Font, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: Font
+rust_path: pdfluent::compat::Font
+names: {python: Font, node: Font, java: Font, dotnet: Font}
+members:
+  - name: __eq__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __eq__, node: eq, java: eq, dotnet: Eq}
+    rust: "Font::PartialEq"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-font-eq]
+  - name: __ge__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ge__, node: ge, java: ge, dotnet: Ge}
+    rust: "Font::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-font-ge]
+  - name: __gt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __gt__, node: gt, java: gt, dotnet: Gt}
+    rust: "Font::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-font-gt]
+  - name: __init__
+    kind: constructor
+    signature: "(fontname=None, fontfile=None, fontbuffer=None, script=0, language=None, ordering=-1, is_bold=0, is_italic=0, is_serif=0, embed=1)"
+    names: {python: __init__, node: Font, java: Font, dotnet: Font}
+    rust: "Font::new"
+    tier: T1
+    lane: L4
+    status: missing
+    tests: [l4-font-init]
+  - name: __le__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __le__, node: le, java: le, dotnet: Le}
+    rust: "Font::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-font-le]
+  - name: __lt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __lt__, node: lt, java: lt, dotnet: Lt}
+    rust: "Font::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-font-lt]
+  - name: __ne__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ne__, node: ne, java: ne, dotnet: Ne}
+    rust: "Font::PartialEq"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-font-ne]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: ascender
+    kind: property
+    signature: "()"
+    names: {python: ascender, node: ascender, java: getAscender, dotnet: Ascender}
+    rust: "Font::ascender"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-properties]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: bbox
+    kind: property
+    signature: "()"
+    names: {python: bbox, node: bbox, java: getBbox, dotnet: Bbox}
+    rust: "Font::bbox"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-properties]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: buffer
+    kind: property
+    signature: "()"
+    names: {python: buffer, node: buffer, java: getBuffer, dotnet: Buffer}
+    rust: "Font::buffer"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-properties]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: char_lengths
+    kind: method
+    signature: "(text, fontsize=11, language=None, script=0, wmode=0, small_caps=0)"
+    names: {python: char_lengths, node: charLengths, java: charLengths, dotnet: CharLengths}
+    rust: "Font::char_lengths"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-metrics]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: descender
+    kind: property
+    signature: "()"
+    names: {python: descender, node: descender, java: getDescender, dotnet: Descender}
+    rust: "Font::descender"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-properties]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: flags
+    kind: property
+    signature: "()"
+    names: {python: flags, node: flags, java: getFlags, dotnet: Flags}
+    rust: "Font::flags"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-properties]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: glyph_advance
+    kind: method
+    signature: "(chr_, language=None, script=0, wmode=0, small_caps=0)"
+    names: {python: glyph_advance, node: glyphAdvance, java: glyphAdvance, dotnet: GlyphAdvance}
+    rust: "Font::glyph_advance"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-metrics]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: glyph_bbox
+    kind: method
+    signature: "(char, language=None, script=0, small_caps=0)"
+    names: {python: glyph_bbox, node: glyphBbox, java: glyphBbox, dotnet: GlyphBbox}
+    rust: "Font::glyph_bbox"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-metrics]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: glyph_count
+    kind: property
+    signature: "()"
+    names: {python: glyph_count, node: glyphCount, java: getGlyphCount, dotnet: GlyphCount}
+    rust: "Font::glyph_count"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-properties]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: glyph_name_to_unicode
+    kind: method
+    signature: "(name)"
+    names: {python: glyph_name_to_unicode, node: glyphNameToUnicode, java: glyphNameToUnicode, dotnet: GlyphNameToUnicode}
+    rust: "Font::glyph_name_to_unicode"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-metrics]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: has_glyph
+    kind: method
+    signature: "(chr, language=None, script=0, fallback=0, small_caps=0)"
+    names: {python: has_glyph, node: hasGlyph, java: hasGlyph, dotnet: HasGlyph}
+    rust: "Font::has_glyph"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-metrics]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: is_bold
+    kind: property
+    signature: "()"
+    names: {python: is_bold, node: isBold, java: getIsBold, dotnet: IsBold}
+    rust: "Font::is_bold"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-properties]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: is_italic
+    kind: property
+    signature: "()"
+    names: {python: is_italic, node: isItalic, java: getIsItalic, dotnet: IsItalic}
+    rust: "Font::is_italic"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-properties]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: is_monospaced
+    kind: property
+    signature: "()"
+    names: {python: is_monospaced, node: isMonospaced, java: getIsMonospaced, dotnet: IsMonospaced}
+    rust: "Font::is_monospaced"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-properties]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: is_serif
+    kind: property
+    signature: "()"
+    names: {python: is_serif, node: isSerif, java: getIsSerif, dotnet: IsSerif}
+    rust: "Font::is_serif"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-properties]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: is_writable
+    kind: property
+    signature: "()"
+    names: {python: is_writable, node: isWritable, java: getIsWritable, dotnet: IsWritable}
+    rust: "Font::is_writable"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-properties]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: name
+    kind: property
+    signature: "()"
+    names: {python: name, node: name, java: getName, dotnet: Name}
+    rust: "Font::name"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-properties]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: text_length
+    kind: method
+    signature: "(text, fontsize=11, language=None, script=0, wmode=0, small_caps=0)"
+    names: {python: text_length, node: textLength, java: textLength, dotnet: TextLength}
+    rust: "Font::text_length"
+    tier: T2
+    lane: L4
+    status: differs
+    tests: [l4-font-metrics]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: unicode_to_glyph_name
+    kind: method
+    signature: "(ch)"
+    names: {python: unicode_to_glyph_name, node: unicodeToGlyphName, java: unicodeToGlyphName, dotnet: UnicodeToGlyphName}
+    rust: "Font::unicode_to_glyph_name"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-metrics]
+  # Documented difference (owner 09-10): Built-in fonts are our own
+  # substitute fonts; properties of the font file itself (glyph count,
+  # bytes, file name) differ. Metrics used for text placement are the same.
+  - name: valid_codepoints
+    kind: method
+    signature: "()"
+    names: {python: valid_codepoints, node: validCodepoints, java: validCodepoints, dotnet: ValidCodepoints}
+    rust: "Font::valid_codepoints"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-font-metrics]

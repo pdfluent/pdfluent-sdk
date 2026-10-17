@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
@@ -35,7 +36,7 @@ import java.util.List;
  *       library, {@code PDFLUENT_CAPI_LIB} for the C ABI library. Both take
  *       an absolute path to the shared library file.</li>
  *   <li><b>Classpath extraction</b> — the library bundled inside the JAR at
- *       {@code /native/<arch>/<lib>} is extracted to a temporary file and
+ *       {@code /native/<platform>/<lib>} is extracted to a temporary file and
  *       loaded.</li>
  * </ol>
  *
@@ -44,10 +45,15 @@ import java.util.List;
  * by a {@code synchronized} lock and are idempotent: subsequent calls after
  * the first successful load return the cached result immediately.
  *
- * <h2>Architecture strings</h2>
- * <p>The classpath path component uses the value of the {@code os.arch}
- * system property. Common values: {@code aarch64} (Apple Silicon, AWS
- * Graviton), {@code x86_64} / {@code amd64}.
+ * <h2>Platform keys</h2>
+ * <p>The classpath path component is {@code <os>-<arch>}, with {@code -musl}
+ * appended on musl libc (Alpine): one of {@code linux-x64}, {@code
+ * linux-arm64}, {@code linux-x64-musl}, {@code linux-arm64-musl}, {@code
+ * osx-x64}, {@code osx-arm64}, {@code win-x64}. The OS comes from {@code
+ * os.name}, the arch from {@code os.arch} ({@code aarch64} and {@code arm64}
+ * both mean {@code arm64}; {@code x86_64} and {@code amd64} both mean {@code
+ * x64}), and musl is read off the JVM's own interpreter (the PT_INTERP of
+ * the java launcher). See {@link #platformKey(String, String, boolean)}.
  */
 public final class NativeLoader {
 
@@ -152,7 +158,7 @@ public final class NativeLoader {
      *
      * <p>The library lookup order matches {@link #load()}:
      * {@code java.library.path} → {@code $PDFLUENT_CAPI_LIB} →
-     * classpath-bundled {@code /native/<arch>/libpdf_capi.<ext>}.
+     * classpath-bundled {@code /native/<platform>/libpdf_capi.<ext>}.
      *
      * @return a JNA-backed implementation of {@link PdfCapiLibrary}
      * @throws PdfluentNativeLoadException if the library cannot be found
@@ -217,13 +223,159 @@ public final class NativeLoader {
     // Helpers
     // ---------------------------------------------------------------------
 
-    private static String classpathResource(String stem) {
-        String osArch = System.getProperty("os.arch", "")
-            .toLowerCase(java.util.Locale.ROOT);
-        if ("amd64".equals(osArch)) {
-            osArch = "x86_64";
+    /**
+     * The platform key for this JVM: {@code <os>-<arch>}, with {@code -musl}
+     * appended on musl libc. One of {@code linux-x64}, {@code linux-arm64},
+     * {@code linux-x64-musl}, {@code linux-arm64-musl}, {@code osx-x64},
+     * {@code osx-arm64}, {@code win-x64}.
+     *
+     * @throws PdfluentNativeLoadException (unchecked, via the callers' error
+     *         paths) is NOT thrown here; an unrecognised OS or arch yields its
+     *         raw lower-cased form so the resulting "classpath ... not found"
+     *         message names what was looked up
+     */
+    static String platformKey() {
+        return platformKey(
+            System.getProperty("os.name", ""),
+            System.getProperty("os.arch", ""),
+            isMuslLibc());
+    }
+
+    /**
+     * The platform key for a stated OS, arch and libc. Package-visible so the
+     * key is tested per platform without stubbing system properties.
+     *
+     * @param osName raw {@code os.name}, e.g. {@code "Linux"}
+     * @param osArch raw {@code os.arch}, e.g. {@code "aarch64"}
+     * @param musl whether the C library is musl (Alpine)
+     * @return e.g. {@code "linux-arm64-musl"}
+     */
+    static String platformKey(String osName, String osArch, boolean musl) {
+        String os = osName.toLowerCase(java.util.Locale.ROOT);
+        String arch = osArch.toLowerCase(java.util.Locale.ROOT);
+        String osPart;
+        if (os.contains("mac") || os.contains("darwin")) {
+            osPart = "osx";
+        } else if (os.contains("win")) {
+            osPart = "win";
+        } else {
+            osPart = "linux";
         }
-        return "/native/" + osArch + "/" + libFileName(stem);
+        String archPart;
+        if (arch.equals("aarch64") || arch.equals("arm64")) {
+            archPart = "arm64";
+        } else if (arch.equals("x86_64") || arch.equals("amd64") || arch.equals("x64")) {
+            archPart = "x64";
+        } else {
+            archPart = arch;
+        }
+        String key = osPart + "-" + archPart;
+        if (musl && "linux".equals(osPart)) {
+            key += "-musl";
+        }
+        return key;
+    }
+
+    /**
+     * Whether this JVM runs on musl libc. Read off the JVM's OWN loader — the
+     * PT_INTERP of the java launcher — not off a {@code /lib} glob: a glibc
+     * host with the musl package installed still runs a glibc JVM, and the
+     * glob called that musl.
+     */
+    static boolean isMuslLibc() {
+        String javaHome = System.getProperty("java.home");
+        if (javaHome != null) {
+            String interp = readInterpreter(Paths.get(javaHome, "bin", "java"));
+            if (interp != null) {
+                return isMuslInterpreter(interp);
+            }
+        }
+        return false;
+    }
+
+    static boolean isMuslInterpreter(String interp) {
+        return interp.contains("ld-musl");
+    }
+
+    /**
+     * The PT_INTERP of an ELF file, or null when it has none to read (not an
+     * ELF file, no interpreter — a shared library, say — or unreadable).
+     * Package-visible so the parse is tested against fixture bytes.
+     */
+    static String readInterpreter(Path file) {
+        try {
+            byte[] data = Files.readAllBytes(file);
+            if (data.length < 64
+                    || data[0] != 0x7f || data[1] != 'E'
+                    || data[2] != 'L' || data[3] != 'F') {
+                return null; // Not ELF (macOS/Windows binaries, garbage).
+            }
+            int eiClass = data[4] & 0xff;
+            long phoff;
+            int phentsize;
+            int phnum;
+            if (eiClass == 1) { // 32-bit: e_phoff @28, e_phentsize @42, e_phnum @44
+                if (data.length < 46) {
+                    return null;
+                }
+                phoff = u32(data, 28);
+                phentsize = u16(data, 42);
+                phnum = u16(data, 44);
+            } else if (eiClass == 2) { // 64-bit: e_phoff @32, e_phentsize @54, e_phnum @56
+                if (data.length < 58) {
+                    return null;
+                }
+                phoff = u64(data, 32);
+                phentsize = u16(data, 54);
+                phnum = u16(data, 56);
+            } else {
+                return null;
+            }
+            for (int i = 0; i < Math.min(phnum, 32); i++) {
+                long off = phoff + (long) i * phentsize;
+                if (off < 0 || off + 8 > data.length) {
+                    return null;
+                }
+                if (u32(data, (int) off) != 3) { // PT_INTERP
+                    continue;
+                }
+                long strOff = eiClass == 1
+                        ? u32(data, (int) off + 4)
+                        : u64(data, (int) off + 8);
+                if (strOff < 0 || strOff >= data.length) {
+                    return null;
+                }
+                int end = (int) strOff;
+                while (end < data.length && end < strOff + 256 && data[end] != 0) {
+                    end++;
+                }
+                return new String(
+                        data, (int) strOff, end - (int) strOff,
+                        java.nio.charset.StandardCharsets.US_ASCII);
+            }
+            return null;
+        } catch (IOException | IndexOutOfBoundsException e) {
+            return null;
+        }
+    }
+
+    private static int u16(byte[] data, int off) {
+        return (data[off] & 0xff) | ((data[off + 1] & 0xff) << 8);
+    }
+
+    private static long u32(byte[] data, int off) {
+        return (data[off] & 0xffL)
+                | ((data[off + 1] & 0xffL) << 8)
+                | ((data[off + 2] & 0xffL) << 16)
+                | ((data[off + 3] & 0xffL) << 24);
+    }
+
+    private static long u64(byte[] data, int off) {
+        return u32(data, off) | (u32(data, off + 4) << 32);
+    }
+
+    private static String classpathResource(String stem) {
+        return "/native/" + platformKey() + "/" + libFileName(stem);
     }
 
     private static String libFileName(String stem) {

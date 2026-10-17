@@ -112,6 +112,160 @@ RUN = {
     "axes_skipped": [],
 }
 
+# The competitor half (rule 6). Two converters, one publishable and one not, so
+# the two directions of the rule both have something to bite on.
+CONVERTERS = """
+[meta]
+verdict_valid_days = 180
+level = "2b"
+
+[converters.ghostscript]
+name = "Ghostscript 10.07.1"
+vendor = "Artifex Software"
+licence = "AGPL-3.0-or-later"
+licence_kind = "open"
+recipe = "gs -dPDFA=2 -sOutputFile={out} {in}"
+publishable = true
+clause = "AGPL-3.0 §2, §7"
+quote = "You may make, run and propagate covered works that you do not convey."
+source = "https://www.gnu.org/licenses/agpl-3.0.html"
+read_on = "2026-09-01"
+verdict = "The AGPL places no condition on describing or measuring the program."
+is_a_converter = true
+on_the_rig = true
+
+[converters.ours]
+name = "PDFluent (source)"
+vendor = "Innovation Trigger B.V."
+licence = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+licence_kind = "open"
+recipe = "pdfa_convert {in} {out}"
+publishable = true
+clause = "our own"
+quote = ""
+source = "LICENSE"
+read_on = "2026-09-01"
+verdict = "Ourselves, in the same table and under the same rules."
+is_a_converter = true
+on_the_rig = true
+
+[converters.walled]
+name = "Walled SDK"
+vendor = "Walled Software Ltd"
+licence = "Walled Evaluation Licence"
+licence_kind = "commercial-trial"
+recipe = ""
+publishable = false
+clause = "§1(c)"
+quote = "for the Licensee's internal purposes only"
+source = "https://example.invalid/eula"
+read_on = "2026-09-01"
+verdict = "Internal purposes only, which a published comparison is not."
+is_a_converter = false
+on_the_rig = false
+why_not = "the evaluation grant is internal-purposes-only"
+"""
+
+COMPARISON_RUN = {
+    "converter": "Ghostscript 10.07.1",
+    "converter_id": "ghostscript",
+    "command": "gs -dPDFA=2 -sOutputFile={out} {in}",
+    "publishable": True,
+    "licence": "AGPL-3.0-or-later",
+    "licence_clause": "AGPL-3.0 §2, §7",
+    "licence_read_on": "2026-09-01",
+    "documents": 300,
+    "conformant": 218,
+}
+
+# A published comparison table. Its figures are ours, so it carries no
+# third-party marker and every converter in it must resolve to a run.
+COMPARISON_DOC = """# PDF/A conversion, against Ghostscript
+
+|  | Ghostscript 10.07.1 |
+|---|---:|
+| documents | 300 |
+| conformant | 218 of 300 |
+"""
+
+# The extraction half of rule 6 (#390). Same shape, its own register, its own
+# run files and its own published directory -- which is the thing worth testing:
+# the rule is written once and asked twice, so a case that passes here and fails
+# next door means the two capabilities have come apart.
+EXTRACTORS = """
+[meta]
+verdict_valid_days = 180
+capability = "extraction"
+
+[extractors.pdftotext]
+name = "pdftotext"
+vendor = "the poppler project"
+licence = "GPL-2.0-or-later"
+licence_kind = "open"
+recipe = "pdftotext -q {in} -"
+publishable = true
+clause = "GPL-2.0 §0"
+quote = "The act of running the Program is not restricted."
+source = "https://www.gnu.org/licenses/old-licenses/gpl-2.0.html"
+read_on = "2026-09-01"
+verdict = "Running it is not restricted and no clause touches publication."
+is_an_extractor = true
+on_the_rig = true
+
+[extractors.ours]
+name = "PDFluent (source)"
+vendor = "Innovation Trigger B.V."
+licence = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+licence_kind = "open"
+recipe = "pdfluent-cli extract-text {in}"
+publishable = true
+clause = "our own"
+quote = ""
+source = "LICENSE"
+read_on = "2026-09-01"
+verdict = "Ourselves, in the same table and under the same rules."
+ours = true
+is_an_extractor = true
+on_the_rig = true
+
+[extractors.weighted]
+name = "Weighted Reader"
+vendor = "Weighted Labs"
+licence = "Apache-2.0 (code); Open RAIL-M (weights)"
+licence_kind = "open-weights-restricted"
+recipe = ""
+publishable = false
+clause = "Attachment A, 2(c)"
+quote = "not for any purpose if You provide a product or service that competes with the Licensor"
+source = "https://example.invalid/weights"
+read_on = "2026-09-01"
+verdict = "A competitor clause with no threshold: we may not run it at all."
+is_an_extractor = false
+on_the_rig = false
+why_not = "the weights forbid use by a competitor"
+"""
+
+EXTRACTION_RUN = {
+    "extractor": "pdftotext",
+    "extractor_id": "pdftotext",
+    "extractor_version": "24.02.0",
+    "command": "pdftotext -q {in} -",
+    "publishable": True,
+    "licence": "GPL-2.0-or-later",
+    "licence_clause": "GPL-2.0 §0",
+    "licence_read_on": "2026-09-01",
+    "documents": 121,
+    "recall_median_pct": 100.0,
+}
+
+EXTRACTION_DOC = """# Text extraction, against pdftotext
+
+|  | PDFluent (source) | pdftotext 24.02.0 |
+|---|---:|---:|
+| documents | 121 | 121 |
+| recall, median | 100.0% | 100.0% |
+"""
+
 DOCUMENT = """# The benchmark programme
 
 Three axes, measured together.
@@ -136,10 +290,49 @@ def build(root: pathlib.Path) -> None:
     (root / "benchmarks" / "BASELINE_HARDWARE.toml").write_text(REGISTRY)
     write_run(root, RUN)
 
+    comparison = root / "benchmarks" / "pdfa" / "comparison"
+    comparison.mkdir(parents=True)
+    (comparison / "CONVERTERS.toml").write_text(CONVERTERS)
+    write_comparison(root, "ghostscript-300sample", COMPARISON_RUN)
+    (comparison / "README.md").write_text(COMPARISON_DOC)
+
+    extraction = root / "benchmarks" / "extraction" / "comparison"
+    extraction.mkdir(parents=True)
+    (extraction / "EXTRACTORS.toml").write_text(EXTRACTORS)
+    write_comparison(root, "pdftotext-gate-tail", EXTRACTION_RUN, "extraction")
+    (extraction / "README.md").write_text(EXTRACTION_DOC)
+
     programme = load_programme(root)
     (root / "benchmarks" / "V7_BENCHMARK_PROGRAMME.md").write_text(
         DOCUMENT.format(begin=programme.BEGIN, end=programme.END))
     publish(root)
+
+
+REGISTERS = {"pdfa": "CONVERTERS.toml", "extraction": "EXTRACTORS.toml"}
+
+
+def register_path(root: pathlib.Path, capability: str = "pdfa") -> pathlib.Path:
+    return root / "benchmarks" / capability / "comparison" / REGISTERS[capability]
+
+
+def converters_path(root: pathlib.Path) -> pathlib.Path:
+    return register_path(root, "pdfa")
+
+
+def comparison_doc(root: pathlib.Path, capability: str = "pdfa") -> pathlib.Path:
+    return root / "benchmarks" / capability / "comparison" / "README.md"
+
+
+def write_comparison(root: pathlib.Path, stem: str, run: dict,
+                     capability: str = "pdfa") -> None:
+    path = root / "benchmarks" / capability / "comparison" / f"{stem}.json"
+    path.write_text(json.dumps(run, indent=2, sort_keys=True) + "\n")
+
+
+def read_comparison(root: pathlib.Path, stem: str,
+                    capability: str = "pdfa") -> dict:
+    path = root / "benchmarks" / capability / "comparison" / f"{stem}.json"
+    return json.loads(path.read_text())
 
 
 def load_programme(root: pathlib.Path):
@@ -279,6 +472,217 @@ def nothing_to_check_at_all(root: pathlib.Path) -> None:
     path.write_text(f"{head}{programme.BEGIN}\n{programme.END}{tail}")
 
 
+# ---- rule 6: the competitor half ------------------------------------------
+def the_publishable_flag_is_flipped(root: pathlib.Path) -> None:
+    """The mutation the ticket asks for.
+
+    The run keeps its numbers and its clause; only the permission changes. Two
+    things then have to go wrong at once: the run no longer agrees with the
+    register, and the table naming it no longer resolves to a publishable run.
+    """
+    run = read_comparison(root, "ghostscript-300sample")
+    run["publishable"] = False
+    write_comparison(root, "ghostscript-300sample", run)
+
+
+def a_table_names_a_converter_we_may_not_publish(root: pathlib.Path) -> None:
+    path = converters_path(root)
+    path.write_text(path.read_text().replace(
+        "is_a_converter = false", "is_a_converter = true"))
+    doc = comparison_doc(root)
+    doc.write_text(doc.read_text().replace(
+        "| Ghostscript 10.07.1 |", "| Ghostscript 10.07.1 | Walled SDK |"))
+
+
+def a_table_names_a_converter_nothing_measured(root: pathlib.Path) -> None:
+    """Publishable, and no run behind the column."""
+    path = converters_path(root)
+    text = path.read_text().replace("publishable = false", "publishable = true")
+    path.write_text(text.replace("is_a_converter = false", "is_a_converter = true"))
+    doc = comparison_doc(root)
+    doc.write_text(doc.read_text().replace(
+        "| Ghostscript 10.07.1 |", "| Ghostscript 10.07.1 | Walled SDK |"))
+
+
+def a_run_names_a_converter_nobody_read(root: pathlib.Path) -> None:
+    run = read_comparison(root, "ghostscript-300sample")
+    run["converter_id"] = "some-other-tool"
+    write_comparison(root, "ghostscript-300sample", run)
+
+
+def a_run_and_the_register_disagree_about_the_clause(root: pathlib.Path) -> None:
+    run = read_comparison(root, "ghostscript-300sample")
+    run["licence_clause"] = "whatever it was, probably fine"
+    write_comparison(root, "ghostscript-300sample", run)
+
+
+def a_permission_with_no_clause_behind_it(root: pathlib.Path) -> None:
+    path = converters_path(root)
+    path.write_text(path.read_text().replace('clause = "AGPL-3.0 §2, §7"',
+                                             'clause = ""'))
+
+
+def a_converter_off_the_rig_without_a_reason(root: pathlib.Path) -> None:
+    path = converters_path(root)
+    path.write_text(path.read_text().replace(
+        'why_not = "the evaluation grant is internal-purposes-only"',
+        'why_not = ""'))
+
+
+def the_register_is_gone(root: pathlib.Path) -> None:
+    converters_path(root).unlink()
+
+
+def somebody_elses_figures_without_a_source(root: pathlib.Path) -> None:
+    """The marker is a claim. Without a source it is only an assertion."""
+    path = converters_path(root)
+    path.write_text(path.read_text().replace(
+        "is_a_converter = false", "is_a_converter = true"))
+    doc = comparison_doc(root)
+    doc.write_text(doc.read_text().replace(
+        "|  | Ghostscript 10.07.1 |",
+        "<!-- third-party-figures: -->\n|  | Ghostscript 10.07.1 | Walled SDK |"))
+
+
+def somebody_elses_figures_marked_as_theirs(root: pathlib.Path) -> None:
+    """The good direction: a vendor's own published table, quoted with a source.
+
+    Our licence reading governs what we may measure and print. It does not
+    govern what a vendor has already published about itself, and a rule that
+    could not tell the two apart would forbid quoting the competition at all.
+    """
+    path = converters_path(root)
+    path.write_text(path.read_text().replace(
+        "is_a_converter = false", "is_a_converter = true"))
+    doc = comparison_doc(root)
+    doc.write_text(doc.read_text().replace(
+        "|  | Ghostscript 10.07.1 |",
+        "<!-- third-party-figures: Walled's own benchmark,\n"
+        "     https://example.invalid/benchmark , 3157 documents -->\n"
+        "|  | Ghostscript 10.07.1 | Walled SDK |"))
+
+
+def a_converter_named_in_prose_but_not_measured(root: pathlib.Path) -> None:
+    """Also the good direction: naming a competitor is not publishing a figure."""
+    path = converters_path(root)
+    path.write_text(path.read_text().replace(
+        "is_a_converter = false", "is_a_converter = true"))
+    doc = comparison_doc(root)
+    doc.write_text(doc.read_text() +
+                   "\nWalled SDK was not measured; its licence forbids it.\n")
+
+
+def a_versioned_column_with_no_run(root: pathlib.Path) -> None:
+    """The column says which release ran; the register holds the identity.
+
+    Requiring the two to be equal would have let every real table past the rule,
+    because every real table names a version.
+    """
+    path = converters_path(root)
+    path.write_text(path.read_text().replace(
+        "is_a_converter = false", "is_a_converter = true").replace(
+        "publishable = false", "publishable = true"))
+    doc = comparison_doc(root)
+    doc.write_text(doc.read_text().replace(
+        "| Ghostscript 10.07.1 |", "| Ghostscript 10.07.1 | Walled SDK 4.2 |"))
+
+
+def a_row_that_names_a_machine_not_a_release(root: pathlib.Path) -> None:
+    """The other side of that: "Ghostscript on VPS" is a row label, not a column.
+
+    A rule that demanded a run file for it would be teaching people to rename
+    their rows, which is the shape of guard this repository keeps removing.
+    """
+    (root / "benchmarks" / "NOTES2.md").write_text(
+        "| where | outcome |\n|---|---|\n| Ghostscript on VPS | ran |\n")
+
+
+# ---- rule 6 again, for text extraction (#390) -----------------------------
+# The same defects, in the capability that was added second. Cases of their own
+# rather than an assumption that one register implies the other: the rule is
+# shared code now, and shared code is exactly what stops being called for one of
+# its callers.
+def an_extraction_run_loses_its_permission(root: pathlib.Path) -> None:
+    run = read_comparison(root, "pdftotext-gate-tail", "extraction")
+    run["publishable"] = False
+    write_comparison(root, "pdftotext-gate-tail", run, "extraction")
+
+
+def an_extraction_table_names_a_tool_we_may_not_publish(root: pathlib.Path) -> None:
+    """The weights case: a tool whose licence forbids the use, in a table."""
+    path = register_path(root, "extraction")
+    path.write_text(path.read_text().replace(
+        "is_an_extractor = false", "is_an_extractor = true"))
+    doc = comparison_doc(root, "extraction")
+    doc.write_text(doc.read_text().replace(
+        "| pdftotext 24.02.0 |", "| pdftotext 24.02.0 | Weighted Reader |"))
+
+
+def an_extraction_table_names_a_tool_nothing_measured(root: pathlib.Path) -> None:
+    path = register_path(root, "extraction")
+    text = path.read_text().replace("publishable = false", "publishable = true")
+    path.write_text(text.replace("is_an_extractor = false", "is_an_extractor = true"))
+    doc = comparison_doc(root, "extraction")
+    doc.write_text(doc.read_text().replace(
+        "| pdftotext 24.02.0 |", "| pdftotext 24.02.0 | Weighted Reader |"))
+
+
+def an_extraction_run_names_a_tool_nobody_read(root: pathlib.Path) -> None:
+    run = read_comparison(root, "pdftotext-gate-tail", "extraction")
+    run["extractor_id"] = "some-other-reader"
+    write_comparison(root, "pdftotext-gate-tail", run, "extraction")
+
+
+def an_extraction_run_and_the_register_disagree(root: pathlib.Path) -> None:
+    run = read_comparison(root, "pdftotext-gate-tail", "extraction")
+    run["licence_clause"] = "GPL, the bit about running it"
+    write_comparison(root, "pdftotext-gate-tail", run, "extraction")
+
+
+def the_extractor_register_is_gone(root: pathlib.Path) -> None:
+    register_path(root, "extraction").unlink()
+
+
+def the_extraction_comparison_measured_nothing(root: pathlib.Path) -> None:
+    """The floor, on the second capability: a register and no runs behind it."""
+    for path in (root / "benchmarks" / "extraction" / "comparison").glob("*.json"):
+        path.unlink()
+
+
+def an_extraction_column_with_a_version_and_no_run(root: pathlib.Path) -> None:
+    path = register_path(root, "extraction")
+    path.write_text(path.read_text().replace(
+        "is_an_extractor = false", "is_an_extractor = true").replace(
+        "publishable = false", "publishable = true"))
+    doc = comparison_doc(root, "extraction")
+    doc.write_text(doc.read_text().replace(
+        "| pdftotext 24.02.0 |", "| pdftotext 24.02.0 | Weighted Reader 2.1 |"))
+
+
+def an_extraction_tool_off_the_rig_without_a_reason(root: pathlib.Path) -> None:
+    path = register_path(root, "extraction")
+    path.write_text(path.read_text().replace(
+        'why_not = "the weights forbid use by a competitor"', 'why_not = ""'))
+
+
+def the_extraction_rig_holds_one_tool(root: pathlib.Path) -> None:
+    """One tool compared with itself is not a comparison, in either capability."""
+    path = register_path(root, "extraction")
+    path.write_text(path.read_text().replace(
+        "is_an_extractor = true\non_the_rig = true\n\n[extractors.ours]",
+        "is_an_extractor = true\non_the_rig = false\nwhy_not = \"taken off, and this is what that looks like\"\n\n[extractors.ours]"))
+
+
+def an_extraction_tool_named_in_prose(root: pathlib.Path) -> None:
+    """The good direction, second capability: a name in a sentence is not a figure."""
+    path = register_path(root, "extraction")
+    path.write_text(path.read_text().replace(
+        "is_an_extractor = false", "is_an_extractor = true"))
+    doc = comparison_doc(root, "extraction")
+    doc.write_text(doc.read_text() +
+                   "\nWeighted Reader was not measured: its weights forbid the use.\n")
+
+
 CASES = [
     ("a figure in the table was edited by hand", a_figure_edited_by_hand,
      "not what the run files say"),
@@ -303,12 +707,59 @@ CASES = [
     ("a document cites a run that does not exist",
      a_citation_to_a_run_that_does_not_exist, "there is no"),
     ("there is nothing left to check", nothing_to_check_at_all, "floor"),
+    ("the publishable flag on a published run is flipped",
+     the_publishable_flag_is_flipped, "come apart"),
+    ("a published table names a converter we may not publish",
+     a_table_names_a_converter_we_may_not_publish, "publishable = false"),
+    ("a published table names a converter nothing measured",
+     a_table_names_a_converter_nothing_measured, "no run file"),
+    ("a run names a converter nobody read the terms of",
+     a_run_names_a_converter_nobody_read, "no entry in"),
+    ("a run and the register disagree about the clause",
+     a_run_and_the_register_disagree_about_the_clause, "come apart"),
+    ("a converter is publishable and names no clause",
+     a_permission_with_no_clause_behind_it, "names no clause"),
+    ("a converter is off the rig and does not say why",
+     a_converter_off_the_rig_without_a_reason, "does not say"),
+    ("the converter register is gone", the_register_is_gone, "is missing"),
+    ("somebody else's figures, marked but with no source",
+     somebody_elses_figures_without_a_source, "names no source"),
+    ("a column names the version that ran and no run measured it",
+     a_versioned_column_with_no_run, "no run file"),
+    ("an extraction run loses its permission and the table still names it",
+     an_extraction_run_loses_its_permission, "come apart"),
+    ("an extraction table names a tool whose licence forbids the use",
+     an_extraction_table_names_a_tool_we_may_not_publish, "publishable = false"),
+    ("an extraction table names a tool nothing measured",
+     an_extraction_table_names_a_tool_nothing_measured, "no run file"),
+    ("an extraction run names a tool nobody read the terms of",
+     an_extraction_run_names_a_tool_nobody_read, "no entry in"),
+    ("an extraction run and the register disagree about the clause",
+     an_extraction_run_and_the_register_disagree, "come apart"),
+    ("the extractor register is gone", the_extractor_register_is_gone,
+     "is missing"),
+    ("the extraction comparison measured nothing",
+     the_extraction_comparison_measured_nothing, "floor is"),
+    ("an extraction column names its version and no run measured it",
+     an_extraction_column_with_a_version_and_no_run, "no run file"),
+    ("an extraction tool is off the rig and does not say why",
+     an_extraction_tool_off_the_rig_without_a_reason, "does not say"),
+    ("the extraction rig is down to one tool", the_extraction_rig_holds_one_tool,
+     "floor is"),
 ]
 
 # Mutations that must NOT be rejected. A guard that goes red on a marked
 # threshold teaches people to write numbers somewhere it cannot see them.
 CLEAN_CASES = [
     ("a threshold in the prose, marked as one", a_threshold_in_the_prose),
+    ("a vendor's own figures, quoted with a source",
+     somebody_elses_figures_marked_as_theirs),
+    ("a converter named in prose and not measured",
+     a_converter_named_in_prose_but_not_measured),
+    ("a row labelled with a machine, not a release",
+     a_row_that_names_a_machine_not_a_release),
+    ("an extraction tool named in prose and not measured",
+     an_extraction_tool_named_in_prose),
 ]
 
 

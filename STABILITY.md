@@ -120,7 +120,7 @@ contract as §3.1:
 
 | Method | Added | Tracking |
 |---|---|---|
-| `PdfDocument::extract_text` — Stable | 1.0.1 | #1316 (M4-FACADE-01) |
+| `PdfDocument::extract_text` — Stable | 1.1.0 | #1316 (M4-FACADE-01) |
 | `PdfFormMut::set_multi_select` — Stable | `acroform/sdk-closure` | multi-select list box fill (completes AcroForm field-type coverage on the facade) |
 | `PdfDocument::has_xfa_form` — Stable | `xfa/sdk-phase1-fill-foundation` | XFA Phase 1 |
 | `PdfDocument::xfa_form_model` + `pdfluent::xfa::*` DTOs — Stable | `xfa/sdk-phase1-fill-foundation` | XFA Phase 1; `XfaFieldType` is `#[non_exhaustive]` |

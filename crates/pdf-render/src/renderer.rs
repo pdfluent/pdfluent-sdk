@@ -1,4 +1,5 @@
 use crate::derive_settings;
+use crate::glyph_cache::GlyphOutlineCache;
 use fast_image_resize::{PixelType, ResizeAlg, ResizeOptions, Resizer, images::Image as FirImage};
 use kurbo::{Affine, BezPath, Point, Rect, Shape, Vec2};
 use pdf_interpret::encode::EncodedShadingPattern;
@@ -21,7 +22,7 @@ pub(crate) struct Renderer {
     pub(crate) ctx: RenderContext,
     pub(crate) inside_pattern: bool,
     pub(crate) soft_mask_cache: HashMap<u128, Mask>,
-    pub(crate) glyph_cache: Option<HashMap<u128, BezPath>>,
+    pub(crate) glyph_cache: GlyphOutlineCache,
     pub(crate) cur_mask: Option<Mask>,
     pub(crate) cur_blend_mode: BlendMode,
     pub(crate) in_type3_glyph: bool,
@@ -33,11 +34,21 @@ impl Renderer {
             ctx: RenderContext::new_with(width, height, settings),
             inside_pattern: false,
             soft_mask_cache: HashMap::default(),
-            glyph_cache: Some(HashMap::new()),
+            glyph_cache: GlyphOutlineCache::new(),
             cur_mask: None,
             cur_blend_mode: BlendMode::default(),
             in_type3_glyph: false,
         }
+    }
+
+    /// Install a caller-owned outline cache (see `render_with_glyph_cache`).
+    pub(crate) fn set_glyph_cache(&mut self, cache: GlyphOutlineCache) {
+        self.glyph_cache = cache;
+    }
+
+    /// Detach the outline cache, leaving a fresh empty one behind.
+    pub(crate) fn take_glyph_cache(&mut self) -> GlyphOutlineCache {
+        std::mem::take(&mut self.glyph_cache)
     }
 
     fn set_stroke_properties(&mut self, stroke_props: &StrokeProps, is_text: bool) {
@@ -458,7 +469,7 @@ impl Renderer {
                             cur_mask: None,
                             inside_pattern: true,
                             soft_mask_cache: HashMap::default(),
-                            glyph_cache: Some(HashMap::new()),
+                            glyph_cache: GlyphOutlineCache::new(),
                             cur_blend_mode: BlendMode::default(),
                             in_type3_glyph: false,
                         };
@@ -603,13 +614,10 @@ impl Renderer {
         match glyph {
             Glyph::Outline(o) => {
                 let id = o.identifier().cache_key();
-                // Otherwise we run into lifetime issues.
+                // Detach the cache for the duration of the fill: the outline
+                // borrows from it while `fill_path` needs `&mut self`.
                 let mut cache = std::mem::take(&mut self.glyph_cache);
-                let base_outline = cache
-                    .as_mut()
-                    .unwrap()
-                    .entry(id)
-                    .or_insert_with(|| o.outline());
+                let base_outline = cache.get_or_insert_with(id, || o.outline());
 
                 self.fill_path(
                     base_outline,
@@ -643,10 +651,7 @@ impl Renderer {
                 let id = o.identifier().cache_key();
                 let base_outline = self
                     .glyph_cache
-                    .as_mut()
-                    .unwrap()
-                    .entry(id)
-                    .or_insert_with(|| o.outline())
+                    .get_or_insert_with(id, || o.outline())
                     .clone();
 
                 self.stroke_path(
@@ -671,14 +676,8 @@ impl<'a> Device<'a> for Renderer {
         self.ctx.set_paint_transform(Affine::IDENTITY);
         self.ctx.set_aliasing_threshold(Some(1));
 
-        let target_width = (transform * Point::new(image.width() as f64, 0.0))
-            .to_vec2()
-            .length()
-            .ceil() as u32;
-        let target_height = (transform * Point::new(0.0, image.height() as f64))
-            .to_vec2()
-            .length()
-            .ceil() as u32;
+        let (target_width, target_height) =
+            decode_target_dimensions(&transform, image.width(), image.height());
 
         match image {
             pdf_interpret::Image::Stencil(s) => {
@@ -986,7 +985,7 @@ fn draw_soft_mask(mask: &SoftMask<'_>, settings: RenderSettings, width: u16, hei
         inside_pattern: false,
         cur_mask: None,
         soft_mask_cache: HashMap::default(),
-        glyph_cache: Some(HashMap::new()),
+        glyph_cache: GlyphOutlineCache::new(),
         cur_blend_mode: BlendMode::default(),
         in_type3_glyph: false,
     };
@@ -1052,6 +1051,18 @@ pub(crate) fn max_factor(transform: &Affine) -> f32 {
         .max(y_advance.to_vec2().length()) as f32
 }
 
+/// Decode dimensions for an image drawn under `transform`: the scale/skew
+/// part of the transform times the image size. Translation must not
+/// contribute — a translated image decodes at the same size, not an
+/// inflated one (LaurenzV/hayro#1384).
+pub(crate) fn decode_target_dimensions(transform: &Affine, width: u32, height: u32) -> (u32, u32) {
+    let (x, y) = x_y_advances(transform);
+    (
+        (x.length() * width as f64).ceil() as u32,
+        (y.length() * height as f64).ceil() as u32,
+    )
+}
+
 pub(crate) fn x_y_advances(transform: &Affine) -> (Vec2, Vec2) {
     let scale_skew_transform = {
         let c = transform.as_coeffs();
@@ -1095,4 +1106,37 @@ fn convert_blend_mode(blend_mode: BlendMode) -> peniko::BlendMode {
     };
 
     peniko::BlendMode::new(mix, Compose::SrcOver)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Ported from LaurenzV/hayro cadda3a4 (#1384): the translation part
+    /// of the CTM must not inflate image decode dimensions. The old code
+    /// measured the transformed corner points, so an image translated by
+    /// (1000, 2000) decoded thousands of pixels wide.
+    #[test]
+    fn decode_dims_ignore_translation() {
+        assert_eq!(
+            decode_target_dimensions(&Affine::IDENTITY, 100, 50),
+            (100, 50)
+        );
+        assert_eq!(
+            decode_target_dimensions(&Affine::translate((1000.0, 2000.0)), 100, 50),
+            (100, 50)
+        );
+        assert_eq!(
+            decode_target_dimensions(&Affine::scale(2.0), 100, 50),
+            (200, 100)
+        );
+        assert_eq!(
+            decode_target_dimensions(
+                &(Affine::translate((1000.0, 2000.0)) * Affine::scale(2.0)),
+                100,
+                50
+            ),
+            (200, 100)
+        );
+    }
 }

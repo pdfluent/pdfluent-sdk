@@ -1330,8 +1330,9 @@ impl Stream {
         let image =
             hayro_jbig2::decode_embedded(input, None).map_err(|_| Error::Unimplemented("JBIG2Decode failed"))?;
 
-        let row_bytes = (image.width as usize).div_ceil(8);
-        let mut packed = vec![0u8; row_bytes * image.height as usize];
+        // Accessors rather than fields since pdfluent-jbig2 0.3.0 (#357).
+        let row_bytes = (image.width() as usize).div_ceil(8);
+        let mut packed = vec![0u8; row_bytes * image.height() as usize];
 
         struct InvertDecoder<'a> {
             data: &'a mut [u8],
@@ -1382,7 +1383,12 @@ impl Stream {
             buffer: 0,
             bit_count: 0,
         };
-        image.decode(&mut decoder);
+        // Fallible since 0.3.0: a decode that stops halfway leaves `packed` partly
+        // written, and half an image returned as a whole one is indistinguishable
+        // from a page that really is mostly blank.
+        image
+            .decode(&mut decoder)
+            .map_err(|_| Error::Unimplemented("JBIG2Decode failed"))?;
 
         Ok(packed)
     }

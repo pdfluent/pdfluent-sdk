@@ -1,0 +1,957 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for module, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: module
+rust_path: pdfluent::compat
+names: {python: pdfluent.compat, node: pdfluent-compat, java: com.pdfluent.compat, dotnet: Pdfluent.Compat}
+members:
+  - name: ASSERT_PDF
+    kind: function
+    signature: "(cond)"
+    names: {python: ASSERT_PDF, node: assertPDF, java: assertPDF, dotnet: ASSERTPDF}
+    rust: assert_pdf
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-assert-pdf]
+  - name: CheckColor
+    kind: function
+    signature: "(c: 'OptSeq')"
+    names: {python: CheckColor, node: checkColor, java: checkColor, dotnet: CheckColor}
+    rust: check_color
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-checkcolor]
+  - name: CheckFont
+    kind: function
+    signature: "(page: 'Page', fontname: 'str') -> 'tuple'"
+    names: {python: CheckFont, node: checkFont, java: checkFont, dotnet: CheckFont}
+    rust: check_font
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-checkfont]
+  - name: CheckFontInfo
+    kind: function
+    signature: "(doc: 'Document', xref: 'int') -> 'list'"
+    names: {python: CheckFontInfo, node: checkFontInfo, java: checkFontInfo, dotnet: CheckFontInfo}
+    rust: check_font_info
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-checkfontinfo]
+  - name: CheckMarkerArg
+    kind: function
+    signature: "(quads: 'typing.Any') -> 'tuple'"
+    names: {python: CheckMarkerArg, node: checkMarkerArg, java: checkMarkerArg, dotnet: CheckMarkerArg}
+    rust: check_marker_arg
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-checkmarkerarg]
+  - name: CheckMorph
+    kind: function
+    signature: "(o: 'typing.Any') -> 'bool'"
+    names: {python: CheckMorph, node: checkMorph, java: checkMorph, dotnet: CheckMorph}
+    rust: check_morph
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-checkmorph]
+  - name: CheckParent
+    kind: function
+    signature: "(o: 'typing.Any')"
+    names: {python: CheckParent, node: checkParent, java: checkParent, dotnet: CheckParent}
+    rust: check_parent
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-checkparent]
+  - name: CheckQuad
+    kind: function
+    signature: "(q: 'typing.Any') -> 'bool'"
+    names: {python: CheckQuad, node: checkQuad, java: checkQuad, dotnet: CheckQuad}
+    rust: check_quad
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-checkquad]
+  - name: CheckRect
+    kind: function
+    signature: "(r: 'typing.Any') -> 'bool'"
+    names: {python: CheckRect, node: checkRect, java: checkRect, dotnet: CheckRect}
+    rust: check_rect
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-checkrect]
+  - name: ColorCode
+    kind: function
+    signature: "(c: 'typing.Union[list, tuple, float, None]', f: 'str') -> 'str'"
+    names: {python: ColorCode, node: colorCode, java: colorCode, dotnet: ColorCode}
+    rust: color_code
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-colorcode]
+  - name: ConversionHeader
+    kind: function
+    signature: "(i: 'str', filename: 'OptStr' = 'unknown')"
+    names: {python: ConversionHeader, node: conversionHeader, java: conversionHeader, dotnet: ConversionHeader}
+    rust: conversion_header
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-conversionheader]
+  - name: ConversionTrailer
+    kind: function
+    signature: "(i: 'str')"
+    names: {python: ConversionTrailer, node: conversionTrailer, java: conversionTrailer, dotnet: ConversionTrailer}
+    rust: conversion_trailer
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-conversiontrailer]
+  - name: EMPTY_IRECT
+    kind: function
+    signature: "()"
+    names: {python: EMPTY_IRECT, node: emptyIRECT, java: emptyIRECT, dotnet: EMPTYIRECT}
+    rust: empty_irect
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-empty-irect]
+  - name: EMPTY_QUAD
+    kind: function
+    signature: "()"
+    names: {python: EMPTY_QUAD, node: emptyQUAD, java: emptyQUAD, dotnet: EMPTYQUAD}
+    rust: empty_quad
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-empty-quad]
+  - name: EMPTY_RECT
+    kind: function
+    signature: "()"
+    names: {python: EMPTY_RECT, node: emptyRECT, java: emptyRECT, dotnet: EMPTYRECT}
+    rust: empty_rect
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-empty-rect]
+  - name: ENSURE_OPERATION
+    kind: function
+    signature: "(pdf)"
+    names: {python: ENSURE_OPERATION, node: ensureOPERATION, java: ensureOPERATION, dotnet: ENSUREOPERATION}
+    rust: ensure_operation
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-ensure-operation]
+  - name: INFINITE_IRECT
+    kind: function
+    signature: "()"
+    names: {python: INFINITE_IRECT, node: infiniteIRECT, java: infiniteIRECT, dotnet: INFINITEIRECT}
+    rust: infinite_irect
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-infinite-irect]
+  - name: INFINITE_QUAD
+    kind: function
+    signature: "()"
+    names: {python: INFINITE_QUAD, node: infiniteQUAD, java: infiniteQUAD, dotnet: INFINITEQUAD}
+    rust: infinite_quad
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-infinite-quad]
+  - name: INFINITE_RECT
+    kind: function
+    signature: "()"
+    names: {python: INFINITE_RECT, node: infiniteRECT, java: infiniteRECT, dotnet: INFINITERECT}
+    rust: infinite_rect
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-infinite-rect]
+  - name: PDF_NAME
+    kind: function
+    signature: "(x)"
+    names: {python: PDF_NAME, node: pdfNAME, java: pdfNAME, dotnet: PDFNAME}
+    rust: pdf_name
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-pdf-name]
+  - name: Page__add_text_marker
+    kind: function
+    signature: "(self, quads, annot_type)"
+    names: {python: Page__add_text_marker, node: pageAddTextMarker, java: pageAddTextMarker, dotnet: PageAddTextMarker}
+    rust: page_add_text_marker
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-page-add-text-marker]
+  - name: PySequence_Check
+    kind: function
+    signature: "(s)"
+    names: {python: PySequence_Check, node: pysequenceCheck, java: pysequenceCheck, dotnet: PySequenceCheck}
+    rust: py_sequence_check
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-pysequence-check]
+  - name: PySequence_Size
+    kind: function
+    signature: "(s)"
+    names: {python: PySequence_Size, node: pysequenceSize, java: pysequenceSize, dotnet: PySequenceSize}
+    rust: py_sequence_size
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-pysequence-size]
+  - name: PyUnicode_DecodeRawUnicodeEscape
+    kind: function
+    signature: "(s, errors='strict')"
+    names: {python: PyUnicode_DecodeRawUnicodeEscape, node: pyunicodeDecodeRawUnicodeEscape, java: pyunicodeDecodeRawUnicodeEscape, dotnet: PyUnicodeDecodeRawUnicodeEscape}
+    rust: py_unicode_decode_raw_unicode_escape
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-pyunicode-decoderawunicodeescape]
+  - name: RAISEPY
+    kind: function
+    signature: "(msg, exc)"
+    names: {python: RAISEPY, node: rAISEPY, java: rAISEPY, dotnet: RAISEPY}
+    rust: raisepy
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-raisepy]
+  - name: UpdateFontInfo
+    kind: function
+    signature: "(doc: 'Document', info: 'typing.Sequence')"
+    names: {python: UpdateFontInfo, node: updateFontInfo, java: updateFontInfo, dotnet: UpdateFontInfo}
+    rust: update_font_info
+    tier: T3
+    lane: L1
+    status: differs
+    tests: [l1-module-updatefontinfo]
+  - name: annot_postprocess
+    kind: function
+    signature: "(page: \"'Page'\", annot: \"'Annot'\") -> 'None'"
+    names: {python: annot_postprocess, node: annotPostprocess, java: annotPostprocess, dotnet: AnnotPostprocess}
+    rust: annot_postprocess
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-annot-postprocess]
+  - name: annot_preprocess
+    kind: function
+    signature: "(page: \"'Page'\") -> 'int'"
+    names: {python: annot_preprocess, node: annotPreprocess, java: annotPreprocess, dotnet: AnnotPreprocess}
+    rust: annot_preprocess
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-annot-preprocess]
+  - name: apply_pages
+    kind: function
+    signature: "(path, pagefn, *, pagefn_args=(), pagefn_kwargs={}, initfn=None, initfn_args=(), initfn_kwargs={}, pages=None, method='single', concurrency=None, _stats=False)"
+    names: {python: apply_pages, node: applyPages, java: applyPages, dotnet: ApplyPages}
+    rust: apply_pages
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-apply-pages]
+  - name: args_match
+    kind: function
+    signature: "(args, *types)"
+    names: {python: args_match, node: argsMatch, java: argsMatch, dotnet: ArgsMatch}
+    rust: args_match
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-args-match]
+  - name: calc_image_matrix
+    kind: function
+    signature: "(width, height, tr, rotate, keep)"
+    names: {python: calc_image_matrix, node: calcImageMatrix, java: calcImageMatrix, dotnet: CalcImageMatrix}
+    rust: calc_image_matrix
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-module-calc-image-matrix]
+  - name: canon
+    kind: function
+    signature: "(c)"
+    names: {python: canon, node: canon, java: canon, dotnet: Canon}
+    rust: canon
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-canon]
+  - name: chartocanon
+    kind: function
+    signature: "(s)"
+    names: {python: chartocanon, node: chartocanon, java: chartocanon, dotnet: Chartocanon}
+    rust: chartocanon
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-chartocanon]
+  - name: colors_pdf_dict
+    kind: function
+    signature: "()"
+    names: {python: colors_pdf_dict, node: colorsPdfDict, java: colorsPdfDict, dotnet: ColorsPdfDict}
+    rust: colors_pdf_dict
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-colors-pdf-dict]
+  - name: colors_wx_list
+    kind: function
+    signature: "()"
+    names: {python: colors_wx_list, node: colorsWxList, java: colorsWxList, dotnet: ColorsWxList}
+    rust: colors_wx_list
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-colors-wx-list]
+  - name: compute_scissor
+    kind: function
+    signature: "(dev)"
+    names: {python: compute_scissor, node: computeScissor, java: computeScissor, dotnet: ComputeScissor}
+    rust: compute_scissor
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-compute-scissor]
+  - name: css_for_pymupdf_font
+    kind: function
+    signature: "(fontcode: 'str', *, CSS: 'OptStr' = None, archive: 'AnyType' = None, name: 'OptStr' = None) -> 'str'"
+    names: {python: css_for_font, node: cssForFont, java: cssForFont, dotnet: CssForFont}
+    rust: css_for_font
+    tier: T3
+    lane: L1
+    status: differs
+    tests: [l1-module-css-for-pymupdf-font]
+  - name: dest_is_valid
+    kind: function
+    signature: "(o, page_count, page_object_nums, names_list)"
+    names: {python: dest_is_valid, node: destIsValid, java: destIsValid, dotnet: DestIsValid}
+    rust: dest_is_valid
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-dest-is-valid]
+  - name: dest_is_valid_page
+    kind: function
+    signature: "(obj, page_object_nums, pagecount)"
+    names: {python: dest_is_valid_page, node: destIsValidPage, java: destIsValidPage, dotnet: DestIsValidPage}
+    rust: dest_is_valid_page
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-dest-is-valid-page]
+  - name: detect_super_script
+    kind: function
+    signature: "(line, ch)"
+    names: {python: detect_super_script, node: detectSuperScript, java: detectSuperScript, dotnet: DetectSuperScript}
+    rust: detect_super_script
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-detect-super-script]
+  - name: dir_str
+    kind: function
+    signature: "(x)"
+    names: {python: dir_str, node: dirStr, java: dirStr, dotnet: DirStr}
+    rust: dir_str
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-dir-str]
+  - name: exception_info
+    kind: function
+    signature: "()"
+    names: {python: exception_info, node: exceptionInfo, java: exceptionInfo, dotnet: ExceptionInfo}
+    rust: exception_info
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-exception-info]
+  - name: extra_FzDocument_insert_pdf
+    kind: function
+    signature: "(doc, src, from_page, to_page, start_at, rotate, links, annots, show_progress, final, graft_map)"
+    names: {python: extra_FzDocument_insert_pdf, node: extraFzDocumentInsertPdf, java: extraFzDocumentInsertPdf, dotnet: ExtraFzDocumentInsertPdf}
+    rust: extra_insert_pdf
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-extra-fzdocument-insert-pdf]
+  - name: find_string
+    kind: function
+    signature: "(s, needle)"
+    names: {python: find_string, node: findString, java: findString, dotnet: FindString}
+    rust: find_string
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-find-string]
+  - name: format_g
+    kind: function
+    signature: "(value, *, fmt='%g')"
+    names: {python: format_g, node: formatG, java: formatG, dotnet: FormatG}
+    rust: format_g
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-format-g]
+  - name: getTJstr
+    kind: function
+    signature: "(text: 'str', glyphs: 'typing.Union[list, tuple, None]', simple: 'bool', ordering: 'int') -> 'str'"
+    names: {python: getTJstr, node: getTJstr, java: getTJstr, dotnet: GetTJstr}
+    rust: get_tjstr
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-gettjstr]
+  - name: get_env_bool
+    kind: function
+    signature: "(name, default)"
+    names: {python: get_env_bool, node: getEnvBool, java: getEnvBool, dotnet: GetEnvBool}
+    rust: get_env_bool
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-get-env-bool]
+  - name: get_env_int
+    kind: function
+    signature: "(name, default)"
+    names: {python: get_env_int, node: getEnvInt, java: getEnvInt, dotnet: GetEnvInt}
+    rust: get_env_int
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-get-env-int]
+  - name: get_highlight_selection
+    kind: function
+    signature: "(page, start: 'point_like' = None, stop: 'point_like' = None, clip: 'rect_like' = None) -> 'list'"
+    names: {python: get_highlight_selection, node: getHighlightSelection, java: getHighlightSelection, dotnet: GetHighlightSelection}
+    rust: get_highlight_selection
+    tier: T3
+    lane: L5
+    status: differs
+    tests: [l5-module-get-highlight-selection]
+  - name: get_pdf_now
+    kind: function
+    signature: "() -> 'str'"
+    names: {python: get_pdf_now, node: getPdfNow, java: getPdfNow, dotnet: GetPdfNow}
+    rust: get_pdf_now
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-get-pdf-now]
+  - name: get_pdf_str
+    kind: function
+    signature: "(s: 'str') -> 'str'"
+    names: {python: get_pdf_str, node: getPdfStr, java: getPdfStr, dotnet: GetPdfStr}
+    rust: get_pdf_str
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-get-pdf-str]
+  - name: get_tessdata
+    kind: function
+    signature: "(tessdata=None)"
+    names: {python: get_tessdata, node: getTessdata, java: getTessdata, dotnet: GetTessdata}
+    rust: get_tessdata
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-get-tessdata]
+  - name: get_text
+    kind: function
+    signature: "(path, *, pages=None, method='single', concurrency=None, option='text', clip=None, flags=None, textpage=None, sort=False, delimiters=None, _stats=False)"
+    names: {python: get_text, node: getText, java: getText, dotnet: GetText}
+    rust: get_text
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-get-text]
+  - name: get_text_length
+    kind: function
+    signature: "(text: 'str', fontname: 'str' = 'helv', fontsize: 'float' = 11, encoding: 'int' = 0) -> 'float'"
+    names: {python: get_text_length, node: getTextLength, java: getTextLength, dotnet: GetTextLength}
+    rust: get_text_length
+    tier: T2
+    lane: L1
+    status: missing
+    tests: [l1-module-get-text-length]
+  - name: glyph_name_to_unicode
+    kind: function
+    signature: "(name: 'str') -> 'int'"
+    names: {python: glyph_name_to_unicode, node: glyphNameToUnicode, java: glyphNameToUnicode, dotnet: GlyphNameToUnicode}
+    rust: glyph_name_to_unicode
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-glyph-name-to-unicode]
+  - name: hdist
+    kind: function
+    signature: "(dir, a, b)"
+    names: {python: hdist, node: hdist, java: hdist, dotnet: Hdist}
+    rust: hdist
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-hdist]
+  - name: image_profile
+    kind: function
+    signature: "(img: 'ByteString') -> 'dict'"
+    names: {python: image_profile, node: imageProfile, java: imageProfile, dotnet: ImageProfile}
+    rust: image_profile
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-module-image-profile]
+  - name: log
+    kind: function
+    signature: "(text='', caller=1)"
+    names: {python: log, node: log, java: log, dotnet: Log}
+    rust: log
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-log]
+  - name: make_escape
+    kind: function
+    signature: "(ch)"
+    names: {python: make_escape, node: makeEscape, java: makeEscape, dotnet: MakeEscape}
+    rust: make_escape
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-make-escape]
+  - name: make_story_elpos
+    kind: function
+    signature: "()"
+    names: {python: make_story_elpos, node: makeStoryElpos, java: makeStoryElpos, dotnet: MakeStoryElpos}
+    rust: make_story_elpos
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-make-story-elpos]
+  - name: make_table
+    kind: function
+    signature: "(rect: 'rect_like' = (0, 0, 1, 1), cols: 'int' = 1, rows: 'int' = 1) -> 'list'"
+    names: {python: make_table, node: makeTable, java: makeTable, dotnet: MakeTable}
+    rust: make_table
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-make-table]
+  - name: match_string
+    kind: function
+    signature: "(h0, n0)"
+    names: {python: match_string, node: matchString, java: matchString, dotnet: MatchString}
+    rust: match_string
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-match-string]
+  - name: message
+    kind: function
+    signature: "(text='')"
+    names: {python: message, node: message, java: message, dotnet: Message}
+    rust: message
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-message]
+  - name: message_warning
+    kind: function
+    signature: "(text)"
+    names: {python: message_warning, node: messageWarning, java: messageWarning, dotnet: MessageWarning}
+    rust: message_warning
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-message-warning]
+  - name: no_recommend_layout
+    kind: function
+    signature: "()"
+    names: {python: no_recommend_layout, node: noRecommendLayout, java: noRecommendLayout, dotnet: NoRecommendLayout}
+    rust: no_recommend_layout
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-no-recommend-layout]
+  - name: on_highlight_char
+    kind: function
+    signature: "(hits, line, ch)"
+    names: {python: on_highlight_char, node: onHighlightChar, java: onHighlightChar, dotnet: OnHighlightChar}
+    rust: on_highlight_char
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-on-highlight-char]
+  - name: page_merge
+    kind: function
+    signature: "(doc_des, doc_src, page_from, page_to, rotate, links, copy_annots, graft_map)"
+    names: {python: page_merge, node: pageMerge, java: pageMerge, dotnet: PageMerge}
+    rust: page_merge
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-page-merge]
+  - name: paper_rect
+    kind: function
+    signature: "(s: 'str') -> 'Rect'"
+    names: {python: paper_rect, node: paperRect, java: paperRect, dotnet: PaperRect}
+    rust: paper_rect
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-paper-rect]
+  - name: paper_size
+    kind: function
+    signature: "(s: 'str') -> 'tuple'"
+    names: {python: paper_size, node: paperSize, java: paperSize, dotnet: PaperSize}
+    rust: paper_size
+    tier: T2
+    lane: L5
+    status: missing
+    tests: [l5-module-paper-size]
+  - name: paper_sizes
+    kind: function
+    signature: "()"
+    names: {python: paper_sizes, node: paperSizes, java: paperSizes, dotnet: PaperSizes}
+    rust: paper_sizes
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-paper-sizes]
+  - name: pdf_lookup_page_loc
+    kind: function
+    signature: "(doc, needle)"
+    names: {python: pdf_lookup_page_loc, node: pdfLookupPageLoc, java: pdfLookupPageLoc, dotnet: PdfLookupPageLoc}
+    rust: pdf_lookup_page_loc
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-pdf-lookup-page-loc]
+  - name: pdfobj_string
+    kind: function
+    signature: "(o, prefix='')"
+    names: {python: pdfobj_string, node: pdfobjString, java: pdfobjString, dotnet: PdfobjString}
+    rust: pdfobj_string
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-pdfobj-string]
+  - name: planish_line
+    kind: function
+    signature: "(p1: 'point_like', p2: 'point_like') -> 'Matrix'"
+    names: {python: planish_line, node: planishLine, java: planishLine, dotnet: PlanishLine}
+    rust: planish_line
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-planish-line]
+  - name: recover_bbox_quad
+    kind: function
+    signature: "(line_dir: tuple, span: dict, bbox: tuple) -> Quad"
+    names: {python: recover_bbox_quad, node: recoverBboxQuad, java: recoverBboxQuad, dotnet: RecoverBboxQuad}
+    rust: recover_bbox_quad
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-recover-bbox-quad]
+  - name: recover_char_quad
+    kind: function
+    signature: "(line_dir: tuple, span: dict, char: dict) -> Quad"
+    names: {python: recover_char_quad, node: recoverCharQuad, java: recoverCharQuad, dotnet: RecoverCharQuad}
+    rust: recover_char_quad
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-recover-char-quad]
+  - name: recover_line_quad
+    kind: function
+    signature: "(line: dict, spans: list = None) -> Quad"
+    names: {python: recover_line_quad, node: recoverLineQuad, java: recoverLineQuad, dotnet: RecoverLineQuad}
+    rust: recover_line_quad
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-recover-line-quad]
+  - name: recover_quad
+    kind: function
+    signature: "(line_dir: tuple, span: dict) -> Quad"
+    names: {python: recover_quad, node: recoverQuad, java: recoverQuad, dotnet: RecoverQuad}
+    rust: recover_quad
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-recover-quad]
+  - name: recover_span_quad
+    kind: function
+    signature: "(line_dir: tuple, span: dict, chars: list = None) -> Quad"
+    names: {python: recover_span_quad, node: recoverSpanQuad, java: recoverSpanQuad, dotnet: RecoverSpanQuad}
+    rust: recover_span_quad
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-recover-span-quad]
+  - name: repair_mono_font
+    kind: function
+    signature: "(page: \"'Page'\", font: \"'Font'\") -> 'None'"
+    names: {python: repair_mono_font, node: repairMonoFont, java: repairMonoFont, dotnet: RepairMonoFont}
+    rust: repair_mono_font
+    tier: T3
+    lane: L1
+    status: differs
+    tests: [l1-module-repair-mono-font]
+  - name: restore_aliases
+    kind: function
+    signature: "()"
+    names: {python: restore_aliases, node: restoreAliases, java: restoreAliases, dotnet: RestoreAliases}
+    rust: restore_aliases
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-restore-aliases]
+  - name: sRGB_to_pdf
+    kind: function
+    signature: "(srgb: 'int') -> 'tuple'"
+    names: {python: sRGB_to_pdf, node: srgbToPdf, java: srgbToPdf, dotnet: SRGBToPdf}
+    rust: srgb_to_pdf
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-srgb-to-pdf]
+  - name: sRGB_to_rgb
+    kind: function
+    signature: "(srgb: 'int') -> 'tuple'"
+    names: {python: sRGB_to_rgb, node: srgbToRgb, java: srgbToRgb, dotnet: SRGBToRgb}
+    rust: srgb_to_rgb
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-srgb-to-rgb]
+  - name: set_log
+    kind: function
+    signature: "(*, text=None, fd=None, stream=None, path=None, path_append=None, pylogging=None, pylogging_logger=None, pylogging_level=None, pylogging_name=None)"
+    names: {python: set_log, node: setLog, java: setLog, dotnet: SetLog}
+    rust: set_log
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-set-log]
+  - name: set_messages
+    kind: function
+    signature: "(*, text=None, fd=None, stream=None, path=None, path_append=None, pylogging=None, pylogging_logger=None, pylogging_level=None, pylogging_name=None)"
+    names: {python: set_messages, node: setMessages, java: setMessages, dotnet: SetMessages}
+    rust: set_messages
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-set-messages]
+  - name: string_in_names_list
+    kind: function
+    signature: "(p, names_list)"
+    names: {python: string_in_names_list, node: stringInNamesList, java: stringInNamesList, dotnet: StringInNamesList}
+    rust: string_in_names_list
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-string-in-names-list]
+  - name: strip_outline
+    kind: function
+    signature: "(doc, outlines, page_count, page_object_nums, names_list)"
+    names: {python: strip_outline, node: stripOutline, java: stripOutline, dotnet: StripOutline}
+    rust: strip_outline
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-strip-outline]
+  - name: strip_outlines
+    kind: function
+    signature: "(doc, outlines, page_count, page_object_nums, names_list)"
+    names: {python: strip_outlines, node: stripOutlines, java: stripOutlines, dotnet: StripOutlines}
+    rust: strip_outlines
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-strip-outlines]
+  - name: unicode_to_glyph_name
+    kind: function
+    signature: "(ch: 'int') -> 'str'"
+    names: {python: unicode_to_glyph_name, node: unicodeToGlyphName, java: unicodeToGlyphName, dotnet: UnicodeToGlyphName}
+    rust: unicode_to_glyph_name
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-module-unicode-to-glyph-name]
+  - name: util_concat_matrix
+    kind: function
+    signature: "(m1, m2)"
+    names: {python: util_concat_matrix, node: utilConcatMatrix, java: utilConcatMatrix, dotnet: UtilConcatMatrix}
+    rust: util_concat_matrix
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-concat-matrix]
+  - name: util_ensure_widget_calc
+    kind: function
+    signature: "(annot)"
+    names: {python: util_ensure_widget_calc, node: utilEnsureWidgetCalc, java: utilEnsureWidgetCalc, dotnet: UtilEnsureWidgetCalc}
+    rust: util_ensure_widget_calc
+    tier: T3
+    lane: L5
+    status: differs
+    tests: [l5-module-util-ensure-widget-calc]
+  - name: util_hor_matrix
+    kind: function
+    signature: "(C, P)"
+    names: {python: util_hor_matrix, node: utilHorMatrix, java: utilHorMatrix, dotnet: UtilHorMatrix}
+    rust: util_hor_matrix
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-hor-matrix]
+  - name: util_include_point_in_rect
+    kind: function
+    signature: "(r, p)"
+    names: {python: util_include_point_in_rect, node: utilIncludePointInRect, java: utilIncludePointInRect, dotnet: UtilIncludePointInRect}
+    rust: util_include_point_in_rect
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-include-point-in-rect]
+  - name: util_intersect_rect
+    kind: function
+    signature: "(r1, r2)"
+    names: {python: util_intersect_rect, node: utilIntersectRect, java: utilIntersectRect, dotnet: UtilIntersectRect}
+    rust: util_intersect_rect
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-intersect-rect]
+  - name: util_invert_matrix
+    kind: function
+    signature: "(matrix)"
+    names: {python: util_invert_matrix, node: utilInvertMatrix, java: utilInvertMatrix, dotnet: UtilInvertMatrix}
+    rust: util_invert_matrix
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-invert-matrix]
+  - name: util_is_point_in_rect
+    kind: function
+    signature: "(p, r)"
+    names: {python: util_is_point_in_rect, node: utilIsPointInRect, java: utilIsPointInRect, dotnet: UtilIsPointInRect}
+    rust: util_is_point_in_rect
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-is-point-in-rect]
+  - name: util_make_irect
+    kind: function
+    signature: "(*args, p0=None, p1=None, x0=None, y0=None, x1=None, y1=None)"
+    names: {python: util_make_irect, node: utilMakeIrect, java: utilMakeIrect, dotnet: UtilMakeIrect}
+    rust: util_make_irect
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-make-irect]
+  - name: util_make_rect
+    kind: function
+    signature: "(*args, p0=None, p1=None, x0=None, y0=None, x1=None, y1=None)"
+    names: {python: util_make_rect, node: utilMakeRect, java: utilMakeRect, dotnet: UtilMakeRect}
+    rust: util_make_rect
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-make-rect]
+  - name: util_measure_string
+    kind: function
+    signature: "(text, fontname, fontsize, encoding)"
+    names: {python: util_measure_string, node: utilMeasureString, java: utilMeasureString, dotnet: UtilMeasureString}
+    rust: util_measure_string
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-measure-string]
+  - name: util_point_in_quad
+    kind: function
+    signature: "(P, Q)"
+    names: {python: util_point_in_quad, node: utilPointInQuad, java: utilPointInQuad, dotnet: UtilPointInQuad}
+    rust: util_point_in_quad
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-point-in-quad]
+  - name: util_round_rect
+    kind: function
+    signature: "(rect)"
+    names: {python: util_round_rect, node: utilRoundRect, java: utilRoundRect, dotnet: UtilRoundRect}
+    rust: util_round_rect
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-round-rect]
+  - name: util_sine_between
+    kind: function
+    signature: "(C, P, Q)"
+    names: {python: util_sine_between, node: utilSineBetween, java: utilSineBetween, dotnet: UtilSineBetween}
+    rust: util_sine_between
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-sine-between]
+  - name: util_transform_point
+    kind: function
+    signature: "(point, matrix)"
+    names: {python: util_transform_point, node: utilTransformPoint, java: utilTransformPoint, dotnet: UtilTransformPoint}
+    rust: util_transform_point
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-transform-point]
+  - name: util_transform_rect
+    kind: function
+    signature: "(rect, matrix)"
+    names: {python: util_transform_rect, node: utilTransformRect, java: utilTransformRect, dotnet: UtilTransformRect}
+    rust: util_transform_rect
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-transform-rect]
+  - name: util_union_rect
+    kind: function
+    signature: "(r1, r2)"
+    names: {python: util_union_rect, node: utilUnionRect, java: utilUnionRect, dotnet: UtilUnionRect}
+    rust: util_union_rect
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-util-union-rect]
+  - name: vdist
+    kind: function
+    signature: "(dir, a, b)"
+    names: {python: vdist, node: vdist, java: vdist, dotnet: Vdist}
+    rust: vdist
+    tier: T3
+    lane: L5
+    status: missing
+    tests: [l5-module-vdist]

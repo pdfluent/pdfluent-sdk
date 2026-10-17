@@ -1,26 +1,70 @@
 [package]
 name = "pdfluent-cli"
-version = "1.0.0"
+version = "1.1.0"
 edition.workspace = true
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
 license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 repository.workspace = true
-description = "PDFluent command-line interface (public scaffold): PDF info, text extraction, validation. XFA support is experimental and feature-gated."
+homepage.workspace = true
+documentation.workspace = true
+readme = "README.md"
+description = "PDFluent command-line interface: extract, merge, split, organise, compress, protect, watermark, convert, redact, sign and validate PDFs."
 keywords = ["pdf", "cli", "pdfluent", "pdf-a", "forms"]
 categories = ["command-line-utilities"]
-# Not published yet — public CLI is scaffolded; packaging is a follow-up milestone.
-publish = false
+publish = true
+
+# The integration suite drives the repository fixture tree by relative path
+# and cannot run from a published crate. Excluded so those paths do not
+# ship; the unit tests in src/ still travel with the package. Same reason
+# as the `pdfluent` facade's own exclusion.
+exclude = ["tests/"]
+
+[[bin]]
+name = "pdfluent"
+path = "src/main.rs"
 
 [[bin]]
 name = "pdfluent-cli"
-path = "src/main.rs"
+path = "src/bin/pdfluent-cli.rs"
+
+[features]
+default = []
+# The balanced extraction tier (#641): `--quality balanced` runs the layout
+# model, and `models install layout` / `models status` manage its files. Off
+# by default; the default build stays pure Rust with no new dependency.
+ort-layout = ["dep:ureq", "dep:sha2", "pdfluent/ort-layout"]
+# TATR table structure inside the balanced tier (track B, P4): without it
+# `--table-model-dir` refuses rather than running a silent pass. Off by
+# default; like `ort-layout` it adds no dependency to the default build.
+ort-tables = ["pdfluent/ort-tables"]
 
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
 clap_complete = "4"
+clap_mangen = "0.2"
+# No-echo password prompt on Unix (termios). stdin fallback elsewhere.
+libc = "0.2"
 serde_json.workspace = true
-pdfluent = { path = "../pdfluent", version = "=1.0.0" }
+pdfluent = { path = "../pdfluent", version = "=1.1.0" }
+# `--jobs 1` sizes the global rayon pool to one thread at extract start, so
+# no oversized pool spins while pages render one at a time.
+rayon = "1"
+# NFC for the extract collision check: macOS spells é decomposed (NFD),
+# so composed and decomposed target names must compare equal.
+unicode-normalization = "0.1"
+# The model installer behind `ort-layout` only: the same HTTP client
+# pdf-ocr's paddle fetch uses, and SHA-256 to verify against the compiled-in
+# pins. Optional so the default build gains no new dependency.
+ureq = { version = "3", optional = true }
+sha2 = { version = "0.10", optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
+# The models end-to-end pins the local ONNX Runtime library out of its own
+# bytes: the digest is taken from the file, never transcribed.
+sha2 = "0.10"
+# Fixtures are built in-memory rather than shipped as binary files, the same
+# way `pdfluent`'s own tests do (#449). Shared builders live in
+# tests/common/mod.rs.
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.6", default-features = false }

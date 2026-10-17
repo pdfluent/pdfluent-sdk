@@ -1,0 +1,228 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for TextPage, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: TextPage
+rust_path: pdfluent::compat::TextPage
+names: {python: TextPage, node: TextPage, java: TextPage, dotnet: TextPage}
+members:
+  - name: __eq__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __eq__, node: eq, java: eq, dotnet: Eq}
+    rust: "TextPage::PartialEq"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-textpage-eq]
+  - name: __ge__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ge__, node: ge, java: ge, dotnet: Ge}
+    rust: "TextPage::compare"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-textpage-ge]
+  - name: __gt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __gt__, node: gt, java: gt, dotnet: Gt}
+    rust: "TextPage::compare"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-textpage-gt]
+  - name: __init__
+    kind: constructor
+    signature: "(*args)"
+    names: {python: __init__, node: TextPage, java: TextPage, dotnet: TextPage}
+    rust: "TextPage::new"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-textpage-init]
+  - name: __le__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __le__, node: le, java: le, dotnet: Le}
+    rust: "TextPage::compare"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-textpage-le]
+  - name: __lt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __lt__, node: lt, java: lt, dotnet: Lt}
+    rust: "TextPage::compare"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-textpage-lt]
+  - name: __ne__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ne__, node: ne, java: ne, dotnet: Ne}
+    rust: "TextPage::PartialEq"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-textpage-ne]
+  - name: extractBLOCKS
+    kind: method
+    signature: "()"
+    names: {python: extractBLOCKS, node: extractBLOCKS, java: extractBLOCKS, dotnet: ExtractBLOCKS}
+    rust: "TextPage::extract_blocks"
+    tier: T3
+    lane: L1
+    status: partial
+    tests: [L1.textpage.extractBLOCKS]
+  - name: extractDICT
+    kind: method
+    signature: "(cb=None, sort=False) -> 'dict'"
+    names: {python: extractDICT, node: extractDICT, java: extractDICT, dotnet: ExtractDICT}
+    rust: "TextPage::extract_dict"
+    tier: T3
+    lane: L1
+    status: partial
+    tests: [L1.textpage.extractDICT, L1.textpage.extractDICT_sort]
+  - name: extractHTML
+    kind: method
+    signature: "() -> 'str'"
+    names: {python: extractHTML, node: extractHTML, java: extractHTML, dotnet: ExtractHTML}
+    rust: "TextPage::extract_html"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [L1.textpage.extractHTML]
+  - name: extractIMGINFO
+    kind: method
+    signature: "(hashes=0)"
+    names: {python: extractIMGINFO, node: extractIMGINFO, java: extractIMGINFO, dotnet: ExtractIMGINFO}
+    rust: "TextPage::extract_imginfo"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [L1.textpage.extractIMGINFO]
+  - name: extractJSON
+    kind: method
+    signature: "(cb=None, sort=False) -> 'str'"
+    names: {python: extractJSON, node: extractJSON, java: extractJSON, dotnet: ExtractJSON}
+    rust: "TextPage::extract_json"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [L1.textpage.extractJSON]
+  - name: extractRAWDICT
+    kind: method
+    signature: "(cb=None, sort=False) -> 'dict'"
+    names: {python: extractRAWDICT, node: extractRAWDICT, java: extractRAWDICT, dotnet: ExtractRAWDICT}
+    rust: "TextPage::extract_rawdict"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [L1.textpage.extractRAWDICT, L1.textpage.extractRAWDICT_sort]
+  - name: extractRAWJSON
+    kind: method
+    signature: "(cb=None, sort=False) -> 'str'"
+    names: {python: extractRAWJSON, node: extractRAWJSON, java: extractRAWJSON, dotnet: ExtractRAWJSON}
+    rust: "TextPage::extract_rawjson"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [L1.textpage.extractRAWJSON]
+  - name: extractSelection
+    kind: method
+    signature: "(pointa, pointb)"
+    names: {python: extractSelection, node: extractSelection, java: extractSelection, dotnet: ExtractSelection}
+    rust: "TextPage::extract_selection"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [L1.textpage.extractSelection]
+  - name: extractTEXT
+    kind: method
+    signature: "(sort=False) -> 'str'"
+    names: {python: extractTEXT, node: extractTEXT, java: extractTEXT, dotnet: ExtractTEXT}
+    rust: "TextPage::extract_text"
+    tier: T3
+    lane: L1
+    status: partial
+    tests: [L1.textpage.empty_text, L1.textpage.extractTEXT, L1.textpage.extractTEXT_sort]
+  - name: extractText
+    kind: method
+    signature: "(sort=False) -> 'str'"
+    names: {python: extractText, node: extractText, java: extractText, dotnet: ExtractText}
+    rust: "TextPage::extract_text"
+    tier: T3
+    lane: L1
+    status: partial
+    tests: [L1.textpage.extractText.alias]
+  - name: extractTextbox
+    kind: method
+    signature: "(rect)"
+    names: {python: extractTextbox, node: extractTextbox, java: extractTextbox, dotnet: ExtractTextbox}
+    rust: "TextPage::extract_textbox"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [L1.textpage.extractTextbox]
+  - name: extractWORDS
+    kind: method
+    signature: "(delimiters=None)"
+    names: {python: extractWORDS, node: extractWORDS, java: extractWORDS, dotnet: ExtractWORDS}
+    rust: "TextPage::extract_words"
+    tier: T3
+    lane: L1
+    status: partial
+    tests: [L1.textpage.extractWORDS, L1.textpage.extractWORDS_delimiters]
+  - name: extractXHTML
+    kind: method
+    signature: "() -> 'str'"
+    names: {python: extractXHTML, node: extractXHTML, java: extractXHTML, dotnet: ExtractXHTML}
+    rust: "TextPage::extract_xhtml"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [L1.textpage.extractXHTML]
+  - name: extractXML
+    kind: method
+    signature: "() -> 'str'"
+    names: {python: extractXML, node: extractXML, java: extractXML, dotnet: ExtractXML}
+    rust: "TextPage::extract_xml"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [L1.textpage.extractXML]
+  - name: poolsize
+    kind: method
+    signature: "()"
+    names: {python: poolsize, node: poolsize, java: poolsize, dotnet: Poolsize}
+    rust: "TextPage::poolsize"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [L1.textpage.poolsize]
+  - name: rect
+    kind: property
+    signature: "()"
+    names: {python: rect, node: rect, java: getRect, dotnet: Rect}
+    rust: "TextPage::rect"
+    tier: T3
+    lane: L1
+    status: partial
+    tests: [L1.textpage.rect, L1.textpage.search_rects]
+  - name: search
+    kind: method
+    signature: "(needle, hit_max=0, quads=1)"
+    names: {python: search, node: search, java: search, dotnet: Search}
+    rust: "TextPage::search"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [L1.textpage.search_hit_max, L1.textpage.search_hit_max_zero, L1.textpage.search_missing, L1.textpage.search_quads]

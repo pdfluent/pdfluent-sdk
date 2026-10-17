@@ -159,7 +159,7 @@ inside the artefact; manifests are checked separately by identity gate.
 | Import / require the package and exercise the primary API surface | yes |
 | Verify version string matches expected release version | yes |
 
-**Templates:** `docs/release/consumer_smokes/` (Round 3 deliverable)
+**Templates:** `scripts/release/consumer_smokes/` (Round 3 deliverable)
 
 ---
 
@@ -214,7 +214,7 @@ The following scripts pre-date the gate contract and must not be used for produc
 |---|---|---|
 | `scripts/publish_all.sh` | **Deprecated** — no artefact inspection, no audit report | `scripts/release/audit-all-packages.sh` + `scripts/release/release_train_guard.sh` |
 
-`scripts/publish_ordered.sh` remains valid as the crates.io train executor, but must only be called **after** `release_train_guard.sh` (audit-first) passes.
+`scripts/release/publish_ordered.sh` remains valid as the crates.io train executor, but must only be called **after** `release_train_guard.sh` (audit-first) passes.
 
 ---
 

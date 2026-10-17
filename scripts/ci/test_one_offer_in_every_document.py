@@ -155,11 +155,45 @@ def main() -> int:
             allowed.stderr[-300:],
         )
 
-        # 9. restored
+        # 9. the order form, which the price rule above never read. It can
+        #    carry all four prices and a fifth of its own, and the fifth is the
+        #    one a buyer signs. Found by the daily after-check on 06-09-2026,
+        #    which planted EUR 1234 there and got a green line.
+        red(
+            "a price of its own in the order form",
+            run(base, "form-price",
+                rewrite(FORM, "| Commercial — one organisation, unlimited developers | € 999 |",
+                        "| Commercial — one organisation, unlimited developers | € 1234 |")),
+            "neither one of the four prices",
+        )
+
+        # 10. the same withdrawn price without its thousands separator. The scan
+        #     this replaces compared the written form, so `EUR 1,099` was
+        #     refused and `EUR 1099` was not -- in the same file, on the same
+        #     run. A reader cannot tell a stale price from a current one either
+        #     way, which is the only reason that scan exists.
+        red(
+            "a retired price written without its comma",
+            run(base, "retired-unformatted",
+                rewrite(FORM, "| Commercial — one organisation, unlimited developers | € 999 |",
+                        "| Commercial — one organisation, unlimited developers | € 1099 |")),
+            "retired on",
+        )
+
+        # 11. and the other side of comparing on digits: the same price written
+        #     differently is the same price, or this guard starts refusing
+        #     documents for their punctuation.
+        same = run(base, "reformatted",
+                   rewrite(FORM, "| OEM — one product | € 9,999 |",
+                           "| OEM — one product | € 9999 |"))
+        check("a correct price written without its comma stays green",
+              same.returncode == 0, same.stderr[-300:])
+
+        # 12. restored
         again = run(base, "restored", None)
         check("restored -> green", again.returncode == 0, again.stderr[-300:])
 
-    check("at least 8 cases ran", len(results) >= 8)
+    check("at least 12 cases ran", len(results) >= 12)
 
     failed = [r for r in results if not r[0]]
     for ok, what, detail in results:

@@ -187,9 +187,87 @@ fn to_images_rejects_out_of_range_page() {
             ToImagesOptions::new().with_pages(total + 1, total + 5),
         )
         .expect_err("page out of range");
-    assert_eq!(err.code(), "E-INTERNAL");
+    // E-INTERNAL until #453. `Error::Internal` tells the reader to file a bug
+    // report; a range the caller wrote past the end of their own document is
+    // not one.
+    assert_eq!(err.code(), "E-PAGE-RANGE-INVALID");
+    assert!(matches!(
+        err,
+        pdfluent::Error::PageRangeInvalid {
+            start,
+            end,
+            page_count,
+        } if start == total + 1 && end == total + 5 && page_count == total
+    ));
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A range that ends before it starts is inside the document at both ends and
+/// still describes no pages. It is a different mistake from "past the end",
+/// and the message says so.
+#[test]
+fn to_images_rejects_an_empty_page_range() {
+    let doc = business_doc("tests/fixtures/sample.pdf");
+    let dir = std::env::temp_dir().join("pdfluent-parity-images-empty");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let pattern = dir.join("page_{page}.png");
+
+    let err = doc
+        .to_images(&pattern, ToImagesOptions::new().with_pages(2, 1))
+        .expect_err("empty page range");
+    assert_eq!(err.code(), "E-PAGE-RANGE-INVALID");
+    let message = err.to_string();
+    assert!(
+        message.contains("2..=1") && message.contains("empty"),
+        "an inverted range must be reported as empty, not as out of range: {message}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `extract_pages` is the other caller of `normalise_page_range`, and it takes
+/// a `RangeBounds` rather than a pair — so `0..=1` is reachable there and is
+/// the exact off-by-one a caller arriving from a 0-based API makes.
+#[test]
+fn extract_pages_rejects_a_range_starting_at_zero() {
+    let doc = business_doc("tests/fixtures/sample.pdf");
+    let err = doc.extract_pages(0..=1).expect_err("page 0 does not exist");
+    assert_eq!(err.code(), "E-PAGE-RANGE-INVALID");
+    assert_eq!(
+        err.docs_url(),
+        "https://pdfluent.com/errors#E-PAGE-RANGE-INVALID"
+    );
+    assert!(
+        err.to_string().contains("numbered from 1"),
+        "the message must name the convention: {err}"
+    );
+}
+
+#[test]
+fn extract_pages_rejects_a_range_past_the_end() {
+    let doc = business_doc("tests/fixtures/sample.pdf");
+    let total = doc.page_count();
+    let err = doc
+        .extract_pages(1..=total + 1)
+        .expect_err("range past the end");
+    assert_eq!(err.code(), "E-PAGE-RANGE-INVALID");
+    assert!(matches!(
+        err,
+        pdfluent::Error::PageRangeInvalid { end, page_count, .. }
+            if end == total + 1 && page_count == total
+    ));
+}
+
+#[test]
+fn extract_pages_accepts_the_whole_document() {
+    let doc = business_doc("tests/fixtures/sample.pdf");
+    let total = doc.page_count();
+    let extracted = doc
+        .extract_pages(1..=total)
+        .expect("the full range must be accepted");
+    assert_eq!(extracted.page_count(), total);
 }
 
 #[test]
@@ -293,7 +371,10 @@ fn insert_image_rejects_out_of_range_page() {
             10.0,
         ))
         .expect_err("oob page");
-    assert_eq!(err.code(), "E-INTERNAL");
+    // E-INTERNAL until #414: a page number the caller passed is their
+    // mistake to fix, not a fault to report to us.
+    assert_eq!(err.code(), "E-PAGE-OUT-OF-RANGE");
+    assert!(matches!(err, pdfluent::Error::PageOutOfRange { .. }));
 }
 
 // ---------------------------------------------------------------------------
@@ -424,4 +505,70 @@ fn to_pptx_writes_a_real_presentation() {
     assert_ooxml(&out, "ppt/", "pptx");
 
     let _ = std::fs::remove_file(&out);
+}
+
+// ---------------------------------------------------------------------------
+// Raster quality (speed round R1): both pipelines through the public path
+// ---------------------------------------------------------------------------
+
+use pdfluent::{RasterQuality, RenderPageOptions};
+
+/// Both raster modes render every page to a valid PNG via the public
+/// `to_images` path. Fails if the quality option does not reach the engine
+/// (unknown variant, dropped field) or if Speed fails to render.
+#[test]
+fn to_images_renders_in_both_raster_modes() {
+    let doc = business_doc("tests/fixtures/sample.pdf");
+    for quality in [RasterQuality::Quality, RasterQuality::Speed] {
+        let tag = format!("pdfluent-parity-raster-{quality:?}");
+        let dir = std::env::temp_dir().join(tag);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let pattern = dir.join("page_{page}.png");
+
+        let report = doc
+            .to_images(
+                &pattern,
+                ToImagesOptions::new().with_dpi(72).with_quality(quality),
+            )
+            .unwrap_or_else(|e| panic!("to_images {quality:?}: {e}"));
+
+        assert_eq!(report.paths.len(), doc.page_count());
+        for path in &report.paths {
+            let bytes = std::fs::read(path).expect("read");
+            assert_eq!(&bytes[..4], &[0x89, 0x50, 0x4E, 0x47], "PNG signature");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Both raster modes render one page to valid PNG bytes via the public
+/// `render_page_with_options` path.
+#[test]
+fn render_page_with_options_renders_in_both_raster_modes() {
+    let doc = business_doc("tests/fixtures/sample.pdf");
+    for quality in [RasterQuality::Quality, RasterQuality::Speed] {
+        let opts = RenderPageOptions::new().with_dpi(72).with_quality(quality);
+        let bytes = doc
+            .render_page_with_options(1, opts)
+            .unwrap_or_else(|e| panic!("render_page {quality:?}: {e}"));
+        assert_eq!(&bytes[..4], &[0x89, 0x50, 0x4E, 0x47], "PNG signature");
+    }
+}
+
+/// The default stays Quality until the T5-gated flip: the convenience
+/// `render_page` path must equal an explicit Quality render.
+#[test]
+fn render_page_default_matches_explicit_quality() {
+    let doc = business_doc("tests/fixtures/sample.pdf");
+    let via_default = doc.render_page(1, 72, ImageFormat::Png).expect("default");
+    let via_explicit = doc
+        .render_page_with_options(
+            1,
+            RenderPageOptions::new()
+                .with_dpi(72)
+                .with_quality(RasterQuality::Quality),
+        )
+        .expect("explicit quality");
+    assert_eq!(via_default, via_explicit);
 }

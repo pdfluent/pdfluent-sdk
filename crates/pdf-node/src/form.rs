@@ -73,9 +73,9 @@ impl FormEngine {
         tree.get_value(name)
     }
 
-    pub fn set_value(&self, name: &str, value: &str) -> napi::Result<()> {
+    pub fn set_value(&self, name: &str, value: &str, operation: &str) -> napi::Result<()> {
         let mut tree = self.tree.lock().unwrap();
         tree.set_value(name, value)
-            .map_err(|e| napi::Error::from_reason(format!("{e}")))
+            .map_err(|e| crate::error::unsupported(operation, format!("{e}")))
     }
 }

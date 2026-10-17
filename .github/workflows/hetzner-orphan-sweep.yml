@@ -48,7 +48,7 @@ on:
 jobs:
   sweep:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: [self-hosted, xfa-local-checks]
     steps:
       - uses: actions/checkout@v4
       # Idle *and* past the paid hour. Instances are reused rather than deleted

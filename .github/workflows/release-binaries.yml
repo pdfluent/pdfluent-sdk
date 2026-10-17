@@ -1,60 +1,127 @@
-name: Release Binaries
+name: release-binaries
 
-# RELEASE AUTHORITY: this workflow is the sole creator of GitHub Releases.
-# publish_ordered.sh creates and pushes the git tag; this workflow takes over
-# from there, building binaries and creating the release with assets + checksums.
+# MANUAL ONLY. Tags start nothing here: cutting the public GitHub Release is
+# a dispatch at the release tag with create_release=true, after the CLI gate
+# below. (The same shape as node-bindings.yml: the decision and the gate are
+# both in this file, so neither can drift off the publish.) A dispatch on any
+# other ref still builds and gates, publishing nothing.
+# Self-hosted runs never publish: with runner_pool=self and create_release=true
+# the first step of every job fails before anything builds.
 
 on:
-  push:
-    tags: ['v*.*.*']
   workflow_dispatch:
-
-env:
-  CARGO_TERM_COLOR: always
+    inputs:
+      create_release:
+        description: 'Create the public GitHub Release (false builds and gates only)'
+        required: false
+        default: 'false'
+      runner_pool:
+        description: 'Runner pool: github (hosted) or self (self-hosted GCP/Mac runners)'
+        required: false
+        default: 'github'
+        type: choice
+        options: ['github', 'self']
 
 jobs:
   build:
-    name: Build ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
+    name: Build pdfluent (${{ matrix.target }})
+    runs-on: ${{ inputs.runner_pool == 'self' && matrix.os-self || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+            os-self: [self-hosted, linux, x64, pdfluent-release]
             use_cross: true
             ext: ''
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
+            os-self: [self-hosted, linux, x64, pdfluent-release]
             use_cross: true
             ext: ''
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
+            os-self: [self-hosted, linux, x64, pdfluent-release]
             use_cross: true
             ext: ''
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
+            os-self: [self-hosted, linux, x64, pdfluent-release]
             use_cross: true
             ext: ''
           - target: x86_64-apple-darwin
-            os: macos-13
+            # The retired Intel label is gone: x86_64 builds on
+            # macos-latest (arm64), cross to --target.
+            os: macos-latest
+            os-self: [self-hosted, macos, arm64, pdfluent-release]
             use_cross: false
             ext: ''
           - target: aarch64-apple-darwin
             os: macos-latest
+            os-self: [self-hosted, macos, arm64, pdfluent-release]
             use_cross: false
             ext: ''
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            os-self: [self-hosted, windows, x64, pdfluent-release]
             use_cross: false
             ext: '.exe'
+          # The gnu leg crosses from linux x64 on self-hosted runners
+          # (mingw-w64 below); the github pool builds it on windows-latest.
           - target: x86_64-pc-windows-gnu
             os: windows-latest
+            os-self: [self-hosted, linux, x64, pdfluent-release]
             use_cross: false
             ext: '.exe'
 
     steps:
+      - name: Self-hosted runs never publish
+        if: inputs.runner_pool == 'self' && inputs.create_release == 'true'
+        shell: bash
+        run: |
+          echo "::error::runner_pool=self refuses create_release=true: self-hosted runs never cut a release" >&2
+          exit 1
+
       - uses: actions/checkout@v4
+
+      - name: Set up the self-hosted toolchain
+        if: inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          # python for the Windows zip step (zip_cli_stage.py).
+          tools: rust,docker,python
+          rust-targets: ${{ matrix.target }}
+
+      # Missing is red here, in seconds, with the complete list -- before the
+      # build, never an hour in (m482). Read-only: it installs nothing.
+      - name: Preflight the release requirements
+        if: inputs.runner_pool == 'self'
+        shell: bash
+        run: |-
+          PY="$(command -v python3 || command -v python || true)"
+          if [ -z "$PY" ]; then
+            echo "gate_preflight: REFUSED: no python on PATH (the setup installs one only for jobs that list python in tools:)" >&2
+            exit 2
+          fi
+          "$PY" scripts/ci/gate_preflight.py --release-job release-binaries.yml/build
+
+      # The gnu leg's linker. On self it crosses on linux x64, so the
+      # wrapper installs mingw-w64 there (the target's std came from the
+      # setup step above); cargo-zigbuild is the documented fallback if
+      # the archive ever has no mingw-w64 (pip install cargo-zigbuild
+      # ziglang, then cargo zigbuild --target x86_64-pc-windows-gnu).
+      - name: Install MinGW for the windows-gnu cross (self)
+        if: inputs.runner_pool == 'self' && matrix.target == 'x86_64-pc-windows-gnu'
+        shell: bash
+        run: |
+          bash scripts/ci/apt_get.sh update -qq
+          bash scripts/ci/apt_get.sh install -y -qq mingw-w64
+
+      - name: Install MinGW for the windows-gnu target (github)
+        if: inputs.runner_pool != 'self' && matrix.target == 'x86_64-pc-windows-gnu'
+        shell: powershell
+        run: choco install mingw --no-progress -y
 
       - name: Install cross for Linux targets
         if: matrix.use_cross == true
@@ -64,98 +131,309 @@ jobs:
       # stable, cargo then switches to the pinned channel and finds no std
       # for it -- "can't find crate for `core`", naming neither.
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        if: inputs.runner_pool != 'self'
         with:
           toolchain: '1.94.0'
           targets: ${{ matrix.target }}
 
+      # The Windows zips are cut with stdlib python (zip_cli_stage.py):
+      # windows-latest carries a Python, but the step pins what it runs.
+      - uses: actions/setup-python@v5
+        if: inputs.runner_pool != 'self' && contains(matrix.target, 'windows')
+        with:
+          python-version: '3.12'
+
+      # The key names the matrix target: without it every leg of this matrix
+      # restores the same target/ (the default key has no target), and a leg
+      # then runs host build-script binaries saved by another leg's newer
+      # cross image -- GLIBC_2.28/2.29/2.30 not found on aarch64-musl (#636).
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-binaries-${{ matrix.target }}
+          cache-bin: false
 
       - name: Build binary
         shell: bash
+        # The release self-check in cmd_models.rs fails while any models-v1
+        # pin is still TODO when this is 1, so a release never ships an
+        # installer it cannot verify (T1's pins commit provides the check).
+        env:
+          PDFLUENT_RELEASE_PINS_REQUIRED: '1'
         run: |
+          # The public CLI from the pdfluent-cli crate. The -p pin is load-bearing:
+          # xfa-cli used to own the `pdfluent` binary name, and a bare
+          # `--bin pdfluent` fails once two crates ship it. Since the
+          # 30-09-2026 takeover (#636) releases ship the public CLI.
+          # The release CLI ships with BOTH ort tiers (owner decision 08-10):
+          # `ort-layout` runs `extract --quality balanced`, `ort-tables`
+          # structures its table regions with TATR. The tiers load the
+          # runtime dynamically (`ORT_DYLIB_PATH`, else the install dir), so
+          # the binary links nothing new and stays statically linked.
+          # Scrub THIS runner's paths (the config block names one Mac). The
+          # CLI links statically on every target, so this is never the musl
+          # cdylib helper — not even on the musl legs.
+          source scripts/release/release_rustflags.sh
           if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --bin pdfluent --target ${{ matrix.target }}
+            cross build --release -p pdfluent-cli --bin pdfluent --target ${{ matrix.target }} --features ort-layout,ort-tables
           else
-            cargo build --release --bin pdfluent --target ${{ matrix.target }}
+            cargo build --release -p pdfluent-cli --bin pdfluent --target ${{ matrix.target }} --features ort-layout,ort-tables
           fi
 
-      - name: Strip binary (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      # Minutes in, not hours later: the fresh CLI names no build-host path,
+      # and the log shows the remap block this runner computed.
+      - name: The fresh CLI embeds no build-host path
         shell: bash
-        run: strip target/${{ matrix.target }}/release/pdfluent
+        run: bash scripts/release/check_build_host_paths.sh "target/${{ matrix.target }}/release/pdfluent${{ matrix.ext }}"
 
-      - name: Strip binary (macOS)
-        if: matrix.os == 'macos-latest' || matrix.os == 'macos-13'
-        shell: bash
-        run: strip target/${{ matrix.target }}/release/pdfluent
-
+      # The gate's archive shape (scripts/release/artifacts_cover_every_platform.py
+      # --cli-dir): pdfluent-<version>-<triple>.tar.gz (.zip on Windows) holding
+      # the binary plus the licence set and the man pages under man/man1/.
+      # The version comes from the crate manifest, not the ref, so a dispatch
+      # on a branch builds the same names as the release.
       - name: Package binary
-        id: package
         shell: bash
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          ARCHIVE_NAME=pdfluent-${{ matrix.target }}-v${VERSION}
-
-          mkdir -p dist/${ARCHIVE_NAME}
-          cp target/${{ matrix.target }}/release/pdfluent${{ matrix.ext }} dist/${ARCHIVE_NAME}/
-          cp LICENSE dist/${ARCHIVE_NAME}/
-
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            powershell -Command "Compress-Archive -Path 'dist/${ARCHIVE_NAME}' -DestinationPath 'dist/${ARCHIVE_NAME}.zip'"
-            echo "archive_name=${ARCHIVE_NAME}.zip" >> $GITHUB_OUTPUT
+          TARGET="${{ matrix.target }}"
+          VERSION="$(grep -m1 '^version = ' crates/pdfluent-cli/Cargo.toml | cut -d'"' -f2)"
+          BIN="target/${TARGET}/release/pdfluent${{ matrix.ext }}"
+          STAGE="stage-${TARGET}"
+          mkdir -p "dist/${STAGE}"
+          cp "$BIN" "dist/${STAGE}/pdfluent${{ matrix.ext }}"
+          cp LICENSE LICENSE-COMMERCIAL NOTICE THIRD_PARTY_LICENSES.txt README.md "dist/${STAGE}/"
+          mkdir -p "dist/${STAGE}/man/man1"
+          cp docs/cli/man/*.1 "dist/${STAGE}/man/man1/"
+          if command -v sha256sum >/dev/null; then
+            ( cd "dist/${STAGE}" && sha256sum pdfluent* LICENSE* NOTICE THIRD_PARTY_LICENSES.txt README.md man/man1/*.1 > SHA256SUMS )
           else
-            tar -czf dist/${ARCHIVE_NAME}.tar.gz -C dist ${ARCHIVE_NAME}
-            echo "archive_name=${ARCHIVE_NAME}.tar.gz" >> $GITHUB_OUTPUT
+            ( cd "dist/${STAGE}" && shasum -a 256 pdfluent* LICENSE* NOTICE THIRD_PARTY_LICENSES.txt README.md man/man1/*.1 > SHA256SUMS )
+          fi
+          # MANDATORY staged-package check, per target: LICENSE, verifying
+          # SHA256SUMS, no secrets, private paths, or stray artifacts. Red
+          # here fails the build before the archive below is cut.
+          bash scripts/release/check_cli_staged_package.sh "dist/${STAGE}"
+          if [[ "$TARGET" == *"-windows-"* ]]; then
+            ARCHIVE="pdfluent-${VERSION}-${TARGET}.zip"
+            # stdlib python on every pool: Compress-Archive wrote backslash
+            # entry names (man\man1\pdfluent.1), which the artefact gate
+            # refuses; zipfile writes forward slashes everywhere (build 2).
+            # Resolved, not bare: Windows ships `python`, not `python3`
+            # (build 3: `python3: command not found` on win-x64).
+            PY="$(command -v python3 || command -v python)"
+            "$PY" scripts/release/zip_cli_stage.py "dist/${STAGE}" "dist/${ARCHIVE}"
+          else
+            ARCHIVE="pdfluent-${VERSION}-${TARGET}.tar.gz"
+            tar -czf "dist/${ARCHIVE}" -C "dist/${STAGE}" pdfluent LICENSE LICENSE-COMMERCIAL NOTICE THIRD_PARTY_LICENSES.txt README.md SHA256SUMS man
           fi
 
-      - name: Upload artifact
+      - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: pdfluent-${{ matrix.target }}
-          path: dist/${{ steps.package.outputs.archive_name }}
-          retention-days: 30
+          path: dist/*
+          retention-days: 1
 
-  create-release:
-    name: Create Release
-    needs: build
-    runs-on: ubuntu-latest
+  release-gate:
+    name: CLI gate over the eight archives
+    needs: [build]
+    # One failed leg must not skip this validation: it runs on the legs
+    # that did succeed, names every skipped one below, and fails at the
+    # end when any is missing.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ inputs.runner_pool == 'self' && fromJSON('["self-hosted", "linux", "x64", "pdfluent-release"]') || 'ubuntu-latest' }}
     permissions:
-      contents: write
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Self-hosted runs never publish
+        if: inputs.runner_pool == 'self' && inputs.create_release == 'true'
+        shell: bash
+        run: |
+          echo "::error::runner_pool=self refuses create_release=true: self-hosted runs never cut a release" >&2
+          exit 1
 
-      - name: Download all artifacts
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download the eight archives
         uses: actions/download-artifact@v4
         with:
           pattern: pdfluent-*
           path: dist
           merge-multiple: true
 
+      # The build legs that failed have no archive: list every expected
+      # target and name the missing ones, so a partial run is never silent.
+      # This fails nothing; the last step fails the job when any is missing.
+      - name: List the expected legs (never silent)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > .missing-legs
+          for target in x86_64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-gnu aarch64-unknown-linux-musl x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc x86_64-pc-windows-gnu; do
+            if compgen -G "dist/pdfluent-*-${target}.*" > /dev/null; then
+              echo "leg $target: present"
+            else
+              echo "SKIPPED leg $target: build failed"
+              echo "$target" >> .missing-legs
+            fi
+          done
+          if [[ -s .missing-legs ]]; then
+            echo "missing legs recorded in .missing-legs"
+          else
+            echo "all eight legs present"
+          fi
+
+      - name: Set up the self-hosted toolchain
+        if: inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          tools: python
+
+      # Missing is red here, in seconds, with the complete list (m482).
+      # Read-only: it installs nothing.
+      - name: Preflight the release requirements
+        if: inputs.runner_pool == 'self'
+        shell: bash
+        run: python3 scripts/ci/gate_preflight.py --release-job release-binaries.yml/release-gate
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        if: inputs.runner_pool != 'self'
+        with:
+          python-version: '3.12'
+
+      # SHA256SUMS is the gate's name for the digest file (the public release
+      # keeps its existing SHA256SUMS.txt beside it).
+      - name: CLI gate (names, members, arch, static musl, digests)
+        run: |
+          cd dist
+          sha256sum pdfluent-*.tar.gz pdfluent-*.zip > SHA256SUMS
+          VERSION="$(grep -m1 '^version = ' ../crates/pdfluent-cli/Cargo.toml | cut -d'"' -f2)"
+          python3 ../scripts/release/artifacts_cover_every_platform.py --cli-dir . --cli-version "$VERSION" --require-all cli
+
+      - name: Smoke the linux-x64 archive on this host
+        run: bash scripts/release/consumer_smokes/smoke_binary.sh --artifact dist/pdfluent-*-x86_64-unknown-linux-gnu.tar.gz
+
+      # Red when any leg was skipped: the gate above already failed on a
+      # partial set (--require-all), so this is the verdict made explicit
+      # rather than a second rule. Runs even when the gate failed.
+      - name: Fail if any leg was skipped
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          if [[ -s .missing-legs ]]; then
+            echo "missing legs:"
+            sed 's/^/  SKIPPED leg /; s/$/: build failed/' .missing-legs
+            exit 1
+          fi
+          echo "no leg skipped"
+
+  create-release:
+    name: Create the public GitHub Release
+    # The pre-release clause is first, then the tag requirement, then the
+    # dispatch decision: no version tag, however final, can arm this job on
+    # its own — only a human dispatching at the release tag with
+    # create_release. (The ref_type spelling, as in node-bindings.yml: a
+    # startsWith on github.ref must never appear in this job, so a tag can
+    # never arm the release even by editing the clause.)
+    if: >-
+      !(github.ref_type == 'tag' && contains(github.ref_name, '-'))
+      && github.ref_type == 'tag'
+      && inputs.create_release == 'true'
+    needs: [build, release-gate]
+    runs-on: ${{ inputs.runner_pool == 'self' && fromJSON('["self-hosted", "linux", "x64", "pdfluent-release"]') || 'ubuntu-latest' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Self-hosted runs never publish
+        if: inputs.runner_pool == 'self' && inputs.create_release == 'true'
+        shell: bash
+        run: |
+          echo "::error::runner_pool=self refuses create_release=true: self-hosted runs never cut a release" >&2
+          exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download the eight archives
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # A dispatch can aim at any ref; the release only happens at the tag
+      # naming the crate version (the `if` above already requires a tag).
+      - name: The tag names the crate version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          VER="$(grep -m1 '^version = ' crates/pdfluent-cli/Cargo.toml | cut -d'"' -f2)"
+          test "$TAG" = "$VER" || { echo "ref ${GITHUB_REF} is not the crate version v${VER}" >&2; exit 1; }
+
+      - name: Set up the self-hosted toolchain
+        if: inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          tools: rust
+
+      # Missing is red here, in seconds, with the complete list (m482).
+      # Read-only: it installs nothing.
+      - name: Preflight the release requirements
+        if: inputs.runner_pool == 'self'
+        shell: bash
+        run: python3 scripts/ci/gate_preflight.py --release-job release-binaries.yml/create-release
+
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        if: inputs.runner_pool != 'self'
+        with:
+          toolchain: '1.94.0'
+
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+
+      - name: Build host binary for the release gate
+        shell: bash
+        run: |
+          # Same scrubbing as the shipped binaries (the config block is Mac-only).
+          source scripts/release/release_rustflags.sh
+          cargo build --release -p pdfluent-cli
+
+      - name: Run the CLI release gate over every staged archive
+        shell: bash
+        run: |
+          # The gate judges the manifest, the host binaries, and EVERY staged
+          # package under its dist dir. The per-target jobs already checked
+          # each stage before cutting its archive; this re-checks what is
+          # about to be published, after the trip through the artifact store.
+          # Red here fails the lane before the release below is created.
+          rm -rf dist/staged && mkdir -p dist/staged
+          shopt -s nullglob
+          for archive in dist/*.tar.gz; do
+            tar -xzf "$archive" -C dist/staged
+          done
+          for archive in dist/*.zip; do
+            unzip -q "$archive" -d dist/staged
+          done
+          PDFLUENT_CLI_DIST=dist/staged bash scripts/release/pdfluent_cli_release_gate.sh
+
       - name: Get version from tag
         id: tag
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-      - name: Generate SHA-256 checksums
+      - name: Generate SHA256SUMS.txt
         run: |
           cd dist
-          find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) | sort | while read f; do
-            sha256sum "$f"
-          done > SHA256SUMS.txt
-          echo "=== SHA256SUMS.txt ==="
-          cat SHA256SUMS.txt
+          sha256sum pdfluent-* > SHA256SUMS.txt
 
       - name: Create GitHub Release
-        id: create_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: PDFluent v${{ steps.tag.outputs.version }}
-          draft: false
-          prerelease: ${{ contains(steps.tag.outputs.version, 'beta') || contains(steps.tag.outputs.version, 'alpha') || contains(steps.tag.outputs.version, 'rc') }}
-          generate_release_notes: true
+          name: pdfluent ${{ github.ref_name }}
           files: |
-            dist/*.tar.gz
-            dist/*.zip
+            dist/pdfluent-*
             dist/SHA256SUMS.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

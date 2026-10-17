@@ -104,7 +104,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       # On PRs: restore the latest master baseline so criterion can compare.
       # Cache key targets master saves; falls back to any master baseline on miss.
@@ -255,4 +258,4 @@ jobs:
           path: |
             target/criterion/
             bench-output.txt
-          retention-days: 90
+          retention-days: 1

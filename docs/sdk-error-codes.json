@@ -1,0 +1,98 @@
+[
+  {
+    "code": "E-IO-GENERIC",
+    "variant": "Io",
+    "what": "Underlying I/O operation failed.",
+    "fix": "Check that the file path is accessible and the process has read/write permissions. Inspect `source` for the underlying OS error."
+  },
+  {
+    "code": "E-IO-FILE-NOT-FOUND",
+    "variant": "FileNotFound",
+    "what": "File not found at the given path.",
+    "fix": "Verify the path exists before calling. Use `Path::exists()` or handle this variant to prompt the user for the correct path."
+  },
+  {
+    "code": "E-PARSE-INVALID-PDF",
+    "variant": "InvalidPdf",
+    "what": "PDF is structurally invalid.",
+    "fix": "Ensure the bytes are a complete, undamaged PDF. Check `byte_offset` for the failure site. Re-download or re-export the file if corrupt."
+  },
+  {
+    "code": "E-PARSE-UNSUPPORTED-VERSION",
+    "variant": "UnsupportedPdfVersion",
+    "what": "PDF version is newer than the supported maximum.",
+    "fix": "The PDF version header exceeds what this build supports. Upgrade to a newer PDFluent release, or pre-process the file with a downgrader."
+  },
+  {
+    "code": "E-COMPLIANCE-PDFA-INVALID",
+    "variant": "PdfaValidationFailed",
+    "what": "PDF/A validation failed against the requested profile.",
+    "fix": "Inspect `violations` for specific rule identifiers. Use `OpenOptions::convert_to_pdfa()` to auto-repair, or fix the source document before validation."
+  },
+  {
+    "code": "E-SECURITY-DECRYPTION-FAILED",
+    "variant": "DecryptionFailed",
+    "what": "Decryption failed — wrong password or unsupported algorithm.",
+    "fix": "Supply the correct password via `OpenOptions::password()`. Check `reason` to distinguish wrong-password from unsupported-algorithm cases."
+  },
+  {
+    "code": "E-SECURITY-INVALID-SIGNATURE",
+    "variant": "InvalidSignature",
+    "what": "A digital signature is invalid.",
+    "fix": "The signature in `field` failed verification. Check `reason` for details. Do not trust the document content if integrity is required."
+  },
+  {
+    "code": "E-ENV-UNSUPPORTED-ON-WASM",
+    "variant": "UnsupportedOnWasm",
+    "what": "Operation is not supported in WebAssembly builds.",
+    "fix": "This operation (`operation`) cannot run in a WASM32 environment. Use the server-side API or guard with `#[cfg(not(target_arch = \"wasm32\"))]`."
+  },
+  {
+    "code": "E-EDIT-TEXT-FAILED",
+    "variant": "TextEditFailed",
+    "what": "A text-edit transaction failed (see [`crate::text_edit`] for the typed per-edit errors this message summarizes).",
+    "fix": "The message carries the typed reason from the edit session. A stale or invalid match id means the document changed after the search: search again and stage against the new matches. `unsupported container` and `match spans multiple styles` mean the text cannot be edited in place -- redact and re-draw it instead. Overlapping or duplicated stages are a mistake in the caller's own batch."
+  },
+  {
+    "code": "E-ENV-MISSING-DEPENDENCY",
+    "variant": "MissingDependency",
+    "what": "A native dependency is required but not installed or discoverable.",
+    "fix": "Install the missing native library (`dep`) following `install_hint`. Ensure the library is on `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH`."
+  },
+  {
+    "code": "E-BUDGET-MEMORY-EXCEEDED",
+    "variant": "MemoryBudgetExceeded",
+    "what": "Memory budget set via [`crate::OpenOptions::strict_memory_limit`] exceeded.",
+    "fix": "Raise the memory limit via `OpenOptions::strict_memory_limit()`, or process the document in smaller chunks."
+  },
+  {
+    "code": "E-BUDGET-RESOURCE-LIMIT",
+    "variant": "ResourceLimitExceeded",
+    "what": "A processing limit you configured was exceeded while loading or working on the document. The `kind` field says which one.",
+    "fix": "Inspect `kind` to identify which cap fired, then raise the corresponding `ProcessingLimits` field. For untrusted input, keep limits tight and reject oversized files at the ingestion layer."
+  },
+  {
+    "code": "E-PAGE-OUT-OF-RANGE",
+    "variant": "PageOutOfRange",
+    "what": "A page number outside the document was asked for. Pages are numbered from 1, so 0 is never valid -- it is the number a caller arriving from a 0-based API reaches for first.",
+    "fix": "Pass a page number between 1 and `page_count()` inclusive. If you are porting from a 0-based API, add 1."
+  },
+  {
+    "code": "E-PAGE-RANGE-INVALID",
+    "variant": "PageRangeInvalid",
+    "what": "A page range the document cannot satisfy was asked for: it runs past the last page, starts at 0, or ends before it starts.",
+    "fix": "Pass a range that lies inside 1..=`page_count()` and does not end before it starts. If you are porting from a 0-based API, add 1 to both ends; `0..n` becomes `1..=n`."
+  },
+  {
+    "code": "E-UNSUPPORTED",
+    "variant": "Unsupported",
+    "what": "The requested operation is not supported for this document or in this build.",
+    "fix": "Read the message: it names what was asked for. Either the document lacks the structure the operation needs, or the capability is not part of this build."
+  },
+  {
+    "code": "E-INTERNAL",
+    "variant": "Internal",
+    "what": "Internal safety-net. Should never fire under normal operation.",
+    "fix": "This should never occur under normal operation. File a bug report at https://pdfluent.com/support including `message` and `crate_version`."
+  }
+]

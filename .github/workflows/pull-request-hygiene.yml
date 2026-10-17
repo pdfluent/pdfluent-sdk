@@ -1,0 +1,68 @@
+# The blocking half of `scripts/ci/pr_staleness.py`, and the run that makes it
+# reachable.
+#
+# WHY IT IS NOT IN nightly.yml ANY MORE
+#
+# It lived there from 03-09-2026, on a weekly cron, because nightly.yml was the
+# only scheduled workflow that already ran on the persistent desktop. On
+# 12-09-2026 the paid-compute lock (688b8e9e5) took every trigger but
+# `workflow_dispatch` off the eight workflows that can buy a server, and
+# `scripts/ci/paid_compute_policy.py` now refuses any other trigger on them --
+# correctly: a timer on a provisioning workflow is exactly the route that bought
+# `gh-runner-5674`. The weekly run went with it, and `return 1` in
+# `pr_staleness.py` became dead code again while its own message still promised
+# "the scheduled run fails on these". `test_pr_staleness.py` said so out loud,
+# and the landing gate has been red on it since.
+#
+# So the job moved to a workflow that can carry a timer because it can buy
+# nothing: no `hcloud`, no runner creation, one step that asks GitHub about pull
+# requests. The lock keeps its meaning and the guard keeps its run.
+#
+# Weekly, Sunday 02:00 UTC, where failing costs nobody their afternoon.
+#
+# On a pull request `pr_staleness.py` reports and returns 0, because one stale
+# branch would otherwise stop every merge including the ones that would clear the
+# backlog. This is the run where it is allowed to say no.
+name: Pull request hygiene
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'
+  # So the run can be reproduced on demand after a red Sunday, without waiting a
+  # week to see whether a fix worked.
+  workflow_dispatch:
+
+concurrency:
+  # One answer about the queue at a time, newest wins: two runs differ only in
+  # age, and the older one is asking about a queue that has moved.
+  group: pull-request-hygiene-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  stale-pull-requests:
+    name: No pull request has been left to rot (blocking)
+    # Pinned to the default branch, because this workflow is dispatchable and the
+    # job runs code from the checkout. `gh workflow run --ref <branch>` would
+    # otherwise put a branch's version of pr_staleness.py on the machine that
+    # holds the corpus, the warm cache and the runner token, with GH_TOKEN in its
+    # environment. A dispatch from a feature branch skips this job entirely; the
+    # weekly schedule runs on master, where there is no unmerged code to carry.
+    #
+    # scripts/ci/orchestration_stays_hosted.py refused this job without the pin,
+    # which is how the line got here rather than by anyone remembering.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: [self-hosted, xfa-local-checks]
+    steps:
+      - uses: actions/checkout@v4
+      # If `gh` is absent or unauthenticated here this goes red quoting gh's own
+      # line rather than passing: not being able to look at the queue is the
+      # state the guard exists to refuse.
+      - name: Stale pull requests fail the weekly run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_STALENESS_BLOCKING: '1'
+        run: python3 scripts/ci/pr_staleness.py

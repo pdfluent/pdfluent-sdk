@@ -30,13 +30,18 @@ pub struct AnnotationInfo {
 /// Extract annotations from a specific page of a PDF.
 ///
 /// Returns an error if `page_index` is out of range.
-pub(crate) fn page_annotations(pdf: &Pdf, page_index: usize) -> napi::Result<Vec<AnnotationInfo>> {
+pub(crate) fn page_annotations(
+    pdf: &Pdf,
+    page_index: usize,
+    operation: &str,
+) -> napi::Result<Vec<AnnotationInfo>> {
     let pages = pdf.pages();
     let page = pages.get(page_index).ok_or_else(|| {
         let count = pages.len();
-        napi::Error::from_reason(format!(
-            "page {page_index} out of range (document has {count} pages)"
-        ))
+        crate::error::page_out_of_range(
+            operation,
+            format!("page {page_index} out of range (document has {count} pages)"),
+        )
     })?;
 
     Ok(Annotation::from_page(page)

@@ -48,14 +48,14 @@ contexts = [
     "No commit publishes a personal address",
     "Every commit carries a sign-off",
 ]
-pending = """
-The SDK repository holds an eight-commit placeholder until #222 seeds it, and
-the seeding replaces that history wholesale -- including the `commit-identity.yml`
-that reports the first context there today. Both contexts come from
-`.github/workflows/public-pull-request.yml` in this tree after the seeding, and
-requiring them before it would block every pull request on a repository whose
-checks do not exist yet.
-"""
+# The `pending` reason is gone because the gap it described closed. #222 seeded
+# the repository on 06-09-2026 and both contexts are required on `main` --
+# measured, not assumed: `required_status_checks.contexts` reads
+# ["No commit publishes a personal address", "Every commit carries a sign-off"].
+#
+# Removed ON LOAN from #222, by the next change through the pre-push gate: the
+# guard fails on a reason that no longer applies, and that failure is every
+# terminal's push, not only the one that earned it.
 why = """
 The two things a stranger's first pull request can get wrong that nothing else
 catches: an address that publishes a person, and a commit nobody certified they

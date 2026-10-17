@@ -54,21 +54,43 @@ expect("  and the guard itself does not crash", r.returncode in (0, 1), str(r.re
 # exactly what it was until 03-09-2026. Asserted here rather than trusted,
 # because the promise lives in one file and the run that keeps it in another.
 # (T1 review of #1679)
+#
+# The run is looked for in EVERY workflow rather than in a file named here. It
+# lived in nightly.yml until 15-09-2026 and moved out when the paid-compute lock
+# left that workflow no trigger but `workflow_dispatch`; a test that names the
+# file goes red on the move itself rather than on the thing it is about. What
+# must hold is that ONE workflow carries all three -- the run, the blocking
+# variable, and the weekly cron -- because three facts spread over three files
+# are not a scheduled blocking run. (#358)
 import pathlib as _pl
 import re as _re
+import yaml as _yaml
 
-_nightly = _pl.Path(__file__).resolve().parents[2] / ".github/workflows/nightly.yml"
-if not _nightly.is_file():
-    print("  FAIL  nightly.yml is missing, so the blocking mode has no scheduled run")
-    fails.append("nightly.yml missing")
-else:
-    _t = _nightly.read_text(encoding="utf-8")
-    expect("nightly.yml runs pr_staleness.py",
-           "scripts/ci/pr_staleness.py" in _t, "no such run step")
-    expect("  with PR_STALENESS_BLOCKING=1, so `return 1` is reachable",
-           _re.search(r"PR_STALENESS_BLOCKING:\s*'?1'?", _t) is not None, "variable not set")
-    expect("  on a schedule, so it is the run the message names",
-           _re.search(r"cron:\s*'0 2 \* \* 0'", _t) is not None, "no weekly cron")
+_dir = _pl.Path(__file__).resolve().parents[2] / ".github/workflows"
+_carriers = []
+for _wf in sorted(_dir.glob("*.yml")):
+    _t = _wf.read_text(encoding="utf-8")
+    if "scripts/ci/pr_staleness.py" not in _t:
+        continue
+    _blocking = _re.search(r"PR_STALENESS_BLOCKING:\s*'?1'?", _t) is not None
+    try:
+        _doc = _yaml.safe_load(_t) or {}
+    except _yaml.YAMLError:
+        _doc = {}
+    # `on:` parses as the boolean True in YAML 1.1, which is why it is asked for
+    # both ways; reading only "on" finds nothing and would pass this vacuously.
+    _on = _doc.get("on", _doc.get(True, {}))
+    _crons = [str(_s.get("cron", "")) for _s in (_on or {}).get("schedule", []) or []] \
+        if isinstance(_on, dict) else []
+    _weekly = any(_re.fullmatch(r"0 2 \* \* 0", _c) for _c in _crons)
+    _carriers.append((_wf.name, _blocking, _weekly))
+
+expect("some workflow runs pr_staleness.py",
+       bool(_carriers), "no workflow names the guard")
+expect("  with PR_STALENESS_BLOCKING=1, so `return 1` is reachable",
+       any(b for _, b, _ in _carriers), f"found {_carriers}")
+expect("  on a weekly schedule in that same workflow, so it is the run the message names",
+       any(b and w for _, b, w in _carriers), f"found {_carriers}")
 
 print(f"\n  8 assertion(s) ran, {len(fails)} failure(s)")
 raise SystemExit(1 if fails else 0)

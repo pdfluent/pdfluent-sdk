@@ -86,6 +86,7 @@ name: pdf-capi (ephemeral Hetzner)
 permissions:
   contents: read
 
+# Paid compute is disabled by owner decision. No timer/push may provision.
 on:
   workflow_dispatch:
     inputs:
@@ -105,17 +106,20 @@ jobs:
   create-runner:
     # Only from the default branch: a dispatch carrying another branch's
     # workflow body is skipped entirely, so nothing unmerged runs here.
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.event_name == 'workflow_dispatch' && vars.PAID_COMPUTE_ENABLED == 'true' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
     # Without this the create action polls for a runner that may never
     # register, holding the one desktop runner while everything else
     # queues behind it. Fifteen minutes of that is what a wedged
     # provisioning looked like (#274).
     timeout-minutes: 10
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: [self-hosted, xfa-local-checks]
     outputs:
       label: ${{ steps.create.outputs.label }}
       server_id: ${{ steps.create.outputs.server_id }}
     steps:
+      - uses: actions/checkout@v4
+      - name: Paid compute requires a new owner authorization
+        run: python3 scripts/ci/require_paid_compute_permission.py
       # Forty seconds before spending anything. `cancel-in-progress` kills a
       # superseded run almost at once, so a second push inside this window
       # cancels the first one *before* it has bought a machine. Without it,
@@ -153,6 +157,39 @@ jobs:
           # dispatch means. This is the only place a candidate ref is used.
           ref: ${{ inputs.candidate_ref || github.ref }}
 
+      # THE TOOLCHAIN, INSTALLED BY THE JOB THAT NEEDS IT (#495).
+      #
+      # This job used to take cargo from the image's PATH, and said so. On
+      # 09-09-2026 the wave's instance was created from the sealed warm image
+      # (#482) and three reusable jobs died within minutes of each other on
+      # `cargo: command not found` -- this one after `Command failed: rustc -vV`
+      # from the cache action, which needs the compiler before it can key
+      # anything (wave 34365955374). `workspace`, on the same instance and the
+      # same image, compiled: it installs a toolchain of its own.
+      #
+      # So the image's PATH stops being a contract these jobs rely on. It is
+      # still repaired on the image side -- the seal writes /etc/profile.d and
+      # refuses to photograph a machine where `cargo --version` fails
+      # non-interactively -- but a job that compiles now carries its own
+      # toolchain, because an image is a thing that changes overnight and a
+      # step is a thing that is read in review.
+      #
+      # BEFORE the cache action, not after: `rustc -vV` is the first thing it
+      # runs. And the bin directory is put on PATH by hand for the reason
+      # ci-ephemeral's workspace job does it -- /usr/local/bin/cargo on this
+      # image is a plain binary that shadows rustup's shims, so `rustup which
+      # cargo` is the only answer that is about the toolchain just installed.
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        with:
+          toolchain: stable
+      - name: Put the pinned toolchain's bin directory on PATH
+        run: |
+          set -euo pipefail
+          toolchain_bin="$(dirname "$(rustup which cargo)")"
+          echo "$toolchain_bin" >> "$GITHUB_PATH"
+          echo "cargo comes from $toolchain_bin"
+          "$toolchain_bin/cargo" --version
+
       - name: Confirm toolchain pin matches the baked snapshot
         run: |
           BAKED=$(grep '^channel' /etc/xfa-snapshot-toolchain.txt | cut -d'"' -f2)
@@ -181,7 +218,7 @@ jobs:
     # queues behind it. Fifteen minutes of that is what a wedged
     # provisioning looked like (#274).
     timeout-minutes: 10
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: [self-hosted, xfa-local-checks]
     steps:
       # Only when there is something to delete: if create-runner failed the
       # outputs are empty and this step would error on a server that was

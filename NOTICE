@@ -42,7 +42,10 @@ their respective open-source licenses:
   pdf-font             Apache-2.0 OR MIT
                        (substantially extended fork merging hayro-font,
                         hayro-cmap and hayro-postscript, co-authored by
-                        Laurenz Stampfl)
+                        Laurenz Stampfl; carries Adobe's CMap resources as
+                        crates/pdf-font/assets/cmaps.brotli, © 1990-2023 Adobe,
+                        BSD-3-Clause, with the licence text beside it as
+                        crates/pdf-font/assets/LICENSE.txt)
 
 pdf-render and pdf-font carry substantial PDFluent work on top of the upstream
 code. That does not move them across the line: they are derivative works of an
@@ -68,22 +71,41 @@ that. See https://pdfluent.com/sdk/pricing.
 
   pdfluent             — the unified facade SDK
   pdf-engine           — orchestration and document model
+                         (the TATR post-processing behind `ort-tables` is a port of
+                          Microsoft's table-transformer, © Microsoft Corporation,
+                          MIT; that notice ships inside the crate as THIRD_PARTY.md)
   pdf-manip            — page-level manipulation (merge, split, rotate, etc.)
+                         (six unmodified Adobe CMap resources, compiled in
+                          to read the character codes of a predefined CMap;
+                          © 1990-2023 Adobe, BSD-3-Clause; that licence
+                          ships inside the crate as
+                          resources/cid-tables/LICENSE-Adobe-CMap.txt)
   pdf-redact           — content redaction
   pdfluent-sign        — digital signatures (PAdES, S/MIME)
   pdf-compliance       — PDF/A, PDF/UA, PDF/X validation and conversion
   pdfluent-extract     — text and image extraction
+  epub-extract         — EPUB content extraction
   pdfluent-forms       — AcroForm support
   pdf-annot            — annotations
   pdf-docx             — DOCX export
   pdf-xlsx             — XLSX export and table extraction
+  xlsx-extract         — XLSX workbook extraction to engine blocks
   pdf-pptx             — PowerPoint PPTX export
+  pptx-extract         — PowerPoint PPTX extraction to blocks
   pdf-invoice          — FDF/XFDF form data exchange and ZUGFeRD/Factur-X
   pdf-text-format      — text run formatting
   pdf-standard-fonts   — the Standard 14 font programs, compiled in
                          (the font programs themselves come from PDFium,
                           © 2014 Foxit Software Inc., BSD-3-Clause; that
                           notice ships inside the crate)
+  pdf-substitute-fonts — the substitute font programs, compiled in
+                         (twelve unmodified Liberation 2.1.5 faces and two
+                          unmodified Noto Naskh Arabic v2.021 faces, both SIL
+                          Open Font License 1.1; those licences ship inside the
+                          crate as LICENSE-Liberation.txt and
+                          LICENSE-NotoNaskhArabic.txt. "Noto" is a trademark of
+                          Google LLC, named as a fact about the bytes and not
+                          as an endorsement)
   pdf-ocr              — OCR integration
   pdf-xfa              — XFA processing engine
   xfa-dom-resolver     — XFA DOM
@@ -91,6 +113,7 @@ that. See https://pdfluent.com/sdk/pricing.
   xfa-js-sandboxed     — sandboxed JavaScript runtime for XFA scripts
   formcalc-interpreter — FormCalc evaluation
   xfa-json             — XFA JSON conversion
+  pdfluent-cli         — command-line interface over the facade
 
 The Software produces the same output whether or not a commercial licence is
 held: there is no licence key, nothing is withheld and no marker is added

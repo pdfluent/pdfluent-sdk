@@ -82,6 +82,9 @@ impl<T> BatchResult<T> {
     }
 }
 
+/// A progress callback shared with the worker threads.
+type SharedProgress = Arc<Box<dyn Fn(usize, usize) + Send + Sync + 'static>>;
+
 /// Convenience helpers built on top of [`process_batch`].
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PdfBatch;
@@ -129,6 +132,44 @@ where
     F: Fn(&PdfDocument) -> Result<T> + Send + Sync + 'static,
     T: Send + 'static,
 {
+    run_batch(paths, config, None, processor)
+}
+
+/// [`process_batch`] with a per-page progress callback, invoked as
+/// `(done, total)` with the current file's page counts: a three-page file
+/// reports `(1, 3)` through `(3, 3)` once it has been read. It fires only for
+/// files that open and process successfully, from the worker thread; with
+/// several workers the files interleave. The per-file callback in
+/// [`BatchConfig::on_progress`] still fires as before.
+///
+/// A separate function rather than a [`BatchConfig`] field: `BatchConfig` is
+/// built with struct literals, so a new public field would break every such
+/// literal written against 1.0.
+pub fn process_batch_with_page_progress<P, F, T>(
+    paths: &[P],
+    config: BatchConfig,
+    on_page_progress: Box<dyn Fn(usize, usize) + Send + Sync + 'static>,
+    processor: F,
+) -> BatchResult<T>
+where
+    P: AsRef<Path>,
+    F: Fn(&PdfDocument) -> Result<T> + Send + Sync + 'static,
+    T: Send + 'static,
+{
+    run_batch(paths, config, Some(on_page_progress), processor)
+}
+
+fn run_batch<P, F, T>(
+    paths: &[P],
+    config: BatchConfig,
+    on_page_progress: Option<Box<dyn Fn(usize, usize) + Send + Sync + 'static>>,
+    processor: F,
+) -> BatchResult<T>
+where
+    P: AsRef<Path>,
+    F: Fn(&PdfDocument) -> Result<T> + Send + Sync + 'static,
+    T: Send + 'static,
+{
     let started = Instant::now();
     let input_paths = paths
         .iter()
@@ -148,6 +189,7 @@ where
     let stop = Arc::new(AtomicBool::new(false));
     let input_paths = Arc::new(input_paths);
     let processor = Arc::new(processor);
+    let on_page = on_page_progress.map(Arc::new);
     let (tx, rx) = mpsc::channel();
     let mut handles = Vec::with_capacity(workers);
 
@@ -157,6 +199,7 @@ where
         let stop = Arc::clone(&stop);
         let input_paths = Arc::clone(&input_paths);
         let processor = Arc::clone(&processor);
+        let on_page = on_page.clone();
         let timeout = config.timeout;
 
         handles.push(thread::spawn(move || loop {
@@ -170,7 +213,7 @@ where
             }
 
             let path = input_paths[index].clone();
-            let outcome = process_one(path, timeout, Arc::clone(&processor));
+            let outcome = process_one(path, timeout, Arc::clone(&processor), on_page.clone());
             if tx.send(outcome).is_err() {
                 break;
             }
@@ -223,7 +266,12 @@ enum BatchOutcome<T> {
     Failure(PathBuf, String),
 }
 
-fn process_one<F, T>(path: PathBuf, timeout: Duration, processor: Arc<F>) -> BatchOutcome<T>
+fn process_one<F, T>(
+    path: PathBuf,
+    timeout: Duration,
+    processor: Arc<F>,
+    on_page: Option<SharedProgress>,
+) -> BatchOutcome<T>
 where
     F: Fn(&PdfDocument) -> Result<T> + Send + Sync + 'static,
     T: Send + 'static,
@@ -237,7 +285,14 @@ where
     thread::spawn(move || {
         let outcome = (|| {
             let doc = PdfDocument::open(bytes).map_err(|err| err.to_string())?;
-            processor(&doc).map_err(|err| err.to_string())
+            let value = processor(&doc).map_err(|err| err.to_string())?;
+            if let Some(callback) = on_page.as_ref() {
+                let total = doc.page_count();
+                for done in 1..=total {
+                    callback(done, total);
+                }
+            }
+            Ok(value)
         })();
         let _ = tx.send(outcome);
     });

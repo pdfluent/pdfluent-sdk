@@ -125,10 +125,18 @@ nothing to run and nothing to protect on a hosted runner."""
 # stopped existing, and the register went on saying they were covered -- which is
 # the exact shape #231 found on the mirror gate.
 #
-# ci.yml's `workspace` job now runs these three scripts themselves on every push
-# to master (#343), so they stand before a merge on GitHub and are no longer
-# mirror-only. That is also what makes the landing lane a trade: it compiles only
-# the crates a landing touches, and this is where the rest is compiled.
+# ci.yml's `workspace` job then ran these three scripts themselves on every push
+# to master (#343). That job is gone since 06-09-2026 (#350) and the workspace
+# build is back in ci-ephemeral.yml, which is not disabled and whose provider
+# was never gone -- measured over all 318 runs of that workflow, 104 succeeded,
+# the last on 01-09, a week after the VPS cancellation. What killed it was
+# cancel-in-progress against forty to ninety landings a day, and it runs on a
+# two-hourly schedule now.
+#
+# They are still not mirror-only, and their rows stay out: they run on GitHub,
+# in a wave rather than on the push, and they are booked as such in
+# docs/GATES_REACHABLE_FROM_A_PULL_REQUEST.toml -- which is the register that
+# asks the question this one does not, namely whether the boundary reaches them.
 
 [[guard]]
 script = "run_audit.sh"
@@ -142,15 +150,14 @@ only worth anything now that it runs the binary directly."""
 [[guard]]
 script = "tests_actually_ran.py"
 reason = "covered-elsewhere"
-issue = "#307"
+issue = "#636"
 why = """Wraps a binding's test command and refuses to call zero tests a success. \
-Its only caller is capi-ephemeral.yml, which fires on workflow_dispatch alone, \
-so nothing it finds reaches a pull request -- it was counted as "has a job" \
-until every_guard_has_a_job.py started asking whether the job can run before a \
-merge (#1633). The part that can go wrong on its own, the five parsers, is held \
-before a merge by test_tests_actually_ran.py in ci.yml. Whether the binding \
-suites themselves should stand before a merge is a runner question (#276), not \
-this wrapper's."""
+Its callers are capi-ephemeral.yml and ci-ephemeral.yml's `clitest` job, both \
+firing on workflow_dispatch alone, so nothing it finds reaches a pull request. \
+The CLI half still runs on every landing in the local gate's landing lane \
+(`crate_gate clitest`), which is the blocking verdict; the part that can go \
+wrong on its own, the parsers, is held before a merge by \
+test_tests_actually_ran.py in ci.yml."""
 
 [[guard]]
 script = "classify_render_outcome.sh"
@@ -179,3 +186,437 @@ that project. GitHub is where merges happen now, and pr_staleness.py asks the \
 same question there -- it runs in orchestration-guard with the workflow token \
 and fails on a pull request left to rot. Keeping this one on the mirror keeps \
 the GitLab side honest for as long as branches still land there."""
+
+# --- covered-elsewhere: the wave, since 06-09-2026 (#350) -------------------
+# Four suites and the workspace build left the desktop on 06-09-2026: they run
+# in a two-hourly wave of ci-ephemeral.yml, on a Hetzner instance bought per
+# wave and thrown away, because the one self-hosted runner had twenty-nine runs
+# queued on four cores with the oldest master commit under test two hours old.
+#
+# `every_guard_has_a_job.py` counts that wave as a job -- a schedule firing at
+# least twelve times a day reaches master's head within one interval without
+# anybody typing anything. The five rows below are what the wave does NOT reach,
+# and they are here rather than fixed because each one is about the desktop's
+# own state or about a shape the wave deliberately does not use.
+
+[[guard]]
+script = "run_build.sh"
+reason = "covered-elsewhere"
+issue = "#350"
+why = """`cargo check` over the workspace, with the flags in one place so the \
+landing lane and the full lane cannot drift apart. The wave in ci-ephemeral.yml \
+runs the cargo lines directly rather than through this wrapper -- its own \
+excludes differ, and rewriting them to match is a change to what master \
+compiles, not a change to where it compiles. So on GitHub this script stands in \
+the pre-push and landing lanes, and on GitLab it has a job. What that costs is \
+named rather than hidden: the flags now live in two shapes, and only the mirror \
+runs this one."""
+
+[[guard]]
+script = "run_clippy.sh"
+reason = "covered-elsewhere"
+issue = "#350"
+why = """The same wrapper one lint further, and the same reason: the wave runs \
+`cargo clippy --workspace --exclude pdf-desktop -- -D warnings` itself. See \
+run_build.sh."""
+
+[[guard]]
+script = "run_excluded_dependents.sh"
+reason = "covered-elsewhere"
+issue = "#623"
+why = """The native check and tests of the crates the workspace build excludes (xfa-wasm). It compiles, so it stands where run_test.sh stands: the landing lane runs it for the crates a change reaches, and the scheduled and tag pipeline runs it for all of them."""
+
+[[guard]]
+script = "run_test.sh"
+reason = "covered-elsewhere"
+issue = "#350"
+why = """The same wrapper, and the most expensive of the three: the wave runs \
+`cargo test --workspace --exclude pdf-desktop --no-fail-fast` itself, on a \
+machine bought for it. See run_build.sh."""
+
+[[guard]]
+script = "cargo_target_health.sh"
+reason = "runner"
+issue = "#350"
+why = """Answers whether the PERSISTENT build directory is there and undamaged \
+-- gone, dead or unwritable -- before a build spends forty minutes finding out. \
+It is about one machine's disk, and after #350 no job that compiles on that \
+machine is reachable from a push: the compiling jobs are on throwaway instances \
+whose build directory did not exist ten minutes ago. What still calls it are the \
+dispatch-only workflows that do use the desktop, and the mirror. Its own test, \
+test_cargo_target_health.sh, runs in ci.yml on every push and holds the \
+behaviour."""
+
+[[guard]]
+script = "shared_build_dir_is_there.sh"
+reason = "runner"
+issue = "#350"
+why = """The other half of the same question and the same machine: which of \
+gone, dead or unwritable the shared build directory is. Same reason it is not \
+on a push after #350 -- there is no longer a compiling job on that machine for \
+it to run in front of -- and the same mirror job keeps it exercised."""
+
+[[guard]]
+script = "a_gate_image_answers_ssh.py"
+reason = "credentials"
+issue = "#482"
+why = """It buys instances from a candidate image and asks each of them the question a gate asks -- a non-interactive command over ssh -- so it needs the Hetzner token and it spends money every time it runs. Neither belongs on a pull request. It is named in the step that runs it, the last job of gate-snapshot-refresh.yml, which is the nightly schedule and a dispatch; the branch it publishes from is pinned to the default branch. What it protects against is an image nobody booted: the one published on 09-09-2026 was available and refused every command, which cost four gate runs a local compile before anybody looked."""
+
+[[guard]]
+script = "refresh_the_gate_snapshot.py"
+reason = "covered-elsewhere"
+issue = "#474"
+why = """The last job of gate-snapshot-refresh.yml, which is a nightly schedule and a dispatch by design: what it does is buy a machine, image it and delete it, and a job that spends money on every pull request is not a guard, it is a bill. Pinning it to the default branch is also what keeps unmerged code off the desktop, the rule orchestration_stays_hosted.py enforces. Its behaviour is held by test_refresh_the_gate_snapshot.py, which runs in ci.yml on every push and in the fast lane of the local gate: the two failures that matter -- keeping the instance, and publishing an image of a half-built target directory -- are properties of the code, and both are driven there against a recorder rather than against Hetzner."""
+
+[[guard]]
+script = "apt_get.sh"
+reason = "credentials"
+issue = "Owner decision 2026-09-12; docs/paid-compute-policy.json"
+why = "Paid cloud workflows are disabled and credentials withdrawn. This suite is available only after a new explicit owner authorization; no integration pass is claimed. Local crate tests and the policy regression tests remain available."
+
+[[guard]]
+script = "fetch_gate_corpus.py"
+reason = "credentials"
+issue = "Owner decision 2026-09-12; docs/paid-compute-policy.json"
+why = "Paid cloud workflows are disabled and credentials withdrawn. This suite is available only after a new explicit owner authorization; no integration pass is claimed. Local crate tests and the policy regression tests remain available."
+
+[[guard]]
+script = "gate_corpus_no_crash.py"
+reason = "credentials"
+issue = "Owner decision 2026-09-12; docs/paid-compute-policy.json"
+why = "Paid cloud workflows are disabled and credentials withdrawn. This suite is available only after a new explicit owner authorization; no integration pass is claimed. Local crate tests and the policy regression tests remain available."
+
+[[guard]]
+script = "install_cargo_deny.sh"
+reason = "credentials"
+issue = "Owner decision 2026-09-12; docs/paid-compute-policy.json"
+why = "Paid cloud workflows are disabled and credentials withdrawn. This suite is available only after a new explicit owner authorization; no integration pass is claimed. Local crate tests and the policy regression tests remain available."
+
+[[guard]]
+script = "install_verapdf.sh"
+reason = "credentials"
+issue = "Owner decision 2026-09-12; docs/paid-compute-policy.json"
+why = "Paid cloud workflows are disabled and credentials withdrawn. This suite is available only after a new explicit owner authorization; no integration pass is claimed. Local crate tests and the policy regression tests remain available."
+
+[[guard]]
+script = "pdfa_output_conformance_gate.py"
+reason = "credentials"
+issue = "Owner decision 2026-09-12; docs/paid-compute-policy.json"
+why = "Paid cloud workflows are disabled and credentials withdrawn. This suite is available only after a new explicit owner authorization; no integration pass is claimed. Local crate tests and the policy regression tests remain available."
+
+[[guard]]
+script = "pdfa_ratchet.py"
+reason = "credentials"
+issue = "Owner decision 2026-09-12; docs/paid-compute-policy.json"
+why = "Paid cloud workflows are disabled and credentials withdrawn. This suite is available only after a new explicit owner authorization; no integration pass is claimed. Local crate tests and the policy regression tests remain available."
+
+[[guard]]
+script = "reuse_an_idle_instance.sh"
+reason = "credentials"
+issue = "Owner decision 2026-09-12; docs/paid-compute-policy.json"
+why = "Paid cloud workflows are disabled and credentials withdrawn. This suite is available only after a new explicit owner authorization; no integration pass is claimed. Local crate tests and the policy regression tests remain available."
+
+[[guard]]
+script = "run_wasm_check.sh"
+reason = "credentials"
+issue = "Owner decision 2026-09-12; docs/paid-compute-policy.json"
+why = "Paid cloud workflows are disabled and credentials withdrawn. This suite is available only after a new explicit owner authorization; no integration pass is claimed. Local crate tests and the policy regression tests remain available."
+
+[[guard]]
+script = "ssim_gate_corpus_is_present.py"
+reason = "credentials"
+issue = "Owner decision 2026-09-12; docs/paid-compute-policy.json"
+why = "Paid cloud workflows are disabled and credentials withdrawn. This suite is available only after a new explicit owner authorization; no integration pass is claimed. Local crate tests and the policy regression tests remain available."
+
+[[guard]]
+script = "wave_needs_instance.py"
+reason = "credentials"
+issue = "Owner decision 2026-09-12; docs/paid-compute-policy.json"
+why = "Paid cloud workflows are disabled and credentials withdrawn. This suite is available only after a new explicit owner authorization; no integration pass is claimed. Local crate tests and the policy regression tests remain available."
+
+[[guard]]
+script = "build_all_platforms.sh"
+reason = "runner"
+issue = "#636"
+why = """Cross-builds the release channels for the new Linux targets and gates
+what it built. Its only caller is build-lane.yml, which fires on
+workflow_dispatch alone: a tens-of-minutes cross-compile with the full
+toolchain (cargo-zigbuild, maturin, node, Maven, .NET) is a release moment,
+not a verdict on a change, so nothing it finds reaches a pull request. The
+gating rules it applies are held before a merge by
+test_build_all_platforms.py in ci.yml."""
+
+# --- covered-elsewhere: the consumer smokes (#636) ---------------------------
+# Each smoke clean-installs its packaged channel and extracts the fixture
+# through it. A push has no packaged artefacts and no seven runners, so the
+# full runs stand only in dispatch-only release jobs, by design. The by-hand
+# post-publish smoke runner can invoke any of them from the runbook, which is
+# not a job either. What a push can break -- the argument, artefact and
+# platform handling -- is held before a merge by
+# test_smoke_runner_requires_artifact.py and test_smoke_args_and_platform.py,
+# which run in ci.yml and in the fast lane of the local gate.
+
+[[guard]]
+script = "smoke_python.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `smoke` job of release-natives.yml, which fires
+on workflow_dispatch alone: it installs the released wheel on seven runners
+and extracts the fixture without a licence key. On a push there is no wheel
+for it to judge. The argument and artefact handling is held before a merge
+by the smoke test files in ci.yml."""
+
+[[guard]]
+script = "smoke_node.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `smoke` job of release-natives.yml, which fires
+on workflow_dispatch alone: it installs the packed node tarballs on seven
+runners and extracts the fixture without a licence key. On a push there are
+no tarballs for it to judge. The argument and artefact handling is held
+before a merge by the smoke test files in ci.yml."""
+
+[[guard]]
+script = "node_glibc_floor.py"
+reason = "covered-elsewhere"
+issue = "1.1.0 Node glibc floor pdfluent/pdfluent-internal#692"
+why = """Its only workflow caller is the `release-gate` job of node-bindings.yml, \
+which fires on workflow_dispatch alone: it reads the GLIBC_ version needs of \
+the two freshly built linux-gnu .node files and fails above 2.17. On a push \
+there are no release bindings for it to judge. The ELF reader and the \
+workflow wiring (both gnu legs built with --zig --zig-abi-suffix 2.17, the \
+gate step over both artefacts) are held before a merge by \
+test_node_glibc_floor.py in ci.yml."""
+
+[[guard]]
+script = "binary_host_paths.py"
+reason = "covered-elsewhere"
+issue = "1.1.0 build-host paths in shipped natives (P1, 15-10-2026)"
+why = """Its workflow callers are the release build jobs and release gates of \
+build-wheels.yml, node-bindings.yml, release-natives.yml and \
+release-binaries.yml, all workflow_dispatch only: it reads the strings of \
+the freshly built natives and fails on any build-host path. On a push there \
+are no release artefacts for it to judge. The detector over leaking and \
+clean fixtures, and the wiring of every release build step to it, are held \
+before a merge by test_binary_host_paths.py in ci.yml."""
+
+[[guard]]
+script = "check_build_host_paths.sh"
+reason = "covered-elsewhere"
+issue = "1.1.0 build-host paths in shipped natives (P1, 15-10-2026)"
+why = """Runs as the step right after every release build (dispatch-only \
+workflows): prints the runner's remap block and runs binary_host_paths.py \
+over that job's fresh artefacts. On a push nothing is built for it to \
+judge. Its pass, fail and usage paths are held before a merge by \
+test_binary_host_paths.py in ci.yml."""
+
+[[guard]]
+script = "smoke_java.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `smoke` job of release-natives.yml, which fires
+on workflow_dispatch alone: it loads the released jar on seven runners and
+extracts the fixture without a licence key. On a push there is no jar for
+it to judge. The argument and artefact handling is held before a merge by
+the smoke test files in ci.yml."""
+
+[[guard]]
+script = "smoke_dotnet.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `smoke` job of release-natives.yml, which fires
+on workflow_dispatch alone: it installs the released nupkg on seven runners
+and extracts the fixture without a licence key. On a push there is no nupkg
+for it to judge. The argument and artefact handling is held before a merge
+by the smoke test files in ci.yml."""
+
+[[guard]]
+script = "smoke_capi.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `smoke` job of release-natives.yml, which fires
+on workflow_dispatch alone: it unpacks the released C API tarball on seven
+runners and extracts the fixture without a licence key. On a push there is
+no tarball for it to judge. The argument and artefact handling is held
+before a merge by the smoke test files in ci.yml."""
+
+[[guard]]
+script = "smoke_cli.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `smoke` job of release-natives.yml, which fires
+on workflow_dispatch alone: it unpacks the released CLI archive on seven
+runners and extracts the fixture without a licence key. On a push there is
+no archive for it to judge. The argument and artefact handling is held
+before a merge by test_smoke_cli.py, test_smoke_runner_requires_artifact.py
+and test_smoke_args_and_platform.py in ci.yml."""
+
+[[guard]]
+script = "smoke_ort_variant.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `smoke` job of release-natives.yml, which fires
+on workflow_dispatch alone: it installs layout+tables from the same-run models-v1
+artefact on five runners and runs a balanced extract per channel. On a push there
+is no models-v1 for it to judge. The argument and artefact handling is held
+before a merge by test_smoke_args_and_platform.py and test_release_ort_variant.py
+in ci.yml."""
+
+[[guard]]
+script = "smoke_binary.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `release-gate` job of release-binaries.yml,
+which fires on workflow_dispatch alone: it smokes the linux-x64 CLI archive
+the build just cut. On a push there is no archive for it to judge. The
+argument and artefact handling is held before a merge by the smoke test
+files in ci.yml."""
+
+[[guard]]
+script = "smoke_wasm.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `release-gate` job of wasm.yml, which fires on
+workflow_dispatch alone: it smokes the packed wasm bytes the build just
+cut. On a push there is no package for it to judge. The argument and
+artefact handling is held before a merge by the smoke test files in
+ci.yml."""
+
+# --- covered-elsewhere: the compiling binding suites (#636) ------------------
+# Each suite builds its binding from the tree and runs it for real: maturin
+# develop, a napi build, cargo builds of the cdylibs, mvn, dotnet. Minutes on
+# a cold target dir, not the seconds of file scanning a push job promises.
+#
+# Until m722 they stood in ci.yml's binding-suites job, compiling the engine
+# on the persistent desktop on every push to master -- the heavy work
+# heavy_work_leaves_the_desktop.py, orchestration_stays_hosted.py and
+# persistent_builds_check_their_build_dir.py all refuse there (#267, #350).
+# They moved to the `binding-suites` job of binding-suites.yml: dispatch-only,
+# on ubuntu-latest, where a dispatch is a decision and may cost. A push job
+# cannot carry them back: on the desktop the three guards above refuse any
+# compile, and on hosted runners minutes on a push are refused while the
+# repository is private (#333). The same scripts ride the landing lane beside
+# the workflow (officext, xtractpy, xtractjs, balbind, r4py, r4node, r4java,
+# r4dotnet and r4capi in scripts/ci/local_ci_gate.sh), which is the blocking
+# verdict on every landing.
+
+[[guard]]
+script = "run_office_tests.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `binding-suites` job of binding-suites.yml, \
+which fires on workflow_dispatch alone (m722): it builds the pdf-python \
+extension from the tree (maturin develop) and runs the extract_office suite \
+against it. A push job cannot carry a debug engine build -- the desktop \
+refuses any compile on a push and hosted minutes on a push are refused -- so \
+the same script runs on every landing in the local gate's landing lane \
+(`officext`), which is the blocking verdict."""
+
+[[guard]]
+script = "run_extract_tests.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `binding-suites` job of binding-suites.yml, \
+which fires on workflow_dispatch alone (m722): it builds the pdf-python \
+extension from the tree (maturin develop), installs pdfluent-extract beside \
+it, and runs the wrapper's pytest suite. A push job cannot carry a debug \
+engine build -- the desktop refuses any compile on a push and hosted minutes \
+on a push are refused -- so the same script runs on every landing in the \
+local gate's landing lane (`xtractpy`), which is the blocking verdict."""
+
+[[guard]]
+script = "run_extract_js_tests.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `binding-suites` job of binding-suites.yml, \
+which fires on workflow_dispatch alone (m722): it builds the pdf-node binding \
+from the tree (npm run build), installs that tarball as the engine, and runs \
+the @pdfluent/extract suite against it. A push job cannot carry a napi build \
+-- the desktop refuses any compile on a push and hosted minutes on a push are \
+refused -- so the same script runs on every landing in the local gate's \
+landing lane (`xtractjs`), which is the blocking verdict, and the platform \
+triplet handling is held before a merge by test_run_extract_js_tests.py in \
+ci.yml."""
+
+[[guard]]
+script = "run_balanced_binding_tests.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `binding-suites` job of binding-suites.yml, \
+which fires on workflow_dispatch alone (m722): it installs the layout and \
+tables models from a base, then runs the balanced suites of the Python wheel \
+and the Node addon against the CLI references they pin. It needs a model \
+base, a built wheel and a built addon before it even starts -- nothing a \
+push job has, and the desktop refuses any compile on a push while hosted \
+minutes on a push are refused -- so the same script runs on every landing in \
+the local gate's landing lane (`balbind`), which is the blocking verdict."""
+
+[[guard]]
+script = "run_r4_pdfpython_tests.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `binding-suites` job of binding-suites.yml, \
+which fires on workflow_dispatch alone (m722): it builds the pdf-python \
+extension from the tree (maturin develop) and runs the four r4 pytest files \
+against it. A push job cannot carry a debug engine build -- the desktop \
+refuses any compile on a push and hosted minutes on a push are refused -- so \
+the same script runs on every landing in the local gate's landing lane \
+(`r4py`), which is the blocking verdict."""
+
+[[guard]]
+script = "run_r4_node_tests.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `binding-suites` job of binding-suites.yml, \
+which fires on workflow_dispatch alone (m722): it installs the binding's npm \
+dependencies, builds the native addon (build:debug), and runs the three r4 \
+jest files for real -- the per-push guards job runs the same directory \
+without the addon, where they announce SKIPPED. A push job cannot carry a \
+napi build -- the desktop refuses any compile on a push and hosted minutes \
+on a push are refused -- so the same script runs on every landing in the \
+local gate's landing lane (`r4node`), which is the blocking verdict."""
+
+[[guard]]
+script = "run_r4_java_tests.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `binding-suites` job of binding-suites.yml, \
+which fires on workflow_dispatch alone (m722): it builds the pdf-java JNI \
+library and the pdf-capi library for the JVM's own architecture and runs \
+KnownImagesTest and ImageExtractionTest against them. A push job cannot carry \
+two cdylib builds -- the desktop refuses any compile on a push and hosted \
+minutes on a push are refused -- so the same script runs on every landing in \
+the local gate's landing lane (`r4java`), which is the blocking verdict."""
+
+[[guard]]
+script = "run_r4_dotnet_tests.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `binding-suites` job of binding-suites.yml, \
+which fires on workflow_dispatch alone (m722): it builds the pdf-capi library \
+for the dotnet runtime's own architecture and runs the PDFluent.Tests project \
+against it. A push job cannot carry a cdylib build -- the desktop refuses any \
+compile on a push and hosted minutes on a push are refused -- so the same \
+script runs on every landing in the local gate's landing lane (`r4dotnet`), \
+which is the blocking verdict."""
+
+[[guard]]
+script = "run_r4_capi_tests.sh"
+reason = "covered-elsewhere"
+issue = "#636"
+why = """Its only workflow caller is the `binding-suites` job of binding-suites.yml, \
+which fires on workflow_dispatch alone (m722): it builds pdf-capi (release, \
+locked) and runs `make run` over the r4 TESTS list. A push job cannot carry \
+a release cdylib build -- the desktop refuses any compile on a push and \
+hosted minutes on a push are refused -- so the same script runs on every \
+landing in the local gate's landing lane (`r4capi`), which is the blocking \
+verdict."""
+
+[[guard]]
+script = "fetch_artefact.sh"
+reason = "covered-elsewhere"
+issue = "1.1.0 release downloads (transient network failures counted as test failures, 15-10)"
+why = """Its callers are the artefact download steps of release-natives.yml and \
+node-bindings.yml, which run on workflow_dispatch alone: on a push there are \
+no release artefacts to fetch. The retry, digest and environment-failure \
+behaviour is held before a merge by test_fetch_artefact.py in ci.yml."""

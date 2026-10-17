@@ -1,0 +1,65 @@
+PDFluent model package models-v1 -- notices
+============================================
+
+This package contains the model files used by the optional "balanced" extraction quality
+and the ONNX Runtime 1.23.2 libraries that load them. heron_ep03.onnx is a model trained
+by PDFluent and is licensed under the same terms as the PDFluent SDK. The other model file
+and the ONNX Runtime libraries are third-party components, licensed under their own terms
+(stated below and in onnxruntime-LICENSE.txt / onnxruntime-ThirdPartyNotices.txt) and
+provided as-is.
+
+
+heron_ep03.onnx -- layout model (quality "balanced")
+-----------------------------------------------------
+File:     heron_ep03.onnx, 306,654,422 bytes,
+          SHA-256 b7cc5d31f3223c74cc477a1386b894793618aeb398ca59cf5eb7264ec61d8afa
+Copyright (c) 2026 Innovation Trigger B.V.
+Licensed under the PDFluent SDK licence terms: the GNU Affero General Public License v3.0
+or, at your option, the PDFluent Commercial Licence (LICENSE and LICENSE-COMMERCIAL in this
+package, the same files that accompany the PDFluent SDK).
+
+This file is based on docling-layout-heron-101 by IBM, licensed under the Apache License 2.0,
+and was modified by fine-tuning on the DocLayNet training split (CDLA-Permissive-1.0) and
+exported to ONNX.
+          Base model: https://huggingface.co/docling-project/docling-layout-heron-101
+          DocLayNet:  https://huggingface.co/datasets/ds4sd/DocLayNet
+The Apache License 2.0 of the base model is included as LICENSE-Apache-2.0.txt
+(also at https://www.apache.org/licenses/LICENSE-2.0).
+
+
+tatr-v1.1-all.onnx -- table structure model
+--------------------------------------------
+File:     tatr-v1.1-all.onnx, 118,206,817 bytes,
+          SHA-256 8c28418690b896a845a53633736a62c22ef8c9a515a23c06e9976e61360f1fcf
+Table Transformer v1.1-all (Microsoft, MIT), unmodified; trained by Microsoft on
+PubTables-1M and FinTabNet.c (CDLA-Permissive-2.0). This file is an ONNX export of the
+published weights.
+          Weights: https://huggingface.co/microsoft/table-transformer-structure-recognition-v1.1-all
+          Code:    https://github.com/microsoft/table-transformer
+Licence:  MIT. The full text follows.
+
+MIT License
+
+Copyright (c) Microsoft Corporation.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Commercial redistribution: permitted (MIT for weights and code; CDLA-Permissive-2.0
+training data imposes no conditions on the model).
+-------------------------------------------------------------------------------

@@ -49,7 +49,11 @@ GATE = REPO / "scripts" / "ci" / "local_ci_gate.sh"
 WORKFLOWS = REPO / ".github" / "workflows"
 EXEMPTIONS = REPO / "docs" / "GATES_REACHABLE_FROM_A_PULL_REQUEST.toml"
 
-SCRIPT = re.compile(r"scripts/ci/([a-z_0-9]+\.(?:py|sh))")
+# The subdirectory is part of the name. `scripts/ci/loop/pdfa_ratchet.py` is
+# what a `run:` line says since #366, and a pattern that stopped at the first
+# slash read that as no script at all -- so a gate in the local lane would
+# have counted as unreachable-from-a-pull-request without anyone being told.
+SCRIPT = re.compile(r"scripts/ci/((?:[a-z_0-9]+/)*[a-z_0-9]+\.(?:py|sh))")
 # `zwaar` is the heavy lane's wrapper around `run`: the gate is deferred on an
 # ordinary push and runs on a push to master. Deferred is not dropped, so a
 # `zwaar` gate is as much a gate as a `run` one -- and reading only `run` lines

@@ -1,0 +1,11 @@
+{"command": "./scowl word-list 60 A 1 --deaccent --categories=, then lowercased, kept ^[a-z]+$ only, sorted -u",
+ "commit": "7e99edab8e32f9f9ea2b15f249ca8d4d67237410",
+ "derived": "lowercase, letters only, one per line, sorted",
+ "file": "en_scowl60-rel-2026.02.25.txt",
+ "licence": "MIT-like with attribution (Kevin Atkinson); component sources public domain; no additional copyright applies to a generated American list of size 60 (see ATTRIBUTION)",
+ "release": "rel-2026.02.25",
+ "sha256": "b923784f1ac4173338feaa329d3b73f2e7099ab5ef58114ee4e1672ae1b7aeca",
+ "size": 60,
+ "source": "https://github.com/kevina/wordlist",
+ "spellings": "A (American)",
+ "words": 88750}

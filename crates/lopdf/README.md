@@ -9,7 +9,7 @@
 Low-level PDF document object model and writer in pure Rust.
 
 `pdfluent-lopdf` is the parser, object-model, and serializer that the
-[PDFluent](https://pdfluent.com) commercial Rust PDF SDK uses for read/write
+[PDFluent](https://pdfluent.com) Rust PDF SDK uses for read/write
 of the underlying PDF byte structure. It is published as **MIT** so it can
 also be used standalone like any open-source library.
 

@@ -12,6 +12,8 @@
 
 use std::path::PathBuf;
 
+use pdf_engine::render::RasterQuality;
+
 /// Output image format for [`PdfDocument::to_images`].
 ///
 /// [`PdfDocument::to_images`]: crate::PdfDocument::to_images
@@ -46,6 +48,11 @@ pub struct ToImagesOptions {
     pub format: ImageFormat,
     /// Optional page range (1-based, inclusive). `None` = all pages.
     pub pages: Option<(usize, usize)>,
+    /// Rasterization precision/speed trade-off. Default:
+    /// [`RasterQuality::Quality`] (byte-identical to historical output).
+    /// [`RasterQuality::Speed`] renders ~1.4–1.6× faster on content-heavy
+    /// pages with sub-perceptual rounding where blending/AA/images compose.
+    pub quality: RasterQuality,
 }
 
 impl Default for ToImagesOptions {
@@ -54,6 +61,7 @@ impl Default for ToImagesOptions {
             dpi: 150,
             format: ImageFormat::Png,
             pages: None,
+            quality: RasterQuality::default(),
         }
     }
 }
@@ -79,6 +87,62 @@ impl ToImagesOptions {
     /// Limit rendering to a 1-based inclusive page range.
     pub fn with_pages(mut self, from: usize, to: usize) -> Self {
         self.pages = Some((from, to));
+        self
+    }
+
+    /// Override the rasterization quality/speed trade-off.
+    pub fn with_quality(mut self, quality: RasterQuality) -> Self {
+        self.quality = quality;
+        self
+    }
+}
+
+/// Options for [`PdfDocument::render_page_with_options`].
+///
+/// [`PdfDocument::render_page_with_options`]: crate::PdfDocument::render_page_with_options
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct RenderPageOptions {
+    /// Render resolution in DPI. Default: 150.
+    pub dpi: u32,
+    /// Output format. Default: [`ImageFormat::Png`].
+    pub format: ImageFormat,
+    /// Rasterization precision/speed trade-off. Default:
+    /// [`RasterQuality::Quality`] (byte-identical to historical output).
+    pub quality: RasterQuality,
+}
+
+impl Default for RenderPageOptions {
+    fn default() -> Self {
+        Self {
+            dpi: 150,
+            format: ImageFormat::Png,
+            quality: RasterQuality::default(),
+        }
+    }
+}
+
+impl RenderPageOptions {
+    /// New default options.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Override the DPI.
+    pub fn with_dpi(mut self, dpi: u32) -> Self {
+        self.dpi = dpi;
+        self
+    }
+
+    /// Override the image format.
+    pub fn with_format(mut self, format: ImageFormat) -> Self {
+        self.format = format;
+        self
+    }
+
+    /// Override the rasterization quality/speed trade-off.
+    pub fn with_quality(mut self, quality: RasterQuality) -> Self {
+        self.quality = quality;
         self
     }
 }
@@ -275,4 +339,41 @@ pub struct ImageInsertReport {
 pub struct ToImagesReport {
     /// Paths the images were written to, in page order.
     pub paths: Vec<PathBuf>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_images_options_default_is_quality() {
+        let opts = ToImagesOptions::default();
+        assert_eq!(opts.dpi, 150);
+        assert_eq!(opts.quality, RasterQuality::Quality);
+        assert_eq!(opts.quality, RasterQuality::default());
+    }
+
+    #[test]
+    fn to_images_options_builder_carries_quality() {
+        let opts = ToImagesOptions::new().with_quality(RasterQuality::Speed);
+        assert_eq!(opts.quality, RasterQuality::Speed);
+    }
+
+    #[test]
+    fn render_page_options_default_is_quality() {
+        let opts = RenderPageOptions::default();
+        assert_eq!(opts.dpi, 150);
+        assert_eq!(opts.quality, RasterQuality::Quality);
+    }
+
+    #[test]
+    fn render_page_options_builder_carries_quality() {
+        let opts = RenderPageOptions::new()
+            .with_dpi(72)
+            .with_format(ImageFormat::Jpeg)
+            .with_quality(RasterQuality::Speed);
+        assert_eq!(opts.dpi, 72);
+        assert_eq!(opts.format, ImageFormat::Jpeg);
+        assert_eq!(opts.quality, RasterQuality::Speed);
+    }
 }

@@ -243,3 +243,77 @@ impl PageExt for Page<'_> {
         rotation_transform * inversion_transform * Affine::translate((-crop_box.x0, -crop_box.y0))
     }
 }
+
+/// Decode a PDF text string to Unicode.
+///
+/// A text string is UTF-16BE behind a byte-order mark, UTF-8 behind its own,
+/// or otherwise PDFDocEncoding: plain ASCII and Latin-1 throughout, except
+/// for the two dozen codes below U+00A0 that name punctuation and spacing
+/// marks instead. Undefined codes become the replacement character; decoding
+/// never fails.
+pub(crate) fn decode_text_string(bytes: &[u8]) -> Option<String> {
+    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+        let mut units = Vec::with_capacity(bytes.len() / 2);
+        let mut rest = &bytes[2..];
+        while rest.len() >= 2 {
+            units.push(u16::from_be_bytes([rest[0], rest[1]]));
+            rest = &rest[2..];
+        }
+        if let Some(&last) = rest.first() {
+            units.push(u16::from_be_bytes([last, 0]));
+        }
+        return Some(String::from_utf16_lossy(&units));
+    }
+    if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
+        return Some(String::from_utf8_lossy(&bytes[3..]).into_owned());
+    }
+    let mut out = String::with_capacity(bytes.len());
+    for &byte in bytes {
+        let code = match byte {
+            0x18 => 0x02D8,
+            0x19 => 0x02C7,
+            0x1A => 0x02C6,
+            0x1B => 0x02D9,
+            0x1C => 0x02DD,
+            0x1D => 0x02DB,
+            0x1E => 0x02DA,
+            0x1F => 0x02DC,
+            0x80 => 0x2022,
+            0x81 => 0x2020,
+            0x82 => 0x2021,
+            0x83 => 0x2026,
+            0x84 => 0x2014,
+            0x85 => 0x2013,
+            0x86 => 0x0192,
+            0x87 => 0x2044,
+            0x88 => 0x2039,
+            0x89 => 0x203A,
+            0x8A => 0x2212,
+            0x8B => 0x2030,
+            0x8C => 0x201E,
+            0x8D => 0x201C,
+            0x8E => 0x201D,
+            0x8F => 0x2018,
+            0x90 => 0x2019,
+            0x91 => 0x201A,
+            0x92 => 0x2122,
+            0x93 => 0xFB01,
+            0x94 => 0xFB02,
+            0x95 => 0x0141,
+            0x96 => 0x0152,
+            0x97 => 0x0160,
+            0x98 => 0x0178,
+            0x99 => 0x017D,
+            0x9A => 0x0131,
+            0x9B => 0x0142,
+            0x9C => 0x0153,
+            0x9D => 0x0161,
+            0x9E => 0x017E,
+            0xA0 => 0x20AC,
+            0x7F | 0x9F => 0xFFFD,
+            _ => byte as u32,
+        };
+        out.push(char::from_u32(code).unwrap_or('\u{FFFD}'));
+    }
+    Some(out)
+}

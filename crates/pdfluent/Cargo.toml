@@ -1,6 +1,6 @@
 [package]
 name = "pdfluent"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 rust-version = "1.75"
 authors = ["PDFluent Contributors <team@pdfluent.com>"]
@@ -30,6 +30,12 @@ font-subset = ["pdf-manip/font-subset"]
 
 # Capability feature families (see RFC 0001 §10 D8)
 signing = []
+# Optional vision layer passthrough (#636). Off by default.
+vision = ["pdf-engine/vision"]
+# Shared ONNX Runtime layer passthrough (#641). Off by default.
+ort = ["pdf-engine/ort"]
+ort-layout = ["pdf-engine/ort-layout"]
+ort-tables = ["pdf-engine/ort-tables"]
 pdfa = ["dep:pdf-compliance"]
 redaction = []
 ocr-tesseract = []
@@ -51,21 +57,21 @@ tracing = ["dep:tracing"]
 # encrypt, permissions).
 # pdf-sign provides PAdES signing + signature validation.
 # pdf-redact provides content redaction (search + region).
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0", features = ["xfa"] }
+pdf-engine = { path = "../pdf-engine", version = "=1.1.0", features = ["xfa"] }
 # Diagnostics (load-recovery leniency events + interpreter warnings) read from
 # `pdf-syntax`/`pdf-interpret` directly. These are lightweight (no vello/zip/fs)
 # and compile on wasm32, so they live in the all-target dependency block —
 # unlike `pdf-render` (native-only, see below), which formerly re-exported them
 # and broke the wasm32 build.
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.7" }
-pdf-interpret = { path = "../pdf-interpret", version = "=0.5.9" }
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.5", default-features = false }
-pdf-manip = { path = "../pdf-manip", version = "=1.0.0" }
-pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0" }
-pdf-annot = { path = "../pdf-annot", version = "=1.0.0" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0", optional = true }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.6.0" }
+pdf-interpret = { path = "../pdf-interpret", version = "=0.6.0" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.6", default-features = false }
+pdf-manip = { path = "../pdf-manip", version = "=1.1.0" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.1.0" }
+pdf-redact = { path = "../pdf-redact", version = "=1.1.0" }
+pdf-annot = { path = "../pdf-annot", version = "=1.1.0" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.1.0" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.1.0", optional = true }
 
 tokio = { version = "1", features = ["rt", "fs"], optional = true }
 tracing = { version = "0.1", optional = true }
@@ -82,13 +88,22 @@ tracing = { version = "0.1", optional = true }
 # The cost of the mistake was not theoretical: the browser SDK could not export
 # to Word, Excel or PowerPoint, and the facade returned UnsupportedOnWasm for a
 # capability the /features/ page sells.
-pdf-docx = { path = "../pdf-docx", version = "=1.0.0" }
-pdf-xlsx = { path = "../pdf-xlsx", version = "=1.0.0" }
-pdf-pptx = { path = "../pdf-pptx", version = "=1.0.0" }
+pdf-docx = { path = "../pdf-docx", version = "=1.1.0" }
+pdf-xlsx = { path = "../pdf-xlsx", version = "=1.1.0" }
+pdf-pptx = { path = "../pdf-pptx", version = "=1.1.0" }
+# Compatible open path (L2): EPUB input renders to PDF bytes before parsing.
+epub-extract = { path = "../epub-extract", version = "=1.1.0" }
+# Compatible pixmap lane (L3): sample digests and SVG data URIs. Both are
+# pure Rust and build for wasm32, unlike the native-only `png`/`image`
+# codecs used beside them.
+md5 = "0.8"
+base64 = "0.22"
+# Glyph-name lookups for the L1 compat lane (symbol faces + face detection).
+pdf-standard-fonts = { path = "../pdf-standard-fonts", version = "=1.1.0" }
 
 # pdf-render stays native-only: vello does not compile for wasm32.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-pdf-render = { path = "../pdf-render", version = "=1.0.0" }
+pdf-render = { path = "../pdf-render", version = "=1.1.0" }
 # Image encoding for `to_images` — PNG via the `png` crate, JPEG via
 # `image`'s JpegEncoder. Both are already transitively present via
 # `pdf-render`; we pin direct versions so the `to_images` code is
@@ -111,8 +126,17 @@ zip = { version = "7", default-features = false, features = ["deflate"] }
 # Form-mutation integration tests (3C-1 / #1245) construct small in-memory
 # PDF fixtures directly via lopdf rather than shipping binary fixtures
 # for every field-type permutation.
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.5", default-features = false }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.6", default-features = false }
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+# The stand-in timestamp authority in tests/local_tsa builds a real RFC 3161
+# messageImprint, which means taking a real SHA-256.
+sha2 = "0.10"
+# Shared-fixture image tests read fixtures/known-images.expected.json.
+serde_json = { workspace = true }
+# Compat file tests decode the extracted payload with an independent
+# third-party PNG decoder (MIT/Apache-2.0), never the crate itself.
+png = "0.17"
+
 
 
 [[bench]]

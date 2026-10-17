@@ -56,7 +56,7 @@ jobs:
     # runs on the persistent desktop; a branch could otherwise replace the
     # programme with something that runs as the runner user.
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: [self-hosted, xfa-local-checks]
     # Measured 06-09-2026 on ten cores: the gate-corpus set alone is about
     # fifty minutes, nearly all of it veraPDF and mutool rather than the
     # conversion. This runner has four, so the budget is generous on purpose --
@@ -159,4 +159,4 @@ jobs:
         with:
           name: v7-runs-${{ github.run_id }}
           path: benchmarks/runs/v7/
-          retention-days: 90
+          retention-days: 1

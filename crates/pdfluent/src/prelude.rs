@@ -15,6 +15,7 @@ pub use crate::document::{OpenOptions, PdfDocument, SaveOptions, TextBlock};
 pub use crate::encrypt::{EncryptOptions, EncryptionAlgorithm, Permissions};
 pub use crate::error::{Error, Result};
 pub use crate::form::{FieldType, FormField};
+pub use crate::images::{DecodedImage, ExtractedImage, ImageColorSpace, ImageId, ImageInfo};
 pub use crate::merger::{BookmarkMergeStrategy, PdfMerger};
 pub use crate::metadata::{Metadata, MetadataMut};
 pub use crate::parity::{
@@ -28,3 +29,9 @@ pub use crate::structure::{AnnotationInfo, Attachment, Outline};
 pub use crate::tagged::{DocumentStructure, StructureNode};
 pub use crate::watermark::{Layer, Position, Rotation, WatermarkOptions};
 pub use crate::xfa::{XfaField, XfaFieldType, XfaFieldValue, XfaFormModel, XfaSetOutcome};
+// The structured-extraction trio (#573). In the prelude for the reason
+// `TextBlock` and the other option types are: `doc.extract_blocks(
+// &ExtractOptions::default())` is the call every caller of this capability
+// writes, and a prelude that left the parameter out is a prelude that does
+// not compile the line the documentation shows.
+pub use pdf_engine::{Block, BlockKind, ExtractOptions, Quality, Word};

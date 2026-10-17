@@ -1,6 +1,6 @@
 [package]
 name = "pdf-ocr"
-version = "1.0.0"
+version = "1.1.0"
 edition.workspace = true
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
 license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
@@ -13,7 +13,20 @@ description = "OCR integration for scanned PDFs with pluggable engine support"
 [features]
 default = []
 tesseract = ["leptess"]
-paddle = ["ort", "ndarray", "image", "ureq", "dirs-next"]
+# The system `tesseract` binary as a subprocess: standard library only, no
+# linked OCR library and nothing added to the package.
+tesseract-cli = []
+# The ONE shared ONNX Runtime layer (`pdf_ocr::runtime`, #641): model-file
+# resolution, checksum verification, one-time runtime initialisation, version
+# check, session cache. Pin: ort =2.0.0-rc.13 (a release candidate, pinned
+# exactly), api-23, ONNX Runtime 1.23.2, loaded dynamically, never linked,
+# never downloaded. Off by default; the default build stays pure Rust.
+# Bare `ort`/`ndarray`/`image`/`ureq`/`dirs-next` (not `dep:`) on purpose:
+# those implicit features exist since the optional dependencies were added,
+# and `dep:` would remove them -- a breaking change semver-checks refuses.
+# Only `libloading`, new here, hides behind `dep:`.
+onnx-runtime = ["ort", "ndarray", "dep:libloading"]
+paddle = ["onnx-runtime", "image", "ureq", "dirs-next"]
 
 [dependencies]
 lopdf.workspace = true
@@ -23,11 +36,26 @@ thiserror.workspace = true
 sha2 = "0.10"
 
 leptess = { version = "0.14", optional = true }
-ort = { version = "=2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic", "api-24"] }
+# One `ort` for the whole engine, pinned to ONNX Runtime 1.23.2 via api-23: 1.23.2
+# is the newest ORT with all five official prebuilts (1.24+ dropped macOS
+# x86_64), two ort versions cannot share a dependency graph (`ort-sys` links),
+# and a process loads one onnxruntime -- the balanced tier's layout model will
+# share this same ort. (#641)
+ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic", "api-23"] }
 ndarray = { version = "0.17", optional = true }
+# The dlopen wrapper `ort` itself loads the runtime through (already in the
+# graph). The shared layer probes `OrtGetApiBase`/`GetVersionString` with it
+# before committing to a library, because `ort` exposes no plain version
+# string of its own (#641).
+libloading = { version = "0.9", optional = true }
 image = { workspace = true, optional = true }
 ureq = { version = "3", optional = true }
 dirs-next = { version = "2", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+# The `onnx-runtime` integration tests drive `SharedSession::run` directly,
+# so they name `ort` and `ndarray` themselves. Test-only: neither reaches the
+# library build, the default tree, or a published artefact's dependencies.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "load-dynamic", "api-23"] }
+ndarray = "0.17"

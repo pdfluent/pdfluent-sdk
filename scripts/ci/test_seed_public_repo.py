@@ -21,7 +21,7 @@ RESULT -- the repository that would be published -- and not on what the script
 printed about itself.
 """
 from __future__ import annotations
-import os, pathlib, subprocess, sys, tempfile
+import os, pathlib, re, subprocess, sys, tempfile
 
 CI = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(CI))
@@ -116,7 +116,20 @@ def source_repo(tmp: pathlib.Path, env=None) -> pathlib.Path:
     e2["GIT_AUTHOR_EMAIL"] = e2["GIT_COMMITTER_EMAIL"] = "someone@example.invalid"
     subprocess.run(["git", "commit", "-q", "-m", "and it is gone from the tree"],
                    cwd=str(r), capture_output=True, text=True, env=e2, check=True)
-    git("tag", "v1.0.0", cwd=r, env=env)
+    # ANNOTATED, and tagged by a person. A lightweight tag is a ref pointing at a
+    # commit and needs nothing: the commit goes through the filters. An annotated
+    # tag is an object of its own, and its tagger and message are reached by no
+    # commit filter -- so a fixture that only tags lightweight tests the seeding
+    # over a history that cannot have the defect. It did, for 28 cases: on
+    # 06-09-2026 the real seeding reported success with every check at zero and
+    # GitHub refused five of six tags with GH007, "your push would publish a
+    # private email address". The trailer in the message is here for the same
+    # reason -- `--msg-filter` never sees a tag message either.
+    e3 = dict(env if env is not None else sealed_env(cwd=r))
+    e3["GIT_COMMITTER_EMAIL"] = e3["GIT_COMMITTER_NAME"] = "someone@example.invalid"
+    subprocess.run(["git", "tag", "-a", "v1.0.0", "-m",
+                    "release one\n\nCo-Authored-By: Someone <s@example.invalid>"],
+                   cwd=str(r), capture_output=True, text=True, env=e3, check=True)
     # The fixture says what it built. An empty source repository makes every
     # case below fail for a reason that has nothing to do with the script.
     commits = git("rev-list", "--count", "HEAD", cwd=r, env=env).stdout.strip()
@@ -191,6 +204,43 @@ def addresses_in(repo: pathlib.Path) -> set[str]:
     r = subprocess.run(["git", "-C", str(repo), "log", "--all", "--format=%ae%n%ce"],
                        capture_output=True, text=True, env=sealed_env(cwd=repo))
     return set(r.stdout.split())
+
+
+def taggers_in(repo: pathlib.Path) -> set[str]:
+    """The address of every annotated tag's tagger in this repository."""
+    refs = subprocess.run(
+        ["git", "-C", str(repo), "for-each-ref", "--format=%(refname) %(objecttype)",
+         "refs/tags"], capture_output=True, text=True, env=sealed_env(cwd=repo)).stdout
+    uit = set()
+    for regel in refs.splitlines():
+        naam, _, soort = regel.partition(" ")
+        if soort.strip() != "tag":
+            continue
+        rauw = subprocess.run(["git", "-C", str(repo), "cat-file", "tag", naam],
+                              capture_output=True, text=True,
+                              env=sealed_env(cwd=repo)).stdout
+        for r in rauw.split("\n\n", 1)[0].split("\n"):
+            if r.startswith("tagger "):
+                m = re.search(r"<([^>]*)>", r)
+                if m:
+                    uit.add(m.group(1))
+    return uit
+
+
+def tag_messages_in(repo: pathlib.Path) -> str:
+    """Every annotated tag message in this repository, as one string."""
+    refs = subprocess.run(
+        ["git", "-C", str(repo), "for-each-ref", "--format=%(refname) %(objecttype)",
+         "refs/tags"], capture_output=True, text=True, env=sealed_env(cwd=repo)).stdout
+    uit = []
+    for regel in refs.splitlines():
+        naam, _, soort = regel.partition(" ")
+        if soort.strip() == "tag":
+            rauw = subprocess.run(["git", "-C", str(repo), "cat-file", "tag", naam],
+                                  capture_output=True, text=True,
+                                  env=sealed_env(cwd=repo)).stdout
+            uit.append(rauw.split("\n\n", 1)[1] if "\n\n" in rauw else "")
+    return "\n".join(uit)
 
 
 def case(label: str, ok: bool, why: str = "") -> bool:
@@ -682,6 +732,19 @@ def main() -> int:
         ok_all &= case("and no personal address",
                        "someone@example.invalid" not in addresses_in(dest),
                        f"addresses: {sorted(addresses_in(dest))}")
+        # THE 06-09 DEFECT, read on the published side. The commit filters do not
+        # reach a tag object, so this is not implied by the case above it: the
+        # branch went out clean while five of six tags carried the owner's
+        # address, and only GitHub's own GH007 refusal caught it.
+        tag_adressen = taggers_in(dest)
+        ok_all &= case("and an annotated tag's tagger is an alias too",
+                       tag_adressen
+                       and all(a.endswith("users.noreply.github.com")
+                               for a in tag_adressen),
+                       f"taggers: {sorted(tag_adressen)}")
+        ok_all &= case("and a trailer in a tag message does not survive either",
+                       "Co-Authored-By" not in tag_messages_in(dest),
+                       repr(tag_messages_in(dest)[:200]))
 
     # THE CASE --publish EXISTS FOR. A mirror sitting on disk between two
     # commands is a mirror somebody can change, so the verification is run again
@@ -712,6 +775,54 @@ def main() -> int:
                        v.returncode != 0 and "not publishable" in vout, vout[-400:])
         ok_all &= case("and nothing reached the destination",
                        not paths_in(dest), f"paths: {sorted(paths_in(dest))[:10]}")
+
+    # AND THE SAME DEFECT ON THE VERIFICATION SIDE. The rewrite above is one
+    # half; the other is that `verify` never read a tag object, so a mirror
+    # carrying a personal tagger passed every check. Both halves are needed: a
+    # rewrite nobody verifies is a rewrite that silently stops working.
+    def hertag(mirror: pathlib.Path, tagger: str, bericht: str) -> None:
+        """Put an annotated tag on the mirror with exactly this tagger and text."""
+        doel = subprocess.run(["git", "-C", str(mirror), "rev-list", "-1", "--all"],
+                              capture_output=True, text=True,
+                              env=sealed_env(cwd=mirror)).stdout.strip()
+        rauw = (f"object {doel}\ntype commit\ntag v9.9.9\n"
+                f"tagger {tagger} 1780000000 +0200\n\n{bericht}\n")
+        oid = subprocess.run(["git", "-C", str(mirror), "mktag"], input=rauw,
+                             capture_output=True, text=True,
+                             env=sealed_env(cwd=mirror), check=True).stdout.strip()
+        subprocess.run(["git", "-C", str(mirror), "update-ref", "refs/tags/v9.9.9", oid],
+                       capture_output=True, text=True, env=sealed_env(cwd=mirror),
+                       check=True)
+
+    def verify_uit(mirror: pathlib.Path, src: pathlib.Path, termen: pathlib.Path):
+        v = subprocess.run(
+            ["python3", str(SCRIPT.parent.parent / "release" / "seed_history_filter.py"),
+             "verify", str(mirror), "--withdrawn", str(mirror / "withdrawn-oids.txt")],
+            capture_output=True, text=True, env=seed_env(src, termen), timeout=600)
+        return v, v.stdout + v.stderr
+
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        termen = terms_file(tmp)
+        src = source_repo(tmp)
+        u, houd = kept_mirror(tmp, src, termen)
+        v, vout = verify_uit(houd, src, termen)
+        ok_all &= case("the kept mirror verifies on its own", v.returncode == 0,
+                       vout[-400:])
+        hertag(houd, "Someone <someone@example.invalid>", "a tag nobody filtered")
+        v, vout = verify_uit(houd, src, termen)
+        ok_all &= case("verify refuses an annotated tag whose tagger is a person",
+                       v.returncode != 0 and "not an alias" in vout, vout[-400:])
+        # And the address itself is not printed, for the same reason the withdrawn
+        # ids are not: a failing run's log is as public as the tree.
+        ok_all &= case("and it does not print the address it refuses over",
+                       "someone@example.invalid" not in vout, vout[-400:])
+        hertag(houd, "Fixture <1+fixture@users.noreply.github.com>",
+               f"a tag about {FIXTURE_TERM}")
+        v, vout = verify_uit(houd, src, termen)
+        ok_all &= case("verify refuses an internal term in a tag message",
+                       v.returncode != 0 and "in the tag messages" in vout,
+                       vout[-400:])
 
     # The workspace check reads the RESULT and not the edit, so it has to be
     # exercised on a mirror where the edit did not happen. A member line put back

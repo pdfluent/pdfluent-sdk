@@ -16,6 +16,13 @@
 #                 dependency ends up in a wheel the day someone vendors it.
 #   attribution — only what lands in a released package, or what the end user's
 #                 own build resolves. That is the list with legal weight.
+#
+# THE BEST TIER RENDERS WITH OUR OWN ENGINE (#641). Its detector reads PNGs
+# from pdf-engine's renderer (crates/pdf-engine/examples/render_page_png.rs),
+# not from mutool or PyMuPDF: both are AGPL (Artifex commercial otherwise),
+# and a best tier that needed them would make every commercial SDK customer
+# need an Artifex licence -- a runtime dependency of a shipped tier. No AGPL
+# renderer may enter the best tier's path (teacher_page.py, requirements-best.txt).
 
 [licenses]
 
@@ -102,6 +109,11 @@ internal = { weak_copyleft = ["MPL-2.0"], note = "pdfluent-snippet-extract, benc
 # compared at all until #1620, because `scan_python` hardcoded its verdict and
 # never read the file.
 "crates/pdf-python/pyproject.toml" = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+# The published front doors: our own code under the same dual offer, scanned
+# like the binding manifests. The npm twin carries the pointer because npm
+# rejects a LicenseRef expression (see [channel_representation]).
+"integrations/pdfluent-extract/pyproject.toml" = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+"integrations/pdfluent-extract-js/package.json" = "SEE LICENSE IN LICENSE-OFFER"
 
 [floors]
 
@@ -146,7 +158,8 @@ dotnet_projects = 1
 [channel_representation]
 
 "crates/pdf-node/package.json" = { publishes = "SEE LICENSE IN LICENSE-OFFER", canonical = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial", reason = "npm rejects a LicenseRef expression", file = "crates/pdf-node/LICENSE-OFFER" }
-"crates/xfa-wasm/pkg/package.json" = { publishes = "SEE LICENSE IN LICENSE-OFFER", canonical = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial", reason = "npm rejects a LicenseRef expression", file = "LICENSE-OFFER" }  # the root file wasm.yml copies into pkg/
+"integrations/pdfluent-extract-js/package.json" = { publishes = "SEE LICENSE IN LICENSE-OFFER", canonical = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial", reason = "npm rejects a LicenseRef expression", file = "integrations/pdfluent-extract-js/LICENSE-OFFER" }
+"crates/xfa-wasm/pkg/package.json" = { publishes = "SEE LICENSE IN LICENSE-OFFER", canonical = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial", reason = "npm rejects a LicenseRef expression", file = "LICENSE-OFFER" }  # the root file transform-wasm-pkg.sh copies into pkg/ (#541)
 "bindings/dotnet/src/PDFluent/PDFluent.csproj" = { publishes = "PackageLicenseFile:LICENSE-OFFER", canonical = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial", reason = "NU5124: nuget.org does not recognise LicenseRef in an expression", file = "bindings/dotnet/src/PDFluent/LICENSE-OFFER" }
 
 # `file` is repository-relative, not package-relative: the wasm entry names the

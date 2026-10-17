@@ -62,6 +62,8 @@ pub mod bookmarks;
 pub mod cff_append;
 /// Wall-clock time that is safe on wasm32, where `SystemTime::now()` panics.
 pub mod clock;
+#[cfg(all(feature = "pdfa-convert", feature = "font-subset"))]
+pub(crate) mod cmap_codes;
 pub mod content_editor;
 #[cfg(feature = "image-insert")]
 pub mod downsample;
@@ -94,6 +96,8 @@ pub(crate) mod pdfa_repair;
 pub mod pdfa_structure;
 #[cfg(all(feature = "pdfa-convert", feature = "font-subset"))]
 pub mod pdfa_subset;
+#[cfg(feature = "pdfa-convert")]
+mod pdfa_text_geometry;
 #[cfg(feature = "pdfa-convert")]
 pub mod pdfa_xmp;
 pub mod pdfua;

@@ -9,6 +9,15 @@
 // the PDFluent Commercial Licence. See the LICENSE file in this repository --
 // that file travels with the copy you received, which a URL does not.
 
+mod compat;
+mod compat_annots;
+mod compat_document;
+mod compat_geometry;
+mod compat_handles;
+mod compat_lists;
+mod compat_opts;
+mod compat_page;
+mod compat_pixmap;
 mod error;
 mod text_edit;
 mod types;
@@ -34,9 +43,13 @@ pub extern "C" fn pdf_init() -> PdfStatus {
 pub extern "C" fn pdf_destroy() {}
 
 /// Return the library version as a static null-terminated string.
+///
+/// The `pdf-capi` crate's package version, baked in at compile time. The
+/// caller must not free it; it is valid for the lifetime of the process.
 #[no_mangle]
 pub extern "C" fn pdf_version() -> *const c_char {
-    c"0.1.0".as_ptr()
+    static VERSION: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
+    VERSION.as_ptr() as *const c_char
 }
 
 // ---- Document lifecycle --------------------------------------------------
@@ -137,6 +150,43 @@ pub unsafe extern "C" fn pdf_document_free(doc: *mut PdfDocument) {
     if !doc.is_null() {
         drop(unsafe { Box::from_raw(doc) });
     }
+}
+
+/// Serialise the document to bytes.
+///
+/// Mutation entry points (`pdf_documents_merge`, `pdf_annotation_add_highlight`,
+/// `pdf_form_set_field_value`, …) return a new document re-opened from
+/// freshly written bytes, so the bytes below are always the document's current
+/// state — never a stale copy of its input. Free the buffer with
+/// `pdf_bytes_free(*out_data, *out_len)`.
+///
+/// # Safety
+/// `doc` must be valid. Both output pointers must be non-null and writable.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_tobytes(
+    doc: *const PdfDocument,
+    out_data: *mut *mut u8,
+    out_len: *mut usize,
+) -> PdfStatus {
+    if doc.is_null() || out_data.is_null() || out_len.is_null() {
+        error::set_last_error_str("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    // Boxed slice, not Vec: `pdf_bytes_free` rebuilds with capacity == len.
+    let mut bytes = unsafe { &*doc }
+        .0
+        .pdf()
+        .data()
+        .as_ref()
+        .to_vec()
+        .into_boxed_slice();
+    let len = bytes.len();
+    unsafe {
+        *out_data = bytes.as_mut_ptr();
+        *out_len = len;
+    }
+    std::mem::forget(bytes);
+    PdfStatus::Ok
 }
 
 // ---- Document queries ----------------------------------------------------
@@ -314,6 +364,166 @@ pub unsafe extern "C" fn pdf_page_extract_text(
                 ptr::null_mut()
             }
         },
+        Err(e) => {
+            error::set_last_error_str(&e.to_string());
+            ptr::null_mut()
+        }
+    }
+}
+
+/// The window an `extract_*` call was asked for (#573).
+///
+/// `page_count` is signed and negative means "to the end of the document",
+/// which is what `ExtractOptions::page_count = None` says in Rust. A count of
+/// zero therefore still means zero pages, so nothing a caller can write is
+/// silently turned into something else.
+fn extract_options(first_page: i32, page_count: i32) -> pdf_engine::ExtractOptions {
+    // No struct literal: `ExtractOptions` is `#[non_exhaustive]`, so the
+    // asked-for fields are assigned onto the default.
+    let mut options = pdf_engine::ExtractOptions::default();
+    options.first_page = first_page.max(0) as usize;
+    options.page_count = (page_count >= 0).then_some(page_count as usize);
+    // AND WHATEVER THE ENGINE ADDS NEXT stays at its default rather than
+    // left out: this is a binding, and a field it forgets is a feature this
+    // language silently does not get. `learned` arrived that way (#599) and
+    // broke the build here rather than in a test, which is the lucky version
+    // of the same mistake.
+    options
+}
+
+/// Hand a `String` to C, or record why it cannot be handed over.
+fn into_c_string(text: String) -> *mut c_char {
+    match std::ffi::CString::new(text) {
+        Ok(cstr) => cstr.into_raw(),
+        Err(_) => {
+            error::set_last_error_str("text contains interior null byte");
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Extract the document as markdown, null-terminated UTF-8 (#573).
+///
+/// Preview: output quality is still improving and the API may change in a minor release.
+///
+/// Headings become `#` to `###`, list items `-` and `1.`, a table a pipe table
+/// or an HTML one where markdown cannot hold its shape, and a change of page an
+/// HTML comment. The running heads a document repeats are not in it; they are
+/// in `pdf_document_extract_blocks_json`.
+///
+/// `first_page` and `page_count` choose a window of pages; a negative
+/// `page_count` means the rest of the document. Free with `pdf_string_free`.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_extract_markdown(
+    doc: *const PdfDocument,
+    first_page: i32,
+    page_count: i32,
+) -> *mut c_char {
+    if doc.is_null() || first_page < 0 {
+        error::set_last_error_str("invalid argument");
+        return ptr::null_mut();
+    }
+    match unsafe { &*doc }
+        .0
+        .extract_markdown(&extract_options(first_page, page_count))
+    {
+        Ok(text) => into_c_string(text),
+        Err(e) => {
+            error::set_last_error_str(&e.to_string());
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Extract the document as a Docling `DoclingDocument`, JSON, null-terminated
+/// UTF-8 (#629).
+///
+/// Preview: output quality is still improving and the API may change in a minor release.
+///
+/// The schema version `pdf_engine::docling::SCHEMA_VERSION` names, which
+/// docling-core's `DoclingDocument.model_validate_json` loads as it is.
+/// `name` is `DoclingDocument.name` (Docling fills it with the file's stem);
+/// null means `"document"`.
+///
+/// `first_page` and `page_count` choose a window of pages; a negative
+/// `page_count` means the rest of the document. Free with `pdf_string_free`.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`, or null.
+/// `name` must be null or a valid null-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_extract_docling_json(
+    doc: *const PdfDocument,
+    first_page: i32,
+    page_count: i32,
+    name: *const c_char,
+) -> *mut c_char {
+    if doc.is_null() || first_page < 0 {
+        error::set_last_error_str("invalid argument");
+        return ptr::null_mut();
+    }
+    let name = if name.is_null() {
+        "document"
+    } else {
+        match unsafe { CStr::from_ptr(name) }.to_str() {
+            Ok(name) => name,
+            Err(_) => {
+                error::set_last_error_str("name is not valid UTF-8");
+                return ptr::null_mut();
+            }
+        }
+    };
+    match unsafe { &*doc }
+        .0
+        .extract_docling(name, &extract_options(first_page, page_count))
+    {
+        Ok(json) => into_c_string(json),
+        Err(e) => {
+            error::set_last_error_str(&e.to_string());
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Extract the document's blocks as JSON, null-terminated UTF-8 (#573).
+///
+/// Preview: output quality is still improving and the API may change in a minor release.
+///
+/// `{"blocks": [...]}`, one entry per paragraph, heading, list item, table cell
+/// and running head, each with its kind, page, box, text, spans and place in
+/// the reading order. `docs/STRUCTURED_EXTRACTION.md` is the key to every
+/// field.
+///
+/// JSON and not a struct array, which is what the text-block API next door
+/// hands back: a block carries five different sets of fields depending on its
+/// kind, and a C struct that held all of them would be a union with a tag --
+/// one more definition of the block model to keep in step with the engine's.
+/// The find-and-replace surface crosses this boundary as JSON for the same
+/// reason.
+///
+/// `first_page` and `page_count` choose a window of pages; a negative
+/// `page_count` means the rest of the document. Free with `pdf_string_free`.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_extract_blocks_json(
+    doc: *const PdfDocument,
+    first_page: i32,
+    page_count: i32,
+) -> *mut c_char {
+    if doc.is_null() || first_page < 0 {
+        error::set_last_error_str("invalid argument");
+        return ptr::null_mut();
+    }
+    match unsafe { &*doc }
+        .0
+        .extract_blocks(&extract_options(first_page, page_count))
+    {
+        Ok(blocks) => into_c_string(pdf_engine::to_json(&blocks)),
         Err(e) => {
             error::set_last_error_str(&e.to_string());
             ptr::null_mut()
@@ -530,6 +740,69 @@ pub unsafe extern "C" fn pdf_compliance_report_error_count(
     unsafe { &*report }.0.error_count() as i32
 }
 
+/// Number of warnings in the report, or -1 if `report` is null.
+///
+/// Warnings do not affect conformance: a report with warnings but no
+/// errors still reads as conformant.
+///
+/// # Safety
+/// `report` must have been returned by `pdf_document_validate_pdfa`, or be null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_compliance_report_warning_count(
+    report: *const PdfComplianceReport,
+) -> i32 {
+    if report.is_null() {
+        return -1;
+    }
+    unsafe { &*report }.0.warning_count() as i32
+}
+
+/// Number of issues (errors, warnings and info) in the report,
+/// or -1 if `report` is null.
+///
+/// # Safety
+/// `report` must have been returned by `pdf_document_validate_pdfa`, or be null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_compliance_report_issue_count(
+    report: *const PdfComplianceReport,
+) -> i32 {
+    if report.is_null() {
+        return -1;
+    }
+    unsafe { &*report }.0.issues.len() as i32
+}
+
+/// One-line summary of the issue at zero-based `index`:
+/// `[severity] rule: message`, where severity is `error`, `warning`
+/// or `info`. Returns null if `report` is null or `index` is out of
+/// range. Free the returned string with `pdf_string_free`.
+///
+/// # Safety
+/// `report` must have been returned by `pdf_document_validate_pdfa`, or be null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_compliance_report_issue_summary(
+    report: *const PdfComplianceReport,
+    index: i32,
+) -> *mut c_char {
+    if report.is_null() || index < 0 {
+        return ptr::null_mut();
+    }
+    let issues = unsafe { &(*report).0.issues };
+    let Some(issue) = issues.get(index as usize) else {
+        return ptr::null_mut();
+    };
+    let severity = match issue.severity {
+        pdf_compliance::Severity::Error => "error",
+        pdf_compliance::Severity::Warning => "warning",
+        pdf_compliance::Severity::Info => "info",
+    };
+    let summary = format!("[{severity}] {}: {}", issue.rule, issue.message);
+    match std::ffi::CString::new(summary) {
+        Ok(cstr) => cstr.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 /// Free a compliance report. Null is safe (no-op).
 ///
 /// # Safety
@@ -559,9 +832,20 @@ pub unsafe extern "C" fn pdf_document_convert_pdfa(
         error::set_last_error_str("null pointer argument");
         return PdfStatus::ErrorInvalidArgument;
     }
+    let Some(conformance) = level.convert_conformance() else {
+        // Refusing beats writing a file that says something else. See
+        // `PdfALevel::convert_conformance`; validation still covers every level.
+        error::set_last_error_str(&format!(
+            "PDF/A conversion delivers {} only; the level asked for is validated \
+             but not converted, so it is refused rather than written as its part's \
+             B level",
+            PdfALevel::DELIVERED_FOR_CONVERSION.join(", "),
+        ));
+        return PdfStatus::ErrorInvalidArgument;
+    };
     let raw_bytes = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
     let opts = pdf_manip::pdfa::PdfAConvertOptions {
-        conformance: level.to_convert_conformance(),
+        conformance,
         ..Default::default()
     };
     let buf = match pdf_manip::pdfa::convert_bytes(&raw_bytes, &opts) {
@@ -652,6 +936,16 @@ pub unsafe extern "C" fn pdf_document_redact(
 /// `pkcs12_path` is the filesystem path to the .p12 / .pfx bundle.
 /// `pkcs12_password` unlocks the bundle; pass `NULL` or an empty string for
 /// password-less bundles.
+///
+/// This produces PAdES B-B. B-T and B-LT are deliberately not reachable from
+/// this ABI: a timestamp has to be fetched over the finished signature, which
+/// needs a callback into caller code (`PdfDocument::sign_timestamped` in the
+/// Rust API, #515), and a function-pointer callback across the C boundary is a
+/// surface of its own to design and test. The other bindings do not sign at
+/// all -- Python, Node, Java and WASM read and verify signatures only, and
+/// .NET wraps this entry point. So no binding can currently emit a B-T claim,
+/// well-founded or otherwise; when one grows the route, the imprint check in
+/// `pdf-sign` applies to it the moment it calls in.
 /// The caller owns the returned document and must free it with `pdf_document_free`.
 ///
 /// # Safety
@@ -769,6 +1063,197 @@ pub unsafe extern "C" fn pdf_form_field_name(doc: *const PdfDocument, index: i32
     }
 }
 
+/// Return the field-type string of the AcroForm field at zero-based
+/// `index`: `text`, `button`, `choice`, `signature`, or `unknown` when the
+/// type cannot be read. Returns null if `doc` is null, `index` is negative
+/// or out of range, or the document has no AcroForm. Free the returned
+/// string with `pdf_string_free`.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_form_field_type(doc: *const PdfDocument, index: i32) -> *mut c_char {
+    if doc.is_null() || index < 0 {
+        return ptr::null_mut();
+    }
+    let pdf = unsafe { &*doc }.0.pdf();
+    let tree = match pdf_forms::parse_acroform(pdf) {
+        Some(t) => t,
+        None => return ptr::null_mut(),
+    };
+    let terminals = tree.terminal_fields();
+    let Some(id) = terminals.get(index as usize) else {
+        return ptr::null_mut();
+    };
+    let kind = match tree.effective_field_type(*id) {
+        Some(pdf_forms::FieldType::Text) => "text",
+        Some(pdf_forms::FieldType::Button) => "button",
+        Some(pdf_forms::FieldType::Choice) => "choice",
+        Some(pdf_forms::FieldType::Signature) => "signature",
+        None => "unknown",
+    };
+    match std::ffi::CString::new(kind) {
+        Ok(cstr) => cstr.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Return the current value of the AcroForm field `name`, or null when the
+/// field does not exist, carries no value, or the document has no AcroForm.
+/// `name` is the fully qualified name (`parent.kid` notation), matching
+/// [`pdf_form_field_name`]. Choice fields with several selected values come
+/// back comma-joined. Free the returned string with `pdf_string_free`.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`, or null.
+/// `name` must be a valid null-terminated UTF-8 string, or null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_form_field_value(
+    doc: *const PdfDocument,
+    name: *const c_char,
+) -> *mut c_char {
+    if doc.is_null() || name.is_null() {
+        return ptr::null_mut();
+    }
+    let name_str = match unsafe { CStr::from_ptr(name) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let pdf = unsafe { &*doc }.0.pdf();
+    let tree = match pdf_forms::parse_acroform(pdf) {
+        Some(t) => t,
+        None => return ptr::null_mut(),
+    };
+    let id = match tree.find_by_name(name_str) {
+        Some(id) => id,
+        None => return ptr::null_mut(),
+    };
+    let value = match tree.effective_value(id) {
+        Some(pdf_forms::FieldValue::Text(s)) => s.clone(),
+        Some(pdf_forms::FieldValue::StringArray(v)) => v.join(","),
+        None => return ptr::null_mut(),
+    };
+    match std::ffi::CString::new(value) {
+        Ok(cstr) => cstr.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Set the value of an AcroForm field by fully-qualified name. Returns a new
+/// document; the source document is not modified. The caller owns the returned
+/// document and must free it with `pdf_document_free`.
+///
+/// Text fields take the value as-is. Checkbox fields take `true`/`false`
+/// (also `on`/`off`, `yes`/`no`, `1`/`0`); radio and choice fields resolve
+/// `value` against their on-state names and `/Opt` entries. Anything else
+/// fails with `ErrorInvalidArgument` and a detail in the last-error string.
+///
+/// # Safety
+/// `doc`, `name` and `value` must be valid non-null pointers; `name` and
+/// `value` must be null-terminated UTF-8. `out` must be non-null and writable.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_form_set_field_value(
+    doc: *const PdfDocument,
+    name: *const c_char,
+    value: *const c_char,
+    out: *mut *mut PdfDocument,
+) -> PdfStatus {
+    if doc.is_null() || name.is_null() || value.is_null() || out.is_null() {
+        error::set_last_error_str("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let name_str = match unsafe { CStr::from_ptr(name) }.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            error::set_last_error_str("invalid UTF-8 in field name");
+            return PdfStatus::ErrorInvalidArgument;
+        }
+    };
+    let value_str = match unsafe { CStr::from_ptr(value) }.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            error::set_last_error_str("invalid UTF-8 in field value");
+            return PdfStatus::ErrorInvalidArgument;
+        }
+    };
+    let raw_bytes = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
+    let mut lopdf_doc = match lopdf::Document::load_mem(&raw_bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error_str(&e.to_string());
+            return PdfStatus::ErrorCorruptPdf;
+        }
+    };
+    // Resolve the value kind from the field's own type: text is the common
+    // case, and buttons/choices match their on-state names and options.
+    let kind = form_field_kind(unsafe { &*doc }, name_str);
+    let write_value = match kind {
+        FormFieldKind::Checkbox => {
+            // "true"/"false"/"on"/"off"/"yes"/"no"/"1"/"0" toggle the box;
+            // anything else is treated as an export-state name for radios.
+            match value_str.to_ascii_lowercase().as_str() {
+                "true" | "on" | "yes" | "1" => pdf_forms::writeback::WriteValue::Checkbox(true),
+                "false" | "off" | "no" | "0" => pdf_forms::writeback::WriteValue::Checkbox(false),
+                _ => pdf_forms::writeback::WriteValue::Radio(value_str),
+            }
+        }
+        FormFieldKind::Radio => pdf_forms::writeback::WriteValue::Radio(value_str),
+        FormFieldKind::Choice => pdf_forms::writeback::WriteValue::Choice(value_str),
+        FormFieldKind::Text => pdf_forms::writeback::WriteValue::Text(value_str),
+    };
+    if let Err(e) = pdf_forms::writeback::apply_field_value(&mut lopdf_doc, name_str, write_value) {
+        let status = match &e {
+            pdf_forms::writeback::WritebackError::Malformed(_) => PdfStatus::ErrorCorruptPdf,
+            _ => PdfStatus::ErrorInvalidArgument,
+        };
+        error::set_last_error_str(&e.to_string());
+        return status;
+    }
+    let mut buf = Vec::new();
+    if let Err(e) = lopdf_doc.save_to(&mut buf) {
+        error::set_last_error_str(&format!("save: {e}"));
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    match pdf_engine::PdfDocument::open(buf) {
+        Ok(new_doc) => {
+            unsafe { *out = Box::into_raw(Box::new(PdfDocument(new_doc))) };
+            PdfStatus::Ok
+        }
+        Err(e) => {
+            error::set_last_error(&e);
+            PdfStatus::ErrorCorruptPdf
+        }
+    }
+}
+
+/// Best-effort field kind for routing a string value to a `WriteValue`.
+/// Unknown or unreadable shapes default to text; `apply_field_value` still
+/// enforces the real type and reports `WrongType`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FormFieldKind {
+    Text,
+    Checkbox,
+    Radio,
+    Choice,
+}
+
+fn form_field_kind(doc: &PdfDocument, name: &str) -> FormFieldKind {
+    let Some(tree) = pdf_forms::parse_acroform(doc.0.pdf()) else {
+        return FormFieldKind::Text;
+    };
+    let Some(id) = tree.find_by_name(name) else {
+        return FormFieldKind::Text;
+    };
+    match tree.effective_field_type(id) {
+        Some(pdf_forms::FieldType::Choice) => FormFieldKind::Choice,
+        Some(pdf_forms::FieldType::Button) if tree.effective_flags(id).radio() => {
+            FormFieldKind::Radio
+        }
+        Some(pdf_forms::FieldType::Button) => FormFieldKind::Checkbox,
+        _ => FormFieldKind::Text,
+    }
+}
+
 // ---- Annotations ---------------------------------------------------------
 
 /// Number of annotations on a page, or -1 on error.
@@ -829,6 +1314,62 @@ pub unsafe extern "C" fn pdf_annotation_type(
     }
 }
 
+/// Bounding box of the annotation at the given index on a page, in PDF
+/// user-space points (`x0`, `y0`, `x1`, `y1`; `y` grows upward).
+/// Writes zeros when the annotation carries no usable `/Rect`, mirroring
+/// the other first-party bindings.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`.
+/// The `out_*` pointers must be non-null and writable.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_annotation_rect(
+    doc: *const PdfDocument,
+    page_index: i32,
+    annot_index: i32,
+    out_x0: *mut f64,
+    out_y0: *mut f64,
+    out_x1: *mut f64,
+    out_y1: *mut f64,
+) -> PdfStatus {
+    if doc.is_null() || out_x0.is_null() || out_y0.is_null() || out_x1.is_null() || out_y1.is_null()
+    {
+        error::set_last_error_str("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    if page_index < 0 || annot_index < 0 {
+        error::set_last_error_str("negative page or annotation index");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let raw_bytes = unsafe { &*doc }.0.pdf().data().as_ref();
+    let lopdf_doc = match lopdf::Document::load_mem(raw_bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error_str(&e.to_string());
+            return PdfStatus::ErrorCorruptPdf;
+        }
+    };
+    let annots = match page_annot_objects(&lopdf_doc, page_index as u32) {
+        Some(a) => a,
+        None => {
+            error::set_last_error_str("page has no annotations");
+            return PdfStatus::ErrorPageRange;
+        }
+    };
+    let Some(annot_obj) = annots.get(annot_index as usize) else {
+        error::set_last_error_str("annotation index out of range");
+        return PdfStatus::ErrorInvalidArgument;
+    };
+    let (x0, y0, x1, y1) = annot_rect(&lopdf_doc, annot_obj).unwrap_or((0.0, 0.0, 0.0, 0.0));
+    unsafe {
+        *out_x0 = x0;
+        *out_y0 = y0;
+        *out_x1 = x1;
+        *out_y1 = y1;
+    }
+    PdfStatus::Ok
+}
+
 /// Add a yellow highlight annotation to a page. Returns a new document.
 ///
 /// `x`, `y`, `w`, `h` are in PDF user-space units (points), where `y`
@@ -859,7 +1400,73 @@ pub unsafe extern "C" fn pdf_annotation_add_highlight(
             return PdfStatus::ErrorCorruptPdf;
         }
     };
-    if let Err(msg) = add_highlight(&mut lopdf_doc, page_index as u32, x, y, w, h) {
+    if let Err(msg) = add_highlight(&mut lopdf_doc, page_index as u32, x, y, w, h, None) {
+        error::set_last_error_str(&msg);
+        return PdfStatus::ErrorAnnotation;
+    }
+    let mut buf = Vec::new();
+    if let Err(e) = lopdf_doc.save_to(&mut buf) {
+        error::set_last_error_str(&format!("save: {e}"));
+        return PdfStatus::ErrorAnnotation;
+    }
+    match pdf_engine::PdfDocument::open(buf) {
+        Ok(new_doc) => {
+            unsafe { *out = Box::into_raw(Box::new(PdfDocument(new_doc))) };
+            PdfStatus::Ok
+        }
+        Err(e) => {
+            error::set_last_error(&e);
+            PdfStatus::ErrorAnnotation
+        }
+    }
+}
+
+/// Add a yellow highlight annotation with `/Contents` text to a page.
+/// Returns a new document.
+///
+/// Behaves like [`pdf_annotation_add_highlight`], except the highlight
+/// carries `contents` as its `/Contents` string. `contents` may be null
+/// or empty, which stores no `/Contents` entry.
+///
+/// # Safety
+/// `doc` and `out` must be valid non-null pointers. `contents` must be
+/// a valid null-terminated UTF-8 string, or null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_annotation_add_highlight_with_contents(
+    doc: *const PdfDocument,
+    page_index: i32,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    contents: *const c_char,
+    out: *mut *mut PdfDocument,
+) -> PdfStatus {
+    if doc.is_null() || out.is_null() || page_index < 0 {
+        error::set_last_error_str("invalid argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let text = if contents.is_null() {
+        None
+    } else {
+        match unsafe { CStr::from_ptr(contents) }.to_str() {
+            Ok(s) if !s.is_empty() => Some(s),
+            Ok(_) => None,
+            Err(_) => {
+                error::set_last_error_str("contents is not valid UTF-8");
+                return PdfStatus::ErrorInvalidArgument;
+            }
+        }
+    };
+    let raw_bytes = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
+    let mut lopdf_doc = match lopdf::Document::load_mem(&raw_bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error_str(&e.to_string());
+            return PdfStatus::ErrorCorruptPdf;
+        }
+    };
+    if let Err(msg) = add_highlight(&mut lopdf_doc, page_index as u32, x, y, w, h, text) {
         error::set_last_error_str(&msg);
         return PdfStatus::ErrorAnnotation;
     }
@@ -964,6 +1571,26 @@ fn annot_subtype(doc: &lopdf::Document, annot_obj: &lopdf::Object) -> Option<Str
     Some(String::from_utf8_lossy(name_bytes).into_owned())
 }
 
+/// Resolve an annotation object to its /Rect edges
+/// (`x0`, `y0`, `x1`, `y1`), or None when the rectangle is missing
+/// or not a four-number array.
+fn annot_rect(doc: &lopdf::Document, annot_obj: &lopdf::Object) -> Option<(f64, f64, f64, f64)> {
+    let (_, resolved) = doc.dereference(annot_obj).ok()?;
+    let annot_dict = resolved.as_dict().ok()?;
+    let rect_obj = annot_dict.get(b"Rect").ok()?;
+    let (_, rect_resolved) = doc.dereference(rect_obj).ok()?;
+    let arr = rect_resolved.as_array().ok()?;
+    let [x0, y0, x1, y1] = arr.as_slice() else {
+        return None;
+    };
+    Some((
+        x0.as_float().ok()? as f64,
+        y0.as_float().ok()? as f64,
+        x1.as_float().ok()? as f64,
+        y1.as_float().ok()? as f64,
+    ))
+}
+
 /// Add a /Highlight annotation to the given page (0-based) of a lopdf document.
 fn add_highlight(
     doc: &mut lopdf::Document,
@@ -972,6 +1599,7 @@ fn add_highlight(
     y: f64,
     w: f64,
     h: f64,
+    contents: Option<&str>,
 ) -> Result<(), String> {
     use lopdf::{Dictionary, Object};
 
@@ -1019,6 +1647,12 @@ fn add_highlight(
         ]),
     );
     annot.set("F", Object::Integer(4)); // Print flag
+    if let Some(text) = contents {
+        annot.set(
+            "Contents",
+            Object::String(text.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+        );
+    }
 
     let annot_id = doc.add_object(Object::Dictionary(annot));
 
@@ -1295,6 +1929,330 @@ pub unsafe extern "C" fn pdf_bytes_free(data: *mut u8, len: usize) {
     if !data.is_null() && len > 0 {
         drop(unsafe { Vec::from_raw_parts(data, len, len) });
     }
+}
+
+// ---- Plain embedded-image API (facade) -------------------------------------
+//
+// Listing plus extraction and pixel decoding over the document's stored
+// images, routed through the plain facade so the C surface shares its
+// implementation and error mapping. The older `pdf_page_image_count` /
+// `pdf_page_extract_image` pair stays as it is.
+
+/// Rebuild the plain facade over the handle's source bytes.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`.
+unsafe fn facade_from_doc(
+    doc: *const PdfDocument,
+) -> std::result::Result<pdfluent::PdfDocument, String> {
+    let raw = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
+    pdfluent::PdfDocument::from_bytes(&raw).map_err(|e| e.to_string())
+}
+
+/// Stored images on one page as a JSON array, null-terminated UTF-8.
+///
+/// `[{"id":…,"width":…,"height":…,"bits_per_component":…,"components":…,
+/// `"color_space":…,"color_space_name":…,"filter":…,"name":…,"has_mask":…}]`,
+/// one entry per image XObject in the page's resources, in resource order.
+/// `page_index` counts from 0. Free with `pdf_string_free`; null on error.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_page_images_json(
+    doc: *const PdfDocument,
+    page_index: i32,
+) -> *mut c_char {
+    if doc.is_null() || page_index < 0 {
+        error::set_last_error_str("invalid argument");
+        return ptr::null_mut();
+    }
+    let facade = match unsafe { facade_from_doc(doc) } {
+        Ok(facade) => facade,
+        Err(e) => {
+            error::set_last_error_str(&e);
+            return ptr::null_mut();
+        }
+    };
+    match facade.page_images(page_index as usize + 1) {
+        Ok(images) => {
+            let rows: Vec<serde_json::Value> = images
+                .iter()
+                .map(|image| {
+                    serde_json::json!({
+                        "id": image.id.as_u32(),
+                        "width": image.width,
+                        "height": image.height,
+                        "bits_per_component": image.bits_per_component,
+                        "components": image.components,
+                        "color_space": image.color_space.name(),
+                        "color_space_name": image.color_space_name,
+                        "filter": image.filter,
+                        "name": image.name,
+                        "has_mask": image.has_mask,
+                    })
+                })
+                .collect();
+            into_c_string(serde_json::Value::Array(rows).to_string())
+        }
+        Err(e) => {
+            error::set_last_error_str(&e.to_string());
+            ptr::null_mut()
+        }
+    }
+}
+
+/// One extracted image: header facts plus heap-allocated fields.
+///
+/// `color_space`, `color_space_name` and `encoding` are null-terminated
+/// UTF-8 strings; `data` holds `len` encoded bytes. All four are heap
+/// allocations owned by the caller after a successful call — free them
+/// with `pdf_extracted_image_free`, which frees the fields but not the
+/// struct itself.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PdfExtractedImage {
+    /// Image width, in pixels.
+    pub width: u32,
+    /// Image height, in pixels.
+    pub height: u32,
+    /// Bits per component.
+    pub bits_per_component: u32,
+    /// Components per pixel.
+    pub components: u32,
+    /// Decoded pixel layout: `DeviceGray`, `DeviceRGB` or `DeviceCMYK`.
+    pub color_space: *mut c_char,
+    /// Colour-space name recorded in the image dictionary.
+    pub color_space_name: *mut c_char,
+    /// Encoding of `data`: `jpeg` or `png`.
+    pub encoding: *mut c_char,
+    /// Encoded image bytes, `len` of them.
+    pub data: *mut u8,
+    /// Length of `data`, in bytes.
+    pub len: usize,
+    /// 1 when the image is masked, else 0.
+    pub masked: u8,
+    /// Horizontal resolution, in dots per inch.
+    pub xres: u32,
+    /// Vertical resolution, in dots per inch.
+    pub yres: u32,
+}
+
+// SAFETY: The struct is plain old data plus owned C pointers. The free
+// function below is the only thing that mutates the pointer state, and
+// that happens after the C consumer has handed ownership back to Rust.
+unsafe impl Send for PdfExtractedImage {}
+unsafe impl Sync for PdfExtractedImage {}
+
+/// One decoded image: raw samples plus heap-allocated fields.
+///
+/// `color_space` is a null-terminated UTF-8 string; `pixels` holds `len`
+/// raw samples, top row first. Both are heap allocations owned by the
+/// caller after a successful call — free them with
+/// `pdf_decoded_image_free`, which frees the fields but not the struct
+/// itself.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PdfDecodedImage {
+    /// Image width, in pixels.
+    pub width: u32,
+    /// Image height, in pixels.
+    pub height: u32,
+    /// Components per pixel.
+    pub components: u32,
+    /// Decoded pixel layout: `DeviceGray`, `DeviceRGB` or `DeviceCMYK`.
+    pub color_space: *mut c_char,
+    /// Raw samples, `components` bytes per pixel.
+    pub pixels: *mut u8,
+    /// Length of `pixels`, in bytes.
+    pub len: usize,
+}
+
+// SAFETY: The struct is plain old data plus owned C pointers. The free
+// function below is the only thing that mutates the pointer state, and
+// that happens after the C consumer has handed ownership back to Rust.
+unsafe impl Send for PdfDecodedImage {}
+unsafe impl Sync for PdfDecodedImage {}
+
+/// Extract one stored image: header facts plus encoded bytes.
+///
+/// JPEG payloads pass through untouched; everything else arrives decoded
+/// and re-encoded as PNG. On success `*out` holds the image; free its
+/// heap fields with `pdf_extracted_image_free`.
+///
+/// # Safety
+/// `doc` must be valid. `out` must be non-null and writable.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_image_extract_data(
+    doc: *const PdfDocument,
+    image_id: u32,
+    out: *mut PdfExtractedImage,
+) -> PdfStatus {
+    if doc.is_null() || out.is_null() {
+        error::set_last_error_str("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let facade = match unsafe { facade_from_doc(doc) } {
+        Ok(facade) => facade,
+        Err(e) => {
+            error::set_last_error_str(&e);
+            return PdfStatus::ErrorCorruptPdf;
+        }
+    };
+    let image = match facade.extract_image_data(pdfluent::ImageId::from(image_id)) {
+        Ok(image) => image,
+        Err(e) => {
+            error::set_last_error_str(&e.to_string());
+            return PdfStatus::ErrorExtract;
+        }
+    };
+    // All fallible allocations happen before any pointer escapes, so a
+    // failure here leaks nothing.
+    let color_space = match std::ffi::CString::new(image.color_space.name()) {
+        Ok(s) => s,
+        Err(_) => {
+            error::set_last_error_str("color space contains interior null byte");
+            return PdfStatus::ErrorExtract;
+        }
+    };
+    let color_space_name = match std::ffi::CString::new(image.color_space_name) {
+        Ok(s) => s,
+        Err(_) => {
+            error::set_last_error_str("color space name contains interior null byte");
+            return PdfStatus::ErrorExtract;
+        }
+    };
+    let encoding = match std::ffi::CString::new(image.encoding) {
+        Ok(s) => s,
+        Err(_) => {
+            error::set_last_error_str("encoding contains interior null byte");
+            return PdfStatus::ErrorExtract;
+        }
+    };
+    let mut data = image.data.into_boxed_slice();
+    let len = data.len();
+    unsafe {
+        *out = PdfExtractedImage {
+            width: image.width,
+            height: image.height,
+            bits_per_component: u32::from(image.bits_per_component),
+            components: u32::from(image.components),
+            color_space: color_space.into_raw(),
+            color_space_name: color_space_name.into_raw(),
+            encoding: encoding.into_raw(),
+            data: data.as_mut_ptr(),
+            len,
+            masked: u8::from(image.masked),
+            xres: image.xres,
+            yres: image.yres,
+        };
+    }
+    std::mem::forget(data);
+    PdfStatus::Ok
+}
+
+/// Free the heap fields of a `PdfExtractedImage` filled by
+/// `pdf_image_extract_data`. Null is safe (no-op).
+///
+/// # Safety
+/// `img` must be null or point to a struct previously filled by
+/// `pdf_image_extract_data` that has not yet been freed.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_extracted_image_free(img: *mut PdfExtractedImage) {
+    if img.is_null() {
+        return;
+    }
+    let img = unsafe { &mut *img };
+    for s in [img.color_space, img.color_space_name, img.encoding] {
+        if !s.is_null() {
+            drop(unsafe { std::ffi::CString::from_raw(s) });
+        }
+    }
+    if !img.data.is_null() && img.len > 0 {
+        drop(unsafe { Vec::from_raw_parts(img.data, img.len, img.len) });
+    }
+    img.color_space = ptr::null_mut();
+    img.color_space_name = ptr::null_mut();
+    img.encoding = ptr::null_mut();
+    img.data = ptr::null_mut();
+    img.len = 0;
+}
+
+/// Decode one stored image to raw samples, top row first.
+///
+/// Palettes and stencils are expanded. On success `*out` holds the
+/// image; free its heap fields with `pdf_decoded_image_free`.
+///
+/// # Safety
+/// `doc` must be valid. `out` must be non-null and writable.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_image_decode_pixels(
+    doc: *const PdfDocument,
+    image_id: u32,
+    out: *mut PdfDecodedImage,
+) -> PdfStatus {
+    if doc.is_null() || out.is_null() {
+        error::set_last_error_str("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let facade = match unsafe { facade_from_doc(doc) } {
+        Ok(facade) => facade,
+        Err(e) => {
+            error::set_last_error_str(&e);
+            return PdfStatus::ErrorCorruptPdf;
+        }
+    };
+    let image = match facade.decode_image_pixels(pdfluent::ImageId::from(image_id)) {
+        Ok(image) => image,
+        Err(e) => {
+            error::set_last_error_str(&e.to_string());
+            return PdfStatus::ErrorExtract;
+        }
+    };
+    let color_space = match std::ffi::CString::new(image.color_space.name()) {
+        Ok(s) => s,
+        Err(_) => {
+            error::set_last_error_str("color space contains interior null byte");
+            return PdfStatus::ErrorExtract;
+        }
+    };
+    let mut pixels = image.pixels.into_boxed_slice();
+    let len = pixels.len();
+    unsafe {
+        *out = PdfDecodedImage {
+            width: image.width,
+            height: image.height,
+            components: u32::from(image.components),
+            color_space: color_space.into_raw(),
+            pixels: pixels.as_mut_ptr(),
+            len,
+        };
+    }
+    std::mem::forget(pixels);
+    PdfStatus::Ok
+}
+
+/// Free the heap fields of a `PdfDecodedImage` filled by
+/// `pdf_image_decode_pixels`. Null is safe (no-op).
+///
+/// # Safety
+/// `img` must be null or point to a struct previously filled by
+/// `pdf_image_decode_pixels` that has not yet been freed.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_decoded_image_free(img: *mut PdfDecodedImage) {
+    if img.is_null() {
+        return;
+    }
+    let img = unsafe { &mut *img };
+    if !img.color_space.is_null() {
+        drop(unsafe { std::ffi::CString::from_raw(img.color_space) });
+    }
+    if !img.pixels.is_null() && img.len > 0 {
+        drop(unsafe { Vec::from_raw_parts(img.pixels, img.len, img.len) });
+    }
+    img.color_space = ptr::null_mut();
+    img.pixels = ptr::null_mut();
+    img.len = 0;
 }
 
 // ---- Text search ---------------------------------------------------------
@@ -1735,10 +2693,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn version_not_null() {
+    fn version_reports_the_crate_version() {
         let v = pdf_version();
         assert!(!v.is_null());
-        assert_eq!(unsafe { CStr::from_ptr(v) }.to_str().unwrap(), "0.1.0");
+        assert_eq!(
+            unsafe { CStr::from_ptr(v) }.to_str().unwrap(),
+            env!("CARGO_PKG_VERSION")
+        );
     }
 
     #[test]
@@ -1908,5 +2869,36 @@ mod tests {
         assert_eq!(PdfStatus::ErrorSplit as i32, 13);
         assert_eq!(PdfStatus::ErrorWatermark as i32, 14);
         assert_eq!(PdfStatus::ErrorCompress as i32, 15);
+    }
+
+    #[test]
+    fn form_value_null() {
+        let name = c"name".as_ptr();
+        assert!(unsafe { pdf_form_field_value(ptr::null(), name) }.is_null());
+        assert!(unsafe { pdf_form_field_value(ptr::null(), ptr::null()) }.is_null());
+    }
+
+    #[test]
+    fn form_set_value_null() {
+        let name = c"name".as_ptr();
+        let value = c"value".as_ptr();
+        let mut out: *mut PdfDocument = ptr::null_mut();
+        let s = unsafe { pdf_form_set_field_value(ptr::null(), name, value, &mut out) };
+        assert_eq!(s, PdfStatus::ErrorInvalidArgument);
+        assert!(out.is_null());
+        let s = unsafe { pdf_form_set_field_value(ptr::null(), ptr::null(), value, &mut out) };
+        assert_eq!(s, PdfStatus::ErrorInvalidArgument);
+        let s = unsafe { pdf_form_set_field_value(ptr::null(), name, value, ptr::null_mut()) };
+        assert_eq!(s, PdfStatus::ErrorInvalidArgument);
+    }
+
+    #[test]
+    fn tobytes_null() {
+        let mut data: *mut u8 = ptr::null_mut();
+        let mut len: usize = 0;
+        let s = unsafe { pdf_document_tobytes(ptr::null(), &mut data, &mut len) };
+        assert_eq!(s, PdfStatus::ErrorInvalidArgument);
+        let s = unsafe { pdf_document_tobytes(ptr::null(), ptr::null_mut(), &mut len) };
+        assert_eq!(s, PdfStatus::ErrorInvalidArgument);
     }
 }

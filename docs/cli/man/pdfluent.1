@@ -1,0 +1,85 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH PDFLUENT 1  "pdfluent 1.1.0" PDFluent
+.SH NAME
+pdfluent \- PDFluent — PDF toolkit: extract, merge, split, compress, protect, watermark, convert, redact, sign, validate. AGPL\-3.0 or a commercial licence, at your option.
+.SH SYNOPSIS
+\fBpdfluent\fR [\fB\-\-json\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+PDFluent — PDF toolkit: extract, merge, split, compress, protect, watermark, convert, redact, sign, validate. AGPL\-3.0 or a commercial licence, at your option.
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Machine\-readable JSON envelope on stdout
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Quiet: human mode prints data only (no warnings or progress notes)
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose stderr diagnostics (repeat for more)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+pdfluent\-extract(1)
+Extract a document as Markdown, JSON, chunks, or text
+.TP
+pdfluent\-merge(1)
+Combine several PDFs into one, in the order given
+.TP
+pdfluent\-split(1)
+Divide a document into separate files
+.TP
+pdfluent\-pages(1)
+Rotate, delete, reorder, or extract pages
+.TP
+pdfluent\-compress(1)
+Reduce file size
+.TP
+pdfluent\-protect(1)
+Set a password and restrict permissions
+.TP
+pdfluent\-unprotect(1)
+Remove password protection
+.TP
+pdfluent\-watermark(1)
+Add a text or image watermark across all pages
+.TP
+pdfluent\-convert(1)
+Convert to Word, Excel, PowerPoint, image, or PDF/A
+.TP
+pdfluent\-redact(1)
+Permanently remove text or regions, not just cover them
+.TP
+pdfluent\-sign(1)
+Apply a PAdES signature with a PKCS#12 identity
+.TP
+pdfluent\-validate(1)
+Validate: parse check, PDF/A conformance, or (unexposed) PDF/UA
+.TP
+pdfluent\-info(1)
+Show document information (page count, PDF version, file size)
+.TP
+pdfluent\-inspect(1)
+Inspect a document and emit JSON (alias of `info \-\-json`)
+.TP
+pdfluent\-extract\-text(1)
+Extract plain text (kept for compatibility; prefer `extract`)
+.TP
+pdfluent\-doctor(1)
+Check environment / installation and print build info
+.TP
+pdfluent\-models(1)
+Install and inspect the opt\-in model tiers\*(Aq files
+.TP
+pdfluent\-completions(1)
+Generate shell completions
+.TP
+pdfluent\-xfa(1)
+Experimental XFA tooling (feature\-gated, not production\-supported)
+.SH VERSION
+v1.1.0

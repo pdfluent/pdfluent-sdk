@@ -31,10 +31,18 @@ WHAT IT CHECKS
                   §2a and in `docs/licensing.md`, written the way the offer
                   file writes it. A price in one document and not the other is
                   the failure this exists for.
-  no retired price
-                  no amount from the retired model (699, 1,099, 2,199, 4,399,
-                  1,999, 1,499) appears in any of them. Those were real prices;
-                  a reader has no way to tell a stale one from a current one.
+  every amount    every sum written in currency in any of the four is one of
+                  the offer's prices, or a declared non-price amount. That is
+                  read out of the documents rather than looked for in them, so
+                  it covers the order form too -- a document can carry all four
+                  prices and a fifth of its own, and the fifth is the one a
+                  buyer signs. An amount from the retired model (699, 1,099,
+                  2,199, 4,399, 1,999, 1,499, 12,000) is named as retired
+                  rather than merely unknown; those were real prices, and a
+                  reader has no way to tell a stale one from a current one.
+                  Compared on digits, so 1,099 and 1099 are the same number:
+                  the scan this replaces matched the written form only, and let
+                  the second one through.
   the OEM rule    the sentence that decides Commercial from OEM appears
                   verbatim in `LICENSE-COMMERCIAL` and in `docs/licensing.md`.
                   It is the sentence a licensee is most likely to be judged on,
@@ -75,6 +83,30 @@ NOTICE = "NOTICE"
 # Amounts the repository sold before 06-09-2026. Not "wrong numbers": prices
 # that were true, which is exactly why a reader cannot spot a stale one.
 RETIRED = ("699", "1,099", "2,199", "4,399", "1,999", "1,499", "12,000")
+
+# Amounts that appear in currency and are not prices, with what they are.
+# Everything else stated in currency has to be one of the offer's four, and the
+# rule below is what makes the order form -- the document a buyer signs -- part
+# of this guard rather than only the two that state rights.
+NOT_A_PRICE = {
+    "1000000": "the OEM Startup revenue threshold, which is a size and not a price",
+}
+
+# Any amount written in currency, in any of the four documents.
+AMOUNT = re.compile(r"(?:EUR|€)\s?(\d[\d.,]*)")
+
+
+def digits(amount: str) -> str:
+    """An amount reduced to its digits, so 1,099 and 1099 are one number.
+
+    The retired-price scan compared the written form and nothing else, so the
+    same withdrawn price passed the moment somebody dropped the thousands
+    separator -- and a reader cannot tell a stale price from a current one
+    either way, which is the whole reason that scan exists. Measured
+    06-09-2026: `EUR 1,099` in the order form was refused and `EUR 1099` in the
+    same file was not.
+    """
+    return "".join(c for c in amount if c.isdigit())
 
 # Wording of the retired model. The second element is why it may not be there.
 RETIRED_WORDS = (
@@ -207,18 +239,30 @@ def main() -> int:
                     "of four prices is read as though that licence is not sold."
                 )
 
-    # --- no retired price anywhere
+    # --- every amount stated in currency is one this offer knows
+    #
+    # Read from the documents rather than looked for in them, which is what
+    # makes it cover the order form as well: the price rule above asks whether
+    # the offer's numbers are present, and a document can carry all four and a
+    # fifth of its own. That fifth is the one that costs somebody money.
+    sold = {digits(b.get("price_eur_written", "")) for b in buttons}
+    retired = {digits(a) for a in RETIRED} - sold
     for rel, text in {**stated, FORM: form, NOTICE: notice}.items():
-        flattened = flat(text)
-        for amount in RETIRED:
-            if any(amount == b.get("price_eur_written", "").lstrip("€ ") for b in buttons):
+        for match in AMOUNT.finditer(flat(text)):
+            written, value = match.group(0), digits(match.group(1))
+            if value in sold or value in NOT_A_PRICE:
                 continue
-            for form_of in (f"EUR {amount}", f"€ {amount}", f"€{amount}"):
-                if re.search(rf"{re.escape(form_of)}(?![\d,])", flattened):
-                    complain(
-                        f"{rel} still states {form_of}, a price from the model retired on "
-                        "6 September 2026. It was true once, which is why nobody spots it."
-                    )
+            if value in retired:
+                complain(
+                    f"{rel} still states {written}, a price from the model retired on "
+                    "6 September 2026. It was true once, which is why nobody spots it."
+                )
+            else:
+                complain(
+                    f"{rel} states {written}, which is neither one of the four prices in "
+                    f"{OFFER} nor a declared non-price amount. A document that names a "
+                    "price of its own is the copy a buyer reads."
+                )
 
     # --- the rule, verbatim, where the rights are stated
     for rel, text in stated.items():

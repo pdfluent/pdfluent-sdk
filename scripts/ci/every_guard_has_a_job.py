@@ -4,8 +4,8 @@
 # PDFluent is available under two licences, at your option: the GNU AGPLv3, or
 # the PDFluent Commercial Licence. See the LICENSE file in this repository --
 # that file travels with the copy you received, which a URL does not.
-"""Every script in `scripts/ci/` must be called by a pipeline job -- and by one
-that can still block a merge.
+"""Every script in `scripts/ci/` and `scripts/release/` must be called by a
+pipeline job -- and by one that can still block a merge.
 
 This is the rule from CLAUDE.md, made mechanical: *nothing is done if there is
 no test for it that runs in the CI pipeline.* That rule exists because the
@@ -52,14 +52,18 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 CI = REPO / ".gitlab-ci.yml"
 WORKFLOWS = REPO / ".github" / "workflows"
 MAP = REPO / "scripts" / "ci"
+# The release lane grew its own scripts, and a guard the scan cannot see is a
+# guard that can die silently: the scan covers both homes. Basenames are
+# unique across the two, so the register below keeps matching on the name.
+RELEASE_MAP = REPO / "scripts" / "release"
 REGISTER = MAP / "mirror_only_guards.toml"
 GATE = MAP / "local_ci_gate.sh"
 
-# FLOOR: scripts found >= 25 -- the directory holds around eighty. If this
-# script finds fewer, the search is broken and the directory is not empty; an
-# empty scan would approve everything, which is exactly the mistake this file
-# exists to catch.
-MIN_SCRIPTS = 25
+# FLOOR: scripts found >= 400 -- scripts/ci plus scripts/release hold 462.
+# If this script finds fewer, the search is broken and the directories are not
+# empty; an empty scan would approve everything, which is exactly the mistake
+# this file exists to catch.
+MIN_SCRIPTS = 400
 
 # RATCHET: guards that run only on the mirror -- not more than this, and not
 # fewer either.
@@ -104,7 +108,54 @@ MIN_SCRIPTS = 25
 # them had stopped existing while the register went on saying it did. ci.yml's
 # `workspace` job runs those three scripts on every push to master now, which is
 # what lets the landing lane compile only the crates a landing touches.
-SPIEGEL_RATEL = 11
+# 11 -> 16 on 06-09-2026 (#350). Five, in one change, and the direction this
+# ratchet exists to make deliberate: the workspace build and three desktop
+# preconditions left the push when the heavy work moved to a bought-and-thrown-
+# away instance. Nine other guards would have joined them if `schedule` had gone
+# on counting for nothing; the wave counts, and those nine did not need a row.
+# 09-09-2026 (#482): 17 -> 18. One guard, and it is the one that would have
+# caught the fault it was written for: a_gate_image_answers_ssh.py boots
+# instances from a candidate image before it is given the name every gate
+# resolves. It cannot stand before a merge -- it spends money and needs the
+# Hetzner token -- and it is named in the step that runs it, in the nightly
+# refresh. Reason in mirror_only_guards.toml.
+# Owner disabled paid compute on 2026-09-12; eleven suites deferred explicitly.
+# 27-09-2026 (#623): 29 -> 30. run_excluded_dependents.sh, the native check of
+# xfa-wasm when a landing reaches it: a compiling gate, standing where run_test.sh
+# stands. Reason in mirror_only_guards.toml.
+# 01-10-2026 (#636): 30 -> 29. tests_actually_ran.py stands before a merge
+# now: ci.yml's `clitest` job runs the CLI suite through it on every push,
+# so the wrapper that only capi-ephemeral.yml (dispatch-only) called is a
+# push gate. Entry removed from mirror_only_guards.toml.
+# 01-10-2026 (#636 follow-up): 29 -> 30. `clitest` compiled on the persistent
+# desktop, turning desktoplast, orchhost and builddir3 red at once, so it moved
+# to a wave job in ci-ephemeral.yml (#350) -- which fires on workflow_dispatch
+# alone. The wrapper's callers are dispatch-only again; the CLI half still runs
+# on every landing in the local gate's landing lane. Entry restored.
+# 01-10-2026 (#636): 30 -> 31. build_all_platforms.sh left ALLOWED for a
+# dispatch-only job in build-lane.yml: it builds the release channels, so it
+# stands before no merge. Reason in mirror_only_guards.toml.
+# 03-10-2026 (#636): 31 -> 39. The eight consumer smokes stand only in
+# dispatch-only release jobs -- the release-natives `smoke` job, the
+# release-binaries and wasm release gates -- where no push has packaged
+# artefacts for them to judge. Reasons in mirror_only_guards.toml.
+# 08-10-2026 (#636): 39 -> 40. smoke_ort_variant.sh, the ninth consumer
+# smoke: its only caller is the dispatch-only release-natives `smoke` job,
+# and its toml entry already says so -- the number follows it.
+# 10-10-2026 (#636): 40 -> 49. The nine compiling binding suites m722 moved
+# out of ci.yml's push job into dispatch-only binding-suites.yml: the desktop
+# guards refuse any compile on a push, and hosted minutes on a push are
+# refused too, so no push job can carry them. The same scripts ride the
+# landing lane; reasons in mirror_only_guards.toml.
+# 15-10-2026: 49 -> 50. node_glibc_floor.py, the glibc floor over the two
+# linux-gnu Node bindings: its only caller is the dispatch-only release-gate
+# of node-bindings.yml, where the fresh bindings exist. Its test runs in
+# ci.yml; reason in mirror_only_guards.toml.
+# 15-10-2026: 51 -> 53. binary_host_paths.py and check_build_host_paths.sh,
+# the build-host path check over fresh release natives: their only callers
+# are the dispatch-only release workflows, where those natives exist. Their
+# tests run in ci.yml; reasons in mirror_only_guards.toml.
+SPIEGEL_RATEL = 53
 
 # The reasons that can justify a place on the mirror. Free text would approve
 # every reason, including "later".
@@ -113,7 +164,46 @@ REASONS = {"corpus", "runner", "covered-elsewhere", "credentials"}
 # Scripts that deliberately have no job, with the reason. A name here without a
 # reason should not exist.
 ALLOWED: dict[str, str] = {
+    "require_paid_compute_permission.py": (
+        "denial step for paid manual workflows; its expected nonzero exit and "
+        "resistance to environment overrides are tested in push CI by test_paid_compute_policy.py"
+    ),
+    "landing_test_scope.py": (
+        "local pre-push selection helper; its decisions and the real shell skip "
+        "boundary are exercised by test_landing_test_scope.py in push CI"
+    ),
+    "rig_data_stays_on_the_rig.py": (
+        "imported by the harness, the DocLayNet dump and the proxy, which refuse through it; "
+        "its decisions are exercised by test_rig_data_stays_on_the_rig.py in push CI"
+    ),
+    "development_gate_scope.py": (
+        "local pre-push selection helper; its decisions and the real shell deferral "
+        "boundary are exercised by test_development_gate_scope.py in push CI"
+    ),
     "every_guard_has_a_job.py": "this file itself; its own job does name it",
+
+    # It compiles the Node addon and the engine under it (#587), and the
+    # push-to-master runner does no build work; node-bindings.yml, which would,
+    # fires on a tag. It runs in the landing lane as a crate gate on pdf-node,
+    # and the catalogue half of the same contract runs in ci.yml.
+    "the_node_error_contract_holds.sh": (
+        "builds the pdf-node addon; runs in scripts/ci/local_ci_gate.sh as a "
+        "crate gate on pdf-node, and error_catalogue_sync.sh with its test runs in ci.yml"
+    ),
+
+    # ON LOAN (#367), because this guard refused a landing over something that
+    # was not in the change being landed. It judges one thing: whether the
+    # hourly mirror agent is loaded and last finished by pushing. Its own
+    # docstring says why a pipeline job is the wrong home -- the marker is the
+    # agent's launchd plist, and where there is no plist there is no claim, so a
+    # job on a runner or in a contributor's clone would be red about a machine
+    # it is not. It runs where the answer exists, which is the local gate, and
+    # this entry names that place so the check above holds the claim to being
+    # true rather than taking it on trust. Its test runs on every pull request.
+    "the_mirror_agent_is_running.py":
+        "machine-local: it judges the mirror agent's launchd plist, which no "
+        "runner has. Runs in scripts/ci/local_ci_gate.sh, where the plist is; "
+        "its test runs in ci.yml (#231, added by d43dba4ed)",
 
     # Deliberately by hand, and the reason is the whole design (#237). A job
     # would ask "does this already exist?" after the work was done, which is the
@@ -147,6 +237,75 @@ ALLOWED: dict[str, str] = {
         "needs a tracker token and this repository's history at once; ADVISORY "
         "in scripts/ci/local_ci_gate.sh because the tracker is not in anybody's "
         "push, and its test runs as a hard gate in CI"
+    ),
+
+    # The three halves of the PDF/A corpus (#377). None of them is a guard.
+    #
+    # `pdfa_corpus_rule.py` is a module -- the seed, the order it induces and
+    # the classifier -- imported by the guard that DOES run on every push,
+    # a_manifest_pins_every_file.py, and by its mutation test. A job that ran it
+    # would run nothing: it has no main.
+    "pdfa_corpus_rule.py": (
+        "a module, not a script: the seed and the classifier, imported by "
+        "a_manifest_pins_every_file.py and its test, both of which run in ci.yml"
+    ),
+
+    # Seventeen gigabytes of ranged requests against half a terabyte of upstream
+    # archives, and hours of it. It draws the corpus once; what has to be
+    # checked on every push is its OUTPUT, and that is the guard.
+    "build_pdfa_corpus_manifest.py": (
+        "draws the 20,000-document corpus by hand: hours and ~17 GB of network "
+        "against digitalcorpora.org. Its output is checked on every push by "
+        "a_manifest_pins_every_file.py, whose own test also runs there"
+    ),
+
+    # The layer above it (#461): a thousand-document tuning set and a
+    # three-hundred-document test set per capability. Same shape, same reason --
+    # a rule that is imported and a builder that writes, with the guard on the
+    # output being the thing that runs on every push.
+    "tuning_and_test_rule.py": (
+        "a module, not a script: the seed and the draw of #461, imported by "
+        "the_tuning_and_test_sets_are_the_drawn_sets.py and its mutation test, "
+        "both of which run in ci.yml"
+    ),
+    # The same shape once more, for the thousand #365 publishes off. The rule
+    # is imported; the builder's `hash` stage moves half a gigabyte of ranged
+    # requests against digitalcorpora.org to give a list of names its digests,
+    # and is run once per draw.
+    "holdout_1000_rule.py": (
+        "a module, not a script: the seed and the exclusion of #365, imported "
+        "by the_holdout_1000_is_the_drawn_set.py and its mutation test, both "
+        "of which run in ci.yml"
+    ),
+    # And once more for the structured-extraction split of #566. The shape is
+    # the same and the reason is: the rule is imported by the guard on its
+    # output and by the mutation test that keeps that guard honest, and both of
+    # those run on every push.
+    "structured_holdout_rule.py": (
+        "a module, not a script: the seed and the by-document split of #566, "
+        "imported by the_structured_holdout_is_the_drawn_set.py and its "
+        "mutation test, both of which run in ci.yml"
+    ),
+    "build_holdout_1000_manifest.py": (
+        "its `hash` stage fetches and hashes a thousand GovDocs1 members over "
+        "the network, once per draw; its `write` stage only rewrites what "
+        "the_holdout_1000_is_the_drawn_set.py redraws and compares on every "
+        "push, which is where the verdict belongs"
+    ),
+    "build_tuning_and_test_manifests.py": (
+        "writes the four manifests of #461. Running it in a job would only "
+        "rewrite what the guard already redraws and compares on every push: "
+        "the_tuning_and_test_sets_are_the_drawn_sets.py, which is where the "
+        "verdict belongs"
+    ),
+
+    # Thirty gigabytes and forty minutes, run by the machine that is about to
+    # measure. A pull-request gate that fetched the corpus would be a gate that
+    # spends an hour to check what the manifest already states.
+    "fetch_pdfa_corpus.py": (
+        "materialises 10,000 documents on a measuring machine: ~30 GB and "
+        "tens of minutes. The manifest it reads is guarded on every push by "
+        "a_manifest_pins_every_file.py"
     ),
 
     "does_this_already_exist.py": (
@@ -185,6 +344,12 @@ ALLOWED: dict[str, str] = {
         "hosted runner can only skip it. Runs in scripts/ci/local_ci_gate.sh; "
         "test_no_withdrawn_object.py runs in publication-guards.yml"
     ),
+    "the_repositories_stand_as_intended.py": (
+        "lists the organisation's private repositories, which needs gh signed in "
+        "as a member; GITHUB_TOKEN sees only its own repository (#637). Runs in "
+        "scripts/ci/local_ci_gate.sh; test_the_repositories_stand_as_intended.py "
+        "runs in publication-guards.yml"
+    ),
 
     # Cannot work in a workflow, by its own measurement: /actions/runners needs
     # `administration: read`, which GITHUB_TOKEN cannot be granted, and there is
@@ -206,10 +371,47 @@ ALLOWED: dict[str, str] = {
     # arrived with #1647 and was counted here as an orphan on every run, which
     # is the register asking a fair question about a file that does not belong
     # in it.
+    # Not in CI, and by design: a release recheck a person runs before shipping,
+    # from scripts/quality/run_quality_release_rechecks.sh. It builds a wasm
+    # package and drives Chromium through Playwright, which is minutes of work
+    # for a question nobody asks per pull request. It became visible to this
+    # register when the scan started reading subdirectories (#366); it had been
+    # running nowhere and reported by nothing before that, which is the older
+    # of the two problems.
+    "run_qr10_wasm_browser.sh": (
+        "a release recheck run by hand from "
+        "scripts/quality/run_quality_release_rechecks.sh; it builds a wasm "
+        "package and drives Chromium, and exits 2 (SKIP) where neither is there"
+    ),
+
+    # Not a guard either, and for the same reason: the capability ratchets of
+    # the improvement loop (#366) import it, and a job for it would run a module
+    # with no verdict and report success for having imported it. What it holds
+    # is the comparison every ratchet shares -- so it is covered by their tests,
+    # not by a job of its own: test_pdfa_ratchet.py drives every branch of it on
+    # every pull request, including the sentinel rule that has no PDF/A caller.
+    "ratchet.py": (
+        "the shared comparison the capability ratchets import, not a check: it "
+        "has no verdict to report. scripts/ci/loop/test_pdfa_ratchet.py drives "
+        "it in CI"
+    ),
+
     "fixture_env.py": (
         "the sealed-environment helper the fixtures import, not a check: it "
         "has no verdict of its own, and what it does is proven by "
         "test_a_fixture_cannot_touch_a_real_repo.py"
+    ),
+
+    # Same shape again (#443): a declaration, not a check. It says which PDF/A
+    # levels the converter targets and which baseline file each one owns, and
+    # three callers read it -- the conformance gate, the capability register and
+    # a_pdfa_flavour_has_a_baseline.py. A job of its own would import a module
+    # with no verdict and report a pass for having imported it.
+    "pdfa_flavours.py": (
+        "the flavour declaration the conformance gate, the capability register "
+        "and a_pdfa_flavour_has_a_baseline.py read, not a check: it has no "
+        "verdict to report. scripts/ci/test_pdfa_conformance_gate.py and "
+        "scripts/ci/test_a_pdfa_flavour_has_a_baseline.py drive it in CI"
     ),
 
     # ---- publication guards, split onto master ahead of their wiring (#222) ----
@@ -275,6 +477,53 @@ ALLOWED: dict[str, str] = {
     "local_ci_gate.sh": (
         "runs the pipeline gates locally before a push; a job for this would "
         "have the pipeline check itself"
+    ),
+    # The requirements preflight (m482): it runs first inside every lane of
+    # scripts/ci/local_ci_gate.sh -- which is where a missing binary would
+    # otherwise surface an hour in -- and as the first step of each
+    # self-hosted release job, after setup-selfhosted. A push job for the
+    # lane flavour would have the pipeline check itself; the release flavour
+    # runs in dispatch-only release jobs. Held by
+    # test_gate_preflight.py, which runs in ci.yml.
+    "gate_preflight.py": (
+        "the requirements preflight: runs in scripts/ci/local_ci_gate.sh as "
+        "the first step of every lane, and in the dispatch-only release jobs "
+        "after setup-selfhosted. Held by test_gate_preflight.py in ci.yml"
+    ),
+    # A wrapper, not a guard: it takes the machine-wide gate lock, runs whatever
+    # command it was handed, and passes that command's exit status back. It has
+    # no verdict of its own, so a job for it would assert nothing. What it does
+    # IS tested -- test_one_gate_at_a_time.sh drives it over a private lock
+    # directory (cases 10 to 13) and runs in the fast lane and in ci.yml.
+    "with_gate_lock.sh": (
+        "a wrapper with no verdict of its own: it runs someone else's command "
+        "under the gate lock of #359 and returns that command's status. Tested "
+        "by test_one_gate_at_a_time.sh, which has a job"
+    ),
+    # Reads a table that only exists on a machine where the local gate has run.
+    # A hosted runner has never written one, so in a workflow this guard can
+    # only skip -- and a green tick for a check that looked at nothing is the
+    # failure this file was written to prevent. It runs in
+    # scripts/ci/local_ci_gate.sh, where the table is; its test runs in ci.yml.
+    # Machine-local for the same reason, and a sharper one: what it judges is
+    # the per-worktree git config of the clone it runs in. A CI checkout has one
+    # worktree, made seconds earlier by actions/checkout, so in a workflow this
+    # guard can only report "not judged" -- and a green tick for a check that
+    # looked at nothing is what this file exists to prevent. It runs in
+    # scripts/ci/local_ci_gate.sh, on the machine where the worktrees are; its
+    # test builds its own clone and runs in ci.yml.
+    "every_worktree_runs_the_tracked_hooks.py": (
+        "machine-local: it judges the per-worktree core.hooksPath of this clone, "
+        "and a CI checkout has one worktree that never has it set. Runs in "
+        "scripts/ci/local_ci_gate.sh, and test_every_worktree_runs_the_tracked_"
+        "hooks.py runs in ci.yml (#454)"
+    ),
+
+    "the_fast_lane_stays_under_its_budget.py": (
+        "reads the local gate's own timing table, which exists only on a machine "
+        "that has run the gate; in a workflow it could only skip. Runs in "
+        "scripts/ci/local_ci_gate.sh, and test_the_fast_lane_stays_under_its_"
+        "budget.py runs in ci.yml"
     ),
 
     # Tools a person runs to know something, not a gate that fails.
@@ -358,8 +607,9 @@ ALLOWED: dict[str, str] = {
         "expressible there. It runs in scripts/ci/local_ci_gate.sh, in the full "
         "lane, which is the landing and the machine that has the copies; "
         "test_origin_is_the_source_in_every_checkout.py runs in the guards job on "
-        "GitHub and holds it to refusing each of the four shapes on fixtures "
-        "(#291)"
+        "GitHub and holds it to refusing each of the wrong shapes on fixtures, "
+        "and to passing over a retired copy only when the surviving checkout "
+        "holds every branch of it (#291, #340)"
     ),
     "branches_have_a_merge_request.py": (
         "asks about the checked-out branch, and an Actions checkout is a "
@@ -368,6 +618,284 @@ ALLOWED: dict[str, str] = {
         "the local gate, where there is a branch to ask about; "
         "test_branches_have_a_merge_request.py runs in promise-guard and holds "
         "it to counting"
+    ),
+    "generate_cli_docs.sh": (
+        "generates docs/cli and man pages from clap --help; it is not a gate "
+        "itself, and its --check runs in CI inside the workspace test suite "
+        "via pdfluent-cli tests/cli_docs.rs, so a dedicated job would run the "
+        "same diff twice"
+    ),
+
+    # The release-time pair (#574): the semver gate and the new-enum check it
+    # calls. Both need rustdoc JSON from the pinned nightly plus the v1.0.0
+    # baseline, and both run before publish by design -- "Not in per-PR CI"
+    # is written in the gate's own header. Their mechanisms are covered on
+    # every push by the three fixture tests in ci.yml's guards job instead.
+    "check_new_public_enums.py": (
+        "release-time gate: needs the pinned nightly and the v1.0.0 "
+        "baseline; runs in publish-crates.yml before any publish"
+    ),
+    "semver_gate.sh": (
+        "release-time gate: needs the pinned nightly and the v1.0.0 "
+        "baseline; runs in publish-crates.yml before any publish"
+    ),
+    # The per-crate pin on the enums sealed on 14-10-2026: the same check,
+    # so the same needs (pinned nightly rustdoc, a v1.0.0 worktree).
+    "test_new_enums_are_sealed.sh": (
+        "needs the pinned nightly and the v1.0.0 baseline, like the gate it "
+        "pins; runs in scripts/ci/local_ci_gate.sh in the landing lane next "
+        "to semver_gate.sh"
+    ),
+    # -- scripts/release: the release lane. These run at a release moment --
+    # from the runbook, on dispatch, or on the mirror -- never on a push, so a
+    # push job for them would judge nothing (there are no release artefacts on
+    # a push). The lane's TESTS run in ci.yml; each entry below names the one
+    # that holds it, where there is one.
+    "artifacts_cover_every_platform.py": (
+        "runs in the release lane over release artefacts (build_all_platforms.sh, "
+        "the node release gate, the maven channel guard); on a push there is "
+        "nothing for it to judge. test_artifacts_cover_every_platform.py runs "
+        "in ci.yml over fixtures and holds every check"
+    ),
+    "license_audit.py": (
+        "runs in the release lane, called by the artefact gate over "
+        "jar/wheels/nupkg/CLI archives. test_license_audit.py runs in ci.yml"
+    ),
+    "maven_channel_guard.sh": (
+        "stands in front of `mvn deploy`, which happens at a release, not on a "
+        "push; on the mirror and in the build lane. test_maven_channel_guard.py "
+        "runs in ci.yml over fixture poms and jars"
+    ),
+    "maven_canonical_version_pair.py": (
+        "imported by the maven channel guard, which is where it runs; held by "
+        "test_maven_channel_guard.py in ci.yml"
+    ),
+    "musl_cdylib_rustflags.sh": (
+        "sourced by the musl cdylib builds in the release lane and the node "
+        "workflow's musl legs; held by test_musl_crt_split.py in ci.yml"
+    ),
+    "release_rustflags.sh": (
+        "sourced by every release artefact build in the four release "
+        "workflows, and by musl_cdylib_rustflags.sh for the musl cdylibs; "
+        "held by test_release_rustflags.py in ci.yml"
+    ),
+    "selfhosted_setup.sh": (
+        "runs on self-hosted release runners through "
+        ".github/actions/setup-selfhosted, which only the dispatch-only "
+        "release workflows call; held by "
+        "test_runner_scripts_pass_shellcheck.py in ci.yml"
+    ),
+    "rosetta_x64.sh": (
+        "runs the osx-x64 smokes under Rosetta on the self-hosted Mac, from "
+        "release-natives.yml's smoke steps on the self pool only; held by "
+        "test_rosetta_x64.py and test_runner_scripts_pass_shellcheck.py "
+        "in ci.yml"
+    ),
+    "stage_java_natives.sh": (
+        "stages release natives by hand or from the build lane; held by "
+        "test_stage_natives_have_no_host_fallback.py in ci.yml"
+    ),
+    "stage_dotnet_natives.sh": (
+        "stages release natives by hand or from the build lane; held by "
+        "test_stage_natives_have_no_host_fallback.py in ci.yml"
+    ),
+    "post_publish_smoke_runner.sh": (
+        "run by hand from the publish runbook after a release; its "
+        "missing-script and artefact rules are held by "
+        "test_smoke_runner_requires_artifact.py in ci.yml"
+    ),
+    "post_publish_contents_check.sh": (
+        "run by hand from the publish runbook against a published release"
+    ),
+    "cli_build_archives.sh": (
+        "builds the CLI release archives by hand in the release lane"
+    ),
+    "zip_cli_stage.py": (
+        "cuts the Windows CLI zips in the release-binaries matrix; held by "
+        "test_cli_build_archives.py in ci.yml"
+    ),
+    "check_cli_staged_package.sh": (
+        "checks each staged CLI package in the release lane, from the "
+        "binaries matrix and the CLI release gate; held by "
+        "test_cli_takeover_wiring.py in ci.yml"
+    ),
+    "cli_cratesio_gate.py": (
+        "judges the CLI crate at publish time; held by "
+        "test_cli_cratesio_gate.py in ci.yml"
+    ),
+    "cli_docker_build.sh": (
+        "builds the release Docker image by hand in the release lane; the "
+        "Dockerfile it builds is held by test_cli_dockerfile.py in ci.yml"
+    ),
+    "render_homebrew_formula.py": (
+        "renders the Homebrew formula at a release; held by "
+        "test_render_homebrew_formula.py in ci.yml"
+    ),
+    "pdfluent_cli_release_gate.sh": (
+        "the CLI release gate, run by hand in the release lane; the CLI smoke "
+        "it fronts is held by test_smoke_cli.py in ci.yml"
+    ),
+    "pdfluent_cli_package.sh": (
+        "packages the CLI release artefacts by hand in the release lane"
+    ),
+    "package_cabi.sh": (
+        "packages the C API release artefacts by hand in the release lane"
+    ),
+    "package_artifacts_still_match.sh": (
+        "compares release artefacts by hand in the release lane"
+    ),
+    "audit-all-packages.sh": (
+        "audits the published packages by hand after a release"
+    ),
+    "audit_package_tree.py": (
+        "called by the build lane per wheel and on the mirror; a push has no "
+        "release tree for it to audit"
+    ),
+    "licence_representation.py": (
+        "called by audit-all-packages.sh on a built package; a push has no "
+        "package for it to judge, and its cases run through "
+        "test_audit_all_packages.py in ci.yml"
+    ),
+    "fix_python_wheel_paths.py": (
+        "called by the build lane per wheel it just built"
+    ),
+    "build_pdfluent_sdist.sh": (
+        "builds the pdfluent sdist for the build lane and the release "
+        "package job; the maturin floor is held by "
+        "test_build_pdfluent_sdist.py in ci.yml"
+    ),
+    "collect_capi_release.sh": (
+        "assembles the judged capi dir and the seven C API tarballs for "
+        "the release-natives package job; held by "
+        "test_collect_capi_release.py in ci.yml"
+    ),
+    "check_release_artifact_contents.py": (
+        "checks release artefacts by hand in the release lane"
+    ),
+    "check_website_wasm_lag.sh": (
+        "compares the website against the released wasm by hand"
+    ),
+    "crate_version_is_on_crates_io.py": (
+        "asks the registry about a release version, by hand in the release lane"
+    ),
+    "wheel_platform_tag_is_publishable.py": (
+        "judges wheel tags at publish time in the release lane"
+    ),
+    "the_structured_extraction_is_at_parity.sh": (
+        "holds the structured extraction to the last master round by hand "
+        "(preview since 06-10-2026; parity itself is --stable)"
+    ),
+    "public_snapshot_check.sh": (
+        "checks the public snapshot by hand at a release"
+    ),
+    "release_train.py": (
+        "drives the release train by hand from the runbook"
+    ),
+    "fetch_ort_libs.py": (
+        "stages the pinned ORT libraries by hand in the release lane; "
+        "held by test_fetch_ort_libs.py in ci.yml"
+    ),
+    "stage_models.py": (
+        "fetches the pinned model weights from GCS by hand in the release "
+        "lane; held by test_stage_models.py in ci.yml"
+    ),
+    "fetch_models_release.py": (
+        "downloads the models-v1 assets from the public release in the "
+        "dispatch-only release-natives jobs; held by "
+        "test_release_ort_variant.py in ci.yml"
+    ),
+    "release_train_guard.sh": (
+        "stands in front of the release train, which runs by hand"
+    ),
+    "promote_release.sh": (
+        "promotes a release by hand from the runbook"
+    ),
+    "registry_dry_run.sh": (
+        "dry-runs the registry steps by hand before a release"
+    ),
+    "prepublish_crate_audit.sh": (
+        "audits the crates by hand before a publish"
+    ),
+    "topological_publish_order.py": (
+        "orders the crates for a publish, by hand in the release lane"
+    ),
+    "package_with_workspace_deps.sh": (
+        "packages the release-smoke crate together with its transitive "
+        "workspace dependencies from the tag-triggered release-smoke lane; "
+        "held by test_package_with_workspace_deps.py in ci.yml"
+    ),
+    "topological_cratesio_dry_run.py": (
+        "dry-runs the crates.io publish order by hand"
+    ),
+    "crates_topo_dry_run.sh": (
+        "dry-runs the crates.io publish order on the mirror"
+    ),
+    "publish_ordered.sh": (
+        "publishes the ordered crates from a dispatch-only job"
+    ),
+    "publish_wasm.sh": (
+        "publishes the wasm package from the release lane"
+    ),
+    "wasm_dry_run.sh": (
+        "dry-runs the wasm publish on the mirror"
+    ),
+    "transform-wasm-pkg.sh": (
+        "rewrites the wasm package in the dispatch-only wasm publish"
+    ),
+    "crate_version_from_manifest.py": (
+        "prints the wasm crate's version for the dispatch-only wasm publish, "
+        "matched on the manifest path; held by "
+        "test_release_package_names_exist.py in ci.yml"
+    ),
+    "sbom-generate.sh": (
+        "generates the release SBOM on the mirror"
+    ),
+    "ledger_add_entry.py": (
+        "appends to the release ledger by hand at a release"
+    ),
+    "ledger_mark_yanked.py": (
+        "marks a yank in the release ledger by hand"
+    ),
+    "ledger_verify.py": (
+        "verifies the release ledger by hand"
+    ),
+    "scrub-wheel.py": (
+        "scrubs a wheel by hand in the release lane"
+    ),
+    "seed_public_repo.sh": (
+        "seeds the public repository by hand"
+    ),
+    "seed_history_filter.py": (
+        "called by the public-repo seeding, by hand"
+    ),
+    "tree_dirt.sh": (
+        "lists worktree dirt by hand around a release"
+    ),
+    "homebrew_cask_clean_prefix_install.sh": (
+        "test-installs the Homebrew cask into a clean prefix by hand"
+    ),
+    "audit_dotnet_packageid.test.sh": (
+        "a by-hand regression test beside audit-all-packages.sh"
+    ),
+    "gate_e_version_aware.test.sh": (
+        "a by-hand unit test of the release-train Gate E comparison"
+    ),
+    "smoke_common.sh": (
+        "sourced by every consumer smoke, which is where it runs; a breakage "
+        "fails the smoke test files in ci.yml"
+    ),
+    "smoke_rust.sh": (
+        "no release job wires the cargo channel yet; invoked by hand through "
+        "the post-publish smoke runner. Its argument and artefact handling "
+        "is held by the smoke test files in ci.yml"
+    ),
+    "verify_packaged_workspace.sh": (
+        "called by the by-hand registry dry run and prepublish audit; its "
+        "test stands beside it, by hand too"
+    ),
+    "test_verify_packaged_workspace.py": (
+        "a by-hand test of the by-hand packaged-workspace check: it packs "
+        "and builds crates, so it stands where its subject stands"
     ),
 }
 
@@ -386,16 +914,77 @@ def _gitlab_commands(conf) -> list[str]:
 
 
 # The events on which a workflow's verdict can still stop a merge. A workflow
-# that fires on none of these -- `workflow_dispatch` only, or a `schedule` --
-# runs when somebody remembers to ask, on whatever ref they name, and its red
+# that fires on none of these -- `workflow_dispatch` only, or a rare `schedule`
+# -- runs when somebody remembers to ask, on whatever ref they name, and its red
 # reaches no pull request. A `push` that names only tags is a release moment,
 # not a merge, and is treated the same way.
 BLOCKING_EVENTS = {"pull_request", "pull_request_target", "push", "merge_group"}
+
+# A FREQUENT SCHEDULE COUNTS, and this is where a rule was narrowed rather than
+# dropped (#350).
+#
+# On 06-09-2026 the workspace build, the corpus gate, the PDF/A gate and four
+# heavy suites moved out of a push trigger and into a two-hourly wave of
+# ci-ephemeral.yml, on an instance bought per wave -- because the one
+# self-hosted runner had twenty-nine runs queued on four cores. Read with
+# `schedule` excluded outright, eight guards became "stands before no merge" in
+# one commit, and the register would have grown by eight rows describing a lane
+# that in fact runs oftener than most of what is in it.
+#
+# The line is twelve fires a day, the same number and the same argument as
+# SCHEDULE_PER_DAG_MINIMUM in test_feature_gated_tests_run.py: against master's
+# head, within one interval, without anybody typing anything. A nightly cannot
+# say that -- a day of landings sit behind it -- and stays out.
+#
+# What is given up is real and is not hidden: the verdict arrives after the
+# merge rather than before it. That is a weaker place for a guard to stand than
+# a pull request, and it is where the whole repository stands since #333.
+SCHEDULE_PER_DAY_MINIMUM = 12
+
+
+def _schedule_fires_per_day(spec) -> int:
+    """How often these crons come round in a day, at most.
+
+    Crude in the safe direction: only minute and hour are expanded, and any
+    restriction on day-of-month, month or day-of-week makes the answer zero.
+    `0 */2 * * *` is twelve; `17 4 * * *` is one; `0 4 * * 1` is none of this
+    rule's business.
+    """
+    if not isinstance(spec, list):
+        return 0
+    totaal = 0
+    for item in spec:
+        if not isinstance(item, dict) or not item.get("cron"):
+            continue
+        velden = str(item["cron"]).split()
+        if len(velden) != 5:
+            continue
+        minuut, uur, dag, maand, weekdag = velden
+        if (dag, maand, weekdag) != ("*", "*", "*"):
+            continue
+
+        def aantal(veld: str, bereik: int) -> int:
+            if veld == "*":
+                return bereik
+            if veld.startswith("*/") and veld[2:].isdigit() and int(veld[2:]) > 0:
+                return bereik // int(veld[2:])
+            return len([x for x in veld.split(",") if x])
+
+        totaal += aantal(minuut, 60) * aantal(uur, 24)
+    return totaal
 
 # A job whose `needs` chain passes through a job by this name never runs: the
 # parked job exists to fail loudly on a dispatch nobody should be making (#276),
 # and everything behind it is a queue entry pretending to be a gate.
 PARKED_JOB = "parked"
+
+
+def _home(scripts: list, name: str) -> str:
+    """The scanned path of `name`, so the report names a file that is there."""
+    for p in scripts:
+        if p.name == name:
+            return str(p.relative_to(REPO))
+    return f"scripts/ci/{name}"
 
 
 def _events(conf) -> dict:
@@ -411,9 +1000,40 @@ def _events(conf) -> dict:
     return {}
 
 
-def _can_block(conf) -> bool:
-    """Can a red from this workflow stand in front of a merge at all?"""
+def _called_by(conf) -> set[str]:
+    """The local workflow files this one calls, as bare file names.
+
+    `uses: ./.github/workflows/security-audit.yml` on a job is a reusable-
+    workflow call: the callee's jobs run as part of THIS run and its red is
+    this run's red.
+    """
+    uit: set[str] = set()
+    for job in ((conf or {}).get("jobs") or {}).values():
+        if not isinstance(job, dict):
+            continue
+        roept = job.get("uses")
+        if isinstance(roept, str) and roept.startswith("./.github/workflows/"):
+            uit.add(roept.rsplit("/", 1)[-1].split("@", 1)[0])
+    return uit
+
+
+def _can_block(conf, *, called_from_blocking: bool = False) -> bool:
+    """Can a red from this workflow stand in front of a merge at all?
+
+    `called_from_blocking` is the reusable-workflow case, and leaving it out
+    was a hole with the same shape as the mirror. Since #350 the heavy suites
+    have no trigger of their own: `security-audit.yml` and the three beside it
+    are `workflow_call` only, and the two-hourly wave in `ci-ephemeral.yml`
+    calls them. Judged on their own events they look like a workflow nothing
+    can start, so every script they run was reported as standing before no
+    merge -- while in fact their red is the wave's red, on a cadence, on a
+    machine that is bought for it. (#361)
+    """
+    if called_from_blocking:
+        return True
     for event, spec in _events(conf).items():
+        if event == "schedule" and _schedule_fires_per_day(spec) >= SCHEDULE_PER_DAY_MINIMUM:
+            return True
         if event not in BLOCKING_EVENTS:
             continue
         if event == "push" and isinstance(spec, dict) and "tags" in spec and "branches" not in spec:
@@ -437,7 +1057,7 @@ def _behind_parked(name: str, jobs: dict, seen: frozenset = frozenset()) -> bool
     return any(_behind_parked(n, jobs, seen | {name}) for n in _needs(job))
 
 
-def _actions_commands(conf) -> tuple[list[str], list[str]]:
+def _actions_commands(conf, *, called_from_blocking: bool = False) -> tuple[list[str], list[str]]:
     """The `run:` lines of every step of every job in a workflow, split into
     (can stop a merge, cannot).
 
@@ -454,7 +1074,7 @@ def _actions_commands(conf) -> tuple[list[str], list[str]]:
     """
     blocking: list[str] = []
     parked: list[str] = []
-    workflow_blocks = _can_block(conf)
+    workflow_blocks = _can_block(conf, called_from_blocking=called_from_blocking)
     jobs = (conf or {}).get("jobs") or {}
     for name, job in jobs.items():
         if not isinstance(job, dict):
@@ -546,16 +1166,29 @@ def main() -> int:
     actions: list[str] = []
     parked: list[str] = []
     workflows = sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml"))
+    geladen: dict[pathlib.Path, object] = {}
     for wf in workflows:
         try:
-            blocking, unblockable = _actions_commands(
-                yaml.safe_load(wf.read_text(errors="replace"))
-            )
-            actions.extend(blocking)
-            parked.extend(unblockable)
+            geladen[wf] = yaml.safe_load(wf.read_text(errors="replace"))
         except yaml.YAMLError as e:
             print(f"FAIL: {wf.relative_to(REPO)} is not valid YAML: {e}", file=sys.stderr)
             return 1
+
+    # A reusable workflow called by one that can block a merge inherits that:
+    # its jobs run inside the caller's run and its red is the caller's red.
+    # One level, deliberately -- nothing here nests deeper, and a transitive
+    # walk would have to answer for cycles it has never had to meet.
+    geroepen: set[str] = set()
+    for wf, conf in geladen.items():
+        if _can_block(conf):
+            geroepen |= _called_by(conf)
+
+    for wf, conf in geladen.items():
+        blocking, unblockable = _actions_commands(
+            conf, called_from_blocking=wf.name in geroepen
+        )
+        actions.extend(blocking)
+        parked.extend(unblockable)
 
     # FLOOR: workflows >= 1 -- without workflows the scan is broken, not the
     # directory empty. Enforced on the shape and not on a number, hence the
@@ -573,13 +1206,22 @@ def main() -> int:
     gl = "\n".join(gitlab)
     ci = gh + "\n" + gh_parked + "\n" + gl
 
+    # rglob, not iterdir. A guard in a subdirectory used to be invisible here,
+    # and the loop scaffolding of #366 lands in exactly one: the improvement
+    # protocol puts a capability's ratchet at
+    # `scripts/ci/loop/<capability>_ratchet.py`. A register that stops at the
+    # top level would have approved a ratchet that ran nowhere -- which is the
+    # sentence at the top of this file, arriving through a directory rather than
+    # through a missing job.
     scripts = sorted(
-        p for p in MAP.iterdir()
+        p
+        for base in (MAP, RELEASE_MAP)
+        for p in base.rglob("*")
         if p.is_file() and p.suffix in {".py", ".sh"} and not p.name.startswith("_")
     )
     if len(scripts) < MIN_SCRIPTS:
         print(
-            f"FLOOR: {len(scripts)} scripts found in {MAP.relative_to(REPO)}, "
+            f"FLOOR: {len(scripts)} scripts found in scripts/ci + scripts/release, "
             f"expected >= {MIN_SCRIPTS}. The search is broken -- this is not a green.",
             file=sys.stderr,
         )
@@ -618,8 +1260,13 @@ def main() -> int:
                   "days\nwithout running while a register calls it placed (#231).",
                   file=sys.stderr)
 
+    # The path is reported, not the basename. Since the scan reads
+    # subdirectories (#366), "scripts/ci/pdfa_ratchet.py" would name a file that
+    # is not there and send the reader looking in the wrong place. Matching
+    # stays on the basename: a `run:` line names the file by whatever path it
+    # uses, and _runs() allows a prefix.
     orphans = [
-        p.name for p in scripts
+        p for p in scripts
         if p.name not in ALLOWED and not _runs(p.name, ci)
     ]
     if orphans:
@@ -628,8 +1275,8 @@ def main() -> int:
             "Guards without a pipeline job. They exist, and nothing runs them:\n",
             file=sys.stderr,
         )
-        for name in orphans:
-            print(f"  scripts/ci/{name}", file=sys.stderr)
+        for path in orphans:
+            print(f"  {path.relative_to(REPO)}", file=sys.stderr)
         print(
             "\nPut a job on it in .github/workflows/ or .gitlab-ci.yml, or add the\n"
             "script to ALLOWED with the reason it belongs in a pair of hands.\n\n"
@@ -686,7 +1333,7 @@ def main() -> int:
             file=sys.stderr,
         )
         for name in sorted(undeclared):
-            print(f"  scripts/ci/{name}  ({shape[name]})", file=sys.stderr)
+            print(f"  {_home(scripts, name)}  ({shape[name]})", file=sys.stderr)
         print(
             f"\nEither give it a job in .github/workflows/ that runs on pull_request\n"
             f"or push, or add it to {REGISTER.relative_to(REPO)} with reason and why.",
@@ -705,7 +1352,7 @@ def main() -> int:
             file=sys.stderr,
         )
         for name in stale:
-            if not (MAP / name).exists():
+            if not ((MAP / name).exists() or (RELEASE_MAP / name).exists()):
                 print(f"  {name}: the script no longer exists", file=sys.stderr)
             elif name in ALLOWED:
                 print(f"  {name}: is in ALLOWED, so it is not a mirror job", file=sys.stderr)
@@ -727,7 +1374,7 @@ def main() -> int:
         )
         for name in sorted(mirror_only):
             reason = register.get(name, {}).get("reason", "NO REASON WRITTEN DOWN")
-            print(f"[guard-jobs]   scripts/ci/{name}  ({reason}; {shape[name]})",
+            print(f"[guard-jobs]   {_home(scripts, name)}  ({reason}; {shape[name]})",
                   file=sys.stderr)
 
     if len(mirror_only) != SPIEGEL_RATEL:  # RATCHET
@@ -756,7 +1403,12 @@ def main() -> int:
             )
 
     # And the other way round: an exception that no longer exists has to go.
-    gone = sorted(n for n in ALLOWED if not (MAP / n).exists())
+    # Against the scan and not against `MAP / name`: since the scan reads
+    # subdirectories (#366), a guard can be present and still not sit at the top
+    # level, and asking the filesystem the narrower question reports it as
+    # deleted.
+    present = {p.name for p in scripts}
+    gone = sorted(n for n in ALLOWED if n not in present)
     if gone:
         problems += 1
         print(

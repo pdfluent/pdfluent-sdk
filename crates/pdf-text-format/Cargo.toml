@@ -1,6 +1,6 @@
 [package]
 name = "pdf-text-format"
-version = "1.0.0"
+version = "1.1.0"
 edition.workspace = true
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
 license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
@@ -11,6 +11,6 @@ documentation = "https://pdfluent.com/docs"
 description = "Text run formatting: inject font-size and color changes with state isolation"
 
 [dependencies]
-pdf-manip = { path = "../pdf-manip", version = "=1.0.0" }
+pdf-manip = { path = "../pdf-manip", version = "=1.1.0" }
 lopdf = { workspace = true }
 thiserror.workspace = true

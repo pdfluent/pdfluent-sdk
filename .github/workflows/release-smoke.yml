@@ -4,6 +4,13 @@ name: Release Smoke
 # Runs on version tags and manual dispatch.
 # Validates that the workspace compiles, key tests pass,
 # and cargo package produces valid artifacts.
+#
+# It PUBLISHES NOTHING, and that is the point of naming it here: it is one
+# of the two workflows a `v*.*.*` tag starts, and the other one carries the
+# pre-release clause of #358. `cargo package` builds a .crate and reads it; it
+# does not upload one. scripts/ci/a_pre_release_tag_arms_no_publish.py holds
+# this file to the list of two, so a publish step added here has to be gated
+# like the rest before it can be pushed.
 
 on:
   push:
@@ -14,6 +21,12 @@ on:
         description: 'Crate to package-validate (default: pdfluent)'
         required: false
         default: 'pdfluent'
+      runner_pool:
+        description: 'Runner pool: github (hosted) or self (self-hosted GCP/Mac runners)'
+        required: false
+        default: 'github'
+        type: choice
+        options: ['github', 'self']
 
 concurrency:
   group: release-smoke-${{ github.ref }}
@@ -29,20 +42,47 @@ jobs:
     # it has no reason to sit on the persistent desktop. Moving it here is
     # therefore unverified: if it turns out to want something only that
     # machine has, delete it rather than move it back (#266).
-    runs-on: ubuntu-latest
+    # On a tag push inputs.runner_pool is empty (dispatch-only input), so the
+    # pool test counts push as self: a tag must never spend hosted minutes.
+    # Dispatch keeps its default (github) through the same expression.
+    runs-on: ${{ (github.event_name == 'push' || inputs.runner_pool == 'self') && fromJSON('["self-hosted", "linux", "x64", "pdfluent-release"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Set up the self-hosted toolchain
+        if: github.event_name == 'push' || inputs.runner_pool == 'self'
+        uses: ./.github/actions/setup-selfhosted
+        with:
+          tools: rust
+          rust-version: stable
 
+      # Missing is red here, in seconds, with the complete list -- before the
+      # build, never an hour in (m482). Read-only: it installs nothing. The
+      # condition mirrors the setup's own: the preflight answers for the runs
+      # the setup readied, and only those.
+      - name: Preflight the release requirements
+        if: github.event_name == 'push' || inputs.runner_pool == 'self'
+        shell: bash
+        run: python3 scripts/ci/gate_preflight.py --release-job release-smoke.yml/smoke
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: github.event_name != 'push' && inputs.runner_pool != 'self'
+
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Workspace compile check
+        id: compile
+        continue-on-error: true
         run: cargo check --workspace --exclude pdf-desktop
 
       - name: Pdfluent unit + integration tests
+        id: pdfluent-tests
+        continue-on-error: true
         # Run the fast integration suites: lifecycle (open/save round-trip),
         # processing_limits (stream-byte and pixel caps), and security.
         # Excludes heavy e2e_parity tests (those run in gate-ci).
@@ -55,27 +95,112 @@ jobs:
             -- --test-threads=4
 
       - name: Pdf-syntax unit tests
+        id: pdf-syntax-tests
+        continue-on-error: true
         run: cargo test -p pdf-syntax
 
+      # Tesseract for the ocr-cli suite below, which recognizes through the
+      # system binary (#636): with `PDFLUENT_REQUIRE_TESSERACT=1` the suite
+      # fails loudly without one instead of skipping, so a broken install
+      # cannot hide. Through the lock-waiting wrapper, like every other
+      # apt-get in a workflow; `tesseract-ocr-eng` is named even though the
+      # engine package recommends it, because a recommends-chain is not a
+      # promise. Immediately before the suite, so the binary is there for it.
+      - name: Install Tesseract for the ocr-cli suite
+        run: bash scripts/ci/apt_get.sh install -y -qq tesseract-ocr tesseract-ocr-eng
+
+      # Same shape as the feature steps in ci-ephemeral.yml's `workspace` job:
+      # `crates/pdf-engine/tests/an_ocr_layer_makes_a_scan_readable.rs` gates
+      # its whole file on `ocr-cli`, a non-default feature, so a plain
+      # `cargo test` never compiles it. What it holds is OCR on the markdown
+      # path through the system Tesseract: a scan reads its words under Auto
+      # and nothing under Never, Force replaces born-digital text rather than
+      # doubling it, and without a binary Auto reads on while Force names it.
+      #
+      # Here as well as there because that job is dispatch-only while paid
+      # compute is disabled (owner decision 2026-09-12), so no change passes
+      # through it -- and featgate counts only the workflows a change passes
+      # through. This job runs on every version tag, which is the blocking
+      # lane that already compiles and tests Rust on a hosted runner.
+      - name: the tests behind the ocr-cli feature
+        id: ocr-cli-tests
+        continue-on-error: true
+        env:
+          PDFLUENT_REQUIRE_TESSERACT: '1'
+        run: cargo test -p pdf-engine --features ocr-cli --locked --test an_ocr_layer_makes_a_scan_readable
+
       - name: Package validation — pdfluent
+        id: package-pdfluent
+        continue-on-error: true
         # Validates that the pdfluent artifact can be packaged cleanly:
         # LICENSE is included, README exists, no path-only deps leak through.
+        # Through package_with_workspace_deps.sh: a lone `cargo package
+        # -p pdfluent` resolves the =1.1.0 workspace pins from crates.io, where
+        # they do not exist yet before publication, and fails by construction
+        # (run 37451394856). Selecting the crate together with every workspace
+        # crate it depends on lets cargo 1.94 resolve those versions locally.
         run: |
-          cargo package -p pdfluent --no-verify --allow-dirty
+          bash scripts/release/package_with_workspace_deps.sh pdfluent
           echo "--- pdfluent package contents ---"
           tar -tzf target/package/pdfluent-*.crate | sort | head -60
 
       - name: Package validation — ${{ inputs.crate || 'pdf-engine' }}
+        id: package-crate
+        continue-on-error: true
         env:
           INPUT_CRATE: ${{ inputs.crate || 'pdf-engine' }}
+        # Same helper as the pdfluent step above: without the crate's
+        # workspace dependencies in the same invocation, a pre-publication
+        # run fails resolving the =1.1.0 pins from crates.io (run 37451394856).
         run: |
           CRATE="$INPUT_CRATE"
-          cargo package -p "$CRATE" --no-verify --allow-dirty
+          bash scripts/release/package_with_workspace_deps.sh "$CRATE"
           echo "--- $CRATE package contents ---"
           tar -tzf "target/package/${CRATE}-"*.crate | sort | head -40
 
       - name: Release consistency check
+        id: consistency
+        continue-on-error: true
         run: python3 scripts/check_release_consistency.py
+
+      # No built artefact carries the SVG rasteriser. Fail-closed: smoke
+      # builds only .crate files (Rust sources cannot import the Python
+      # rasteriser, so the guard does not scan them) and wheels build in
+      # build-wheels.yml, so until every channel's artefacts are built or
+      # downloaded into smoke this step exits 2 and the verdict fails --
+      # intended: extend the PATH list as channels land. (#643)
+      - name: No built artefact carries the SVG rasteriser
+        id: cairo-artefacts
+        continue-on-error: true
+        run: python3 tests/compat/no_cairo_in_artifacts.py target/package crates/pdf-python/dist
+
+      # Every independent check above ran to the end (continue-on-error):
+      # this is the verdict, naming each check that did not succeed. A
+      # skipped check counts as failed, not as passed.
+      - name: all checks
+        if: ${{ !cancelled() }}
+        env:
+          COMPILE: ${{ steps.compile.outcome }}
+          PDFLUENT_TESTS: ${{ steps.pdfluent-tests.outcome }}
+          PDF_SYNTAX_TESTS: ${{ steps.pdf-syntax-tests.outcome }}
+          OCR_CLI_TESTS: ${{ steps.ocr-cli-tests.outcome }}
+          PACKAGE_PDFLUENT: ${{ steps.package-pdfluent.outcome }}
+          PACKAGE_CRATE: ${{ steps.package-crate.outcome }}
+          CONSISTENCY: ${{ steps.consistency.outcome }}
+          CAIRO_ARTEFACTS: ${{ steps.cairo-artefacts.outcome }}
+        run: |
+          fail=0
+          for check in "compile:$COMPILE" "pdfluent-tests:$PDFLUENT_TESTS" "pdf-syntax-tests:$PDF_SYNTAX_TESTS" "ocr-cli-tests:$OCR_CLI_TESTS" "package-pdfluent:$PACKAGE_PDFLUENT" "package-crate:$PACKAGE_CRATE" "consistency:$CONSISTENCY" "cairo-artefacts:$CAIRO_ARTEFACTS"; do
+            name="${check%%:*}"
+            outcome="${check##*:}"
+            if [[ "$outcome" != "success" ]]; then
+              echo "FAILED check $name (outcome: $outcome)"
+              fail=1
+            else
+              echo "check $name: success"
+            fi
+          done
+          exit "$fail"
 
       - name: Upload smoke artifacts
         if: always()
@@ -83,5 +208,5 @@ jobs:
         with:
           name: release-smoke-packages
           path: target/package/*.crate
-          retention-days: 7
+          retention-days: 1
           if-no-files-found: warn

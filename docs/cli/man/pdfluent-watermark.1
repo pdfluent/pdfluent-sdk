@@ -1,0 +1,97 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH PDFLUENT-WATERMARK 1  "pdfluent 1.1.0" PDFluent
+.SH NAME
+pdfluent\-watermark \- Add a text or image watermark across all pages
+.SH SYNOPSIS
+\fBpdfluent watermark\fR [\fB\-\-json\fR] <\fB\-o\fR|\fB\-\-out\fR> [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-text\fR] [\fB\-\-image\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-\-position\fR] [\fB\-\-at\fR] [\fB\-\-rotate\fR] [\fB\-\-opacity\fR] [\fB\-\-layer\fR] [\fB\-\-font\-size\fR] [\fB\-\-color\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIINPUT\fR> 
+.SH DESCRIPTION
+Add a text or image watermark across all pages
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Machine\-readable JSON envelope on stdout
+.TP
+\fB\-o\fR, \fB\-\-out\fR \fI<OUT>\fR
+Output PDF, or `\-` for stdout
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Quiet: human mode prints data only (no warnings or progress notes)
+.TP
+\fB\-\-text\fR \fI<TEXT>\fR
+Watermark text (exactly one of \-\-text/\-\-image)
+.TP
+\fB\-\-image\fR \fI<FILE>\fR
+Watermark image (PNG or JPEG; exactly one of \-\-text/\-\-image)
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose stderr diagnostics (repeat for more)
+.TP
+\fB\-\-position\fR \fI<POSITION>\fR [default: center]
+Placement on the page
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+center: Centred (default)
+.IP \(bu 2
+top\-left: Top\-left corner
+.IP \(bu 2
+top\-right: Top\-right corner
+.IP \(bu 2
+bottom\-left: Bottom\-left corner
+.IP \(bu 2
+bottom\-right: Bottom\-right corner
+.IP \(bu 2
+exact: Exact coordinates (needs `\-\-at X,Y`)
+.RE
+.TP
+\fB\-\-at\fR \fI<X,Y>\fR
+Coordinates in PDF points: inset from the corner for corner placements (default `36,36`), absolute for `exact` (required)
+.TP
+\fB\-\-rotate\fR \fI<ROTATE>\fR [default: 0]
+Rotation in degrees (text only)
+.TP
+\fB\-\-opacity\fR \fI<OPACITY>\fR [default: 0.5]
+Opacity from 0 (invisible) to 1 (opaque)
+.TP
+\fB\-\-layer\fR \fI<LAYER>\fR [default: foreground]
+Foreground or background placement (text only)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+foreground: In front of the content
+.IP \(bu 2
+background: Behind the content
+.RE
+.TP
+\fB\-\-font\-size\fR \fI<FONT_SIZE>\fR [default: 48]
+Font size in points (text only)
+.TP
+\fB\-\-color\fR \fI<COLOR>\fR [default: 999999]
+Text colour as RRGGBB hex (text only)
+.TP
+\fB\-\-width\fR \fI<WIDTH>\fR
+Image display width in points (image only; default scales the image to half the page width, keeping its aspect)
+.TP
+\fB\-\-height\fR \fI<HEIGHT>\fR
+Image display height in points (image only; default keeps aspect)
+.TP
+\fB\-\-force\fR
+Overwrite the existing output file
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+<\fIINPUT\fR>
+Input PDF, or `\-` for stdin
+.SH VERSION
+v1.1.0

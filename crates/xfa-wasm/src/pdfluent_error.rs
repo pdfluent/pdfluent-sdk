@@ -87,6 +87,10 @@ pub mod code {
     pub const WASM_INVALID_JSON: &str = "E-WASM-INVALID-JSON";
     /// FormCalc scripting failed.
     pub const WASM_FORMCALC_FAILED: &str = "E-WASM-FORMCALC-FAILED";
+    /// Wrong password, or a password that does not entitle the operation.
+    pub const SECURITY_DECRYPTION_FAILED: &str = "E-SECURITY-DECRYPTION-FAILED";
+    /// Creating a digital signature failed.
+    pub const WASM_SIGN_FAILED: &str = "E-WASM-SIGN-FAILED";
 }
 
 /// Legacy SCREAMING_SNAKE_CASE codes preserved on the `legacyCode` property.
@@ -107,6 +111,8 @@ pub mod legacy_code {
     pub const PDFA_CLEANUP_FAILED: &str = "PDFA_CLEANUP_FAILED";
     pub const COLORSPACE_ERROR: &str = "COLORSPACE_ERROR";
     pub const XMP_REPAIR_FAILED: &str = "XMP_REPAIR_FAILED";
+    pub const DECRYPTION_FAILED: &str = "DECRYPTION_FAILED";
+    pub const SIGN_FAILED: &str = "SIGN_FAILED";
 }
 
 fn build(code: &str, message: &str, operation: &str, help: &str, legacy_code: &str) -> JsValue {

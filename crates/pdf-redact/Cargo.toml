@@ -1,6 +1,6 @@
 [package]
 name = "pdf-redact"
-version = "1.0.0"
+version = "1.1.0"
 edition.workspace = true
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
 license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
@@ -9,17 +9,17 @@ repository.workspace = true
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 description = "GDPR-compliant PDF redaction: permanent content removal"
-# Tests do not travel. They read fixtures from the repository, which are not in
-# the tarball -- so they cannot build outside this workspace, and what they do
-# carry into a published crate is a path into a tree the reader does not have.
-# `pdfluent` and `pdf-xfa` have kept them out for that reason since they were
-# first published; this one had not.
+# Tests do not travel. They read fixtures from the repository, three directories
+# up, which are not in the tarball -- so they cannot build outside this
+# workspace, and what they do carry into a published crate is a path into a tree
+# the reader does not have. `pdfluent` and `pdf-xfa` have kept them out for that
+# reason since they were first published; this one had not (#358).
 exclude = ["tests/"]
 
 [dependencies]
 lopdf.workspace = true
-pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0" }
-pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.0.0" }
+pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.1.0" }
+pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.1.0" }
 regex = "1"
 thiserror.workspace = true
 flate2 = "1"
