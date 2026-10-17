@@ -25,7 +25,10 @@
 # Locally, on a small machine, pass --build-arg JOBS=4 to bound memory.
 FROM rust:1.94.0-bookworm
 
-ARG JOBS=
+# Linking the test binaries of the 1.1.0 workspace in parallel ran out of
+# memory on a 7.6 GB builder with one job per core; 4 jobs built in 24 min.
+# 8 keeps a 16-core builder busy without that risk. Empty means one per core.
+ARG JOBS=8
 ARG NIGHTLY=nightly-2026-10-01
 ARG CARGO_FUZZ_VERSION=0.13.2
 
