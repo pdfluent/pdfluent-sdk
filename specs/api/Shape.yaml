@@ -1,0 +1,228 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for Shape, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: Shape
+rust_path: pdfluent::compat::Shape
+names: {python: Shape, node: Shape, java: Shape, dotnet: Shape}
+members:
+  - name: __eq__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __eq__, node: eq, java: eq, dotnet: Eq}
+    rust: "Shape::PartialEq"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-eq]
+  - name: __ge__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ge__, node: ge, java: ge, dotnet: Ge}
+    rust: "Shape::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-ge]
+  - name: __gt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __gt__, node: gt, java: gt, dotnet: Gt}
+    rust: "Shape::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-gt]
+  - name: __init__
+    kind: constructor
+    signature: "(page: 'Page')"
+    names: {python: __init__, node: Shape, java: Shape, dotnet: Shape}
+    rust: "Shape::new"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-init]
+  - name: __le__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __le__, node: le, java: le, dotnet: Le}
+    rust: "Shape::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-le]
+  - name: __lt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __lt__, node: lt, java: lt, dotnet: Lt}
+    rust: "Shape::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-lt]
+  - name: __ne__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ne__, node: ne, java: ne, dotnet: Ne}
+    rust: "Shape::PartialEq"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-ne]
+  - name: commit
+    kind: method
+    signature: "(overlay: 'bool'=True) -> 'None'"
+    names: {python: commit, node: commit, java: commit, dotnet: Commit}
+    rust: "Shape::commit"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.shape.commit_overlay]
+  - name: draw_bezier
+    kind: method
+    signature: "(p1: 'point_like', p2: 'point_like', p3: 'point_like', p4: 'point_like') -> 'Point'"
+    names: {python: draw_bezier, node: drawBezier, java: drawBezier, dotnet: DrawBezier}
+    rust: "Shape::draw_bezier"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-draw-bezier]
+  - name: draw_circle
+    kind: method
+    signature: "(center: 'point_like', radius: 'float') -> 'Point'"
+    names: {python: draw_circle, node: drawCircle, java: drawCircle, dotnet: DrawCircle}
+    rust: "Shape::draw_circle"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-draw-circle]
+  - name: draw_curve
+    kind: method
+    signature: "(p1: 'point_like', p2: 'point_like', p3: 'point_like') -> 'Point'"
+    names: {python: draw_curve, node: drawCurve, java: drawCurve, dotnet: DrawCurve}
+    rust: "Shape::draw_curve"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-draw-curve]
+  - name: draw_line
+    kind: method
+    signature: "(p1: 'point_like', p2: 'point_like') -> 'Point'"
+    names: {python: draw_line, node: drawLine, java: drawLine, dotnet: DrawLine}
+    rust: "Shape::draw_line"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.new_shape.line]
+  - name: draw_oval
+    kind: method
+    signature: "(tetra: 'typing.Union[quad_like, rect_like]') -> 'Point'"
+    names: {python: draw_oval, node: drawOval, java: drawOval, dotnet: DrawOval}
+    rust: "Shape::draw_oval"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-draw-oval]
+  - name: draw_polyline
+    kind: method
+    signature: "(points: 'list') -> 'Point'"
+    names: {python: draw_polyline, node: drawPolyline, java: drawPolyline, dotnet: DrawPolyline}
+    rust: "Shape::draw_polyline"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-draw-polyline]
+  - name: draw_quad
+    kind: method
+    signature: "(quad: 'quad_like') -> 'Point'"
+    names: {python: draw_quad, node: drawQuad, java: drawQuad, dotnet: DrawQuad}
+    rust: "Shape::draw_quad"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-draw-quad]
+  - name: draw_rect
+    kind: method
+    signature: "(rect: 'rect_like', *, radius=None) -> 'Point'"
+    names: {python: draw_rect, node: drawRect, java: drawRect, dotnet: DrawRect}
+    rust: "Shape::draw_rect"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.new_shape.rect]
+  - name: draw_sector
+    kind: method
+    signature: "(center: 'point_like', point: 'point_like', beta: 'float', fullSector: 'bool'=True) -> 'Point'"
+    names: {python: draw_sector, node: drawSector, java: drawSector, dotnet: DrawSector}
+    rust: "Shape::draw_sector"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-draw-sector]
+  - name: draw_squiggle
+    kind: method
+    signature: "(p1: 'point_like', p2: 'point_like', breadth=2) -> 'Point'"
+    names: {python: draw_squiggle, node: drawSquiggle, java: drawSquiggle, dotnet: DrawSquiggle}
+    rust: "Shape::draw_squiggle"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-draw-squiggle]
+  - name: draw_zigzag
+    kind: method
+    signature: "(p1: 'point_like', p2: 'point_like', breadth: 'float'=2) -> 'Point'"
+    names: {python: draw_zigzag, node: drawZigzag, java: drawZigzag, dotnet: DrawZigzag}
+    rust: "Shape::draw_zigzag"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-draw-zigzag]
+  - name: finish
+    kind: method
+    signature: "(width: 'float'=1, color: 'OptSeq'=(0,), fill: 'OptSeq'=None, lineCap: 'int'=0, lineJoin: 'int'=0, dashes: 'OptStr'=None, even_odd: 'bool'=False, morph: 'OptSeq'=None, closePath: 'bool'=True, fill_opacity: 'float'=1, stroke_opacity: 'float'=1, oc: 'int'=0) -> 'None'"
+    names: {python: finish, node: finish, java: finish, dotnet: Finish}
+    rust: "Shape::finish"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.shape.finish_options]
+  - name: horizontal_angle
+    kind: method
+    signature: "(C, P)"
+    names: {python: horizontal_angle, node: horizontalAngle, java: horizontalAngle, dotnet: HorizontalAngle}
+    rust: "Shape::horizontal_angle"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-horizontal-angle]
+  - name: insert_text
+    kind: method
+    signature: "(point: 'point_like', buffer: 'typing.Union[str, list]', *, fontsize: 'float'=11, lineheight: 'OptFloat'=None, fontname: 'str'='helv', fontfile: 'OptStr'=None, set_simple: 'bool'=0, encoding: 'int'=0, color: 'OptSeq'=None, fill: 'OptSeq'=None, render_mode: 'int'=0, border_width: 'float'=0.05, miter_limit: 'float'=1, rotate: 'int'=0, morph: 'OptSeq'=None, stroke_opacity: 'float'=1, fill_opacity: 'float'=1, oc: 'int'=0) -> 'int'"
+    names: {python: insert_text, node: insertText, java: insertText, dotnet: InsertText}
+    rust: "Shape::insert_text"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.shape.insert_text]
+  - name: insert_textbox
+    kind: method
+    signature: "(rect: 'rect_like', buffer: 'typing.Union[str, list]', *, align: 'int'=0, border_width: 'float'=0.05, color: 'OptSeq'=None, encoding: 'int'=0, expandtabs: 'int'=1, fill_opacity: 'float'=1, fill: 'OptSeq'=None, fontfile: 'OptStr'=None, fontname: 'OptStr'='helv', fontsize: 'float'=11, lineheight: 'OptFloat'=None, miter_limit: 'float'=1, morph: 'OptSeq'=None, oc: 'int'=0, render_mode: 'int'=0, rotate: 'int'=0, set_simple: 'bool'=0, stroke_opacity: 'float'=1) -> 'float'"
+    names: {python: insert_textbox, node: insertTextbox, java: insertTextbox, dotnet: InsertTextbox}
+    rust: "Shape::insert_textbox"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-insert-textbox]
+  - name: updateRect
+    kind: method
+    signature: "(x)"
+    names: {python: updateRect, node: updateRect, java: updateRect, dotnet: UpdateRect}
+    rust: "Shape::update_rect"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-shape-updaterect]

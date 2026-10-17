@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""D13A — Runner integration guards for the `pdfluent measure` subcommand.
+"""D13A — Runner integration guards for the `xfa-runner measure` subcommand.
 
 Verifies that run_fresh_merge_policy_comparison.py targets the D13A `measure`
 contract: `measure` subcommand, `--output-json` (not `--metrics-out`), and the
@@ -69,20 +69,20 @@ def guard_runner_targets_measure_contract():
     check('"--timeout"' not in cmd, "measure cmd must NOT forward --timeout to the binary")
 
 
-def guard_binary_autodetect_includes_pdfluent():
-    """Binary auto-detection should find the `pdfluent` binary name."""
+def guard_binary_autodetect_includes_xfa_runner():
+    """Binary auto-detection should find the `xfa-runner` binary name."""
     mod = _load(RUNNER)
     # _resolve_binary returns None when no binary exists locally; we only assert
-    # that the candidate list (as reflected in source) includes pdfluent.
+    # that the candidate list (as reflected in source) includes xfa-runner.
     with open(os.path.join(HERE, RUNNER + ".py"), encoding="utf-8") as fh:
         src = fh.read()
-    check("pdfluent" in src, "runner binary auto-detect must include 'pdfluent'")
+    check("xfa-runner" in src, "runner binary auto-detect must include 'xfa-runner'")
 
 
 def main():
     guard_policy_cli_token_mapping()
     guard_runner_targets_measure_contract()
-    guard_binary_autodetect_includes_pdfluent()
+    guard_binary_autodetect_includes_xfa_runner()
 
     if FAILS:
         print("FAIL — measure runner integration guards:")

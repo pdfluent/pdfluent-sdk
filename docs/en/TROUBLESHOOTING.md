@@ -27,11 +27,11 @@ fidelity is a separate beta track.
 | module fails to instantiate in browser | wrong asset path / MIME | Serve the `.wasm` with `application/wasm`; await `init()` before calls (see `pdfluent-examples/wasm/strict-ts-edit/`). |
 | works in Node, not browser | environment difference | Use the browser entry; browser load/init timing is tracked under Performance (PF-8). |
 
-## License activation
+## Licensing
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| activation fails | invalid/expired/wrong-signed key | Check the typed license error code in the catalogue; no silent fallback occurs after a failed activation — the call returns an error. |
+| looking for the licence key | there is none | The SDK has no key, no activation call and no tier (#226); every feature works in every build. `PDFLUENT_LICENSE_KEY` is read by nothing. Which licence you accept — AGPL-3.0 or the commercial one — is a legal question, not a runtime one: <https://pdfluent.com/sdk/pricing>. |
 
 ## Malformed / encrypted PDFs
 

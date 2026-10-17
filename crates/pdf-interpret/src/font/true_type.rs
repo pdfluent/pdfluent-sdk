@@ -2,8 +2,9 @@ use crate::font::blob::{CffFontBlob, OpenTypeFontBlob};
 use crate::font::generated::{glyph_names, mac_os_roman, mac_roman, standard};
 use crate::font::standard_font::StandardKind;
 use crate::font::{
-    Encoding, FallbackFontQuery, FontFlags, glyph_name_to_unicode, read_to_unicode,
-    strip_subset_prefix, synthesize_unicode_map_from_encoding, unicode_from_name,
+    Encoding, FallbackFontQuery, FontFlags, NamedEntry, glyph_name_to_bfstring, is_control_only,
+    read_to_unicode, strip_subset_prefix, synthesize_unicode_map_from_encoding, table_entry,
+    unicode_from_name,
 };
 use crate::util::{OptionLog, decode_or_warn};
 use crate::{CMapResolverFn, CacheKey, FontResolverFn, InterpreterWarning, WarningSinkFn};
@@ -30,7 +31,7 @@ pub(crate) struct TrueTypeFont {
     cache_key: u128,
     kind: Kind,
     to_unicode: Option<CMap>,
-    encoding_unicode: Option<[Option<char>; 256]>,
+    encoding_unicode: Option<[Option<NamedEntry>; 256]>,
 }
 
 #[derive(Debug)]
@@ -95,7 +96,7 @@ impl TrueTypeFont {
                     font_resolver,
                 )?),
                 to_unicode: to_unicode.clone(),
-                encoding_unicode,
+                encoding_unicode: encoding_unicode.clone(),
             })
         };
 
@@ -266,25 +267,58 @@ impl TrueTypeFont {
         if let Some(to_unicode) = &self.to_unicode
             && let Some(c) = to_unicode.lookup_bf_string(code)
         {
-            return Some(c);
+            if !is_control_only(&c) {
+                return Some(c);
+            }
+            // A value of only control characters is no text: a glyph name
+            // from the document's /Encoding speaks first, and the value
+            // stands when there is none or it reads as nothing.
+            let named = match &self.kind {
+                Kind::Embedded(e) => e
+                    .declared_code_to_name(code as u8)
+                    .and_then(glyph_name_to_bfstring),
+                Kind::Standard(s) => s.char_code_to_unicode(code as u8),
+                Kind::TextOnly(_) => None,
+            };
+            return named.or(Some(c));
         }
 
         if let Some(map) = &self.encoding_unicode
-            && let Some(ch) = usize::try_from(code)
+            && let Some(text) = usize::try_from(code)
                 .ok()
                 .and_then(|char_code| map.get(char_code))
-                .copied()
-                .flatten()
+                .and_then(table_entry)
         {
-            return Some(BfString::Char(ch));
+            return Some(text);
         }
 
         match &self.kind {
-            Kind::Embedded(e) => e
-                .code_to_name(code as u8)
-                .and_then(glyph_name_to_unicode)
-                .map(BfString::Char),
-            Kind::Standard(s) => s.char_code_to_unicode(code as u8).map(BfString::Char),
+            Kind::Embedded(e) => match e.code_to_name(code as u8) {
+                // The document's own naming outranks the program's, per
+                // code: when it names one, that answer stands even when no
+                // rule reads it.
+                Some(name) => glyph_name_to_bfstring(name),
+                // No document-level name (no `/Encoding`, no differences
+                // entry, nothing in the standard fallback): read the name
+                // the embedded program's `post` table gives the mapped
+                // glyph, through the same name reader (#636). Without this
+                // a bare symbolic font's `uniXXXX...` names never reach
+                // the text.
+                None => {
+                    let glyph = e.map_code(code as u8);
+                    if glyph == GlyphId::NOTDEF {
+                        return None;
+                    }
+                    let id = u16::try_from(glyph.to_u32()).ok()?;
+                    e.base_font
+                        .font_ref()
+                        .post()
+                        .ok()?
+                        .glyph_name(GlyphId16::new(id))
+                        .and_then(glyph_name_to_bfstring)
+                }
+            },
+            Kind::Standard(s) => s.char_code_to_unicode(code as u8),
             Kind::TextOnly(_) => None,
         }
 
@@ -407,11 +441,17 @@ impl EmbeddedKind {
             .unwrap_or(false)
     }
 
-    fn code_to_name(&self, code: u8) -> Option<&str> {
+    /// The glyph name the font dictionary's /Encoding gives the code, without
+    /// the standard-encoding guess of [`Self::code_to_name`].
+    fn declared_code_to_name(&self, code: u8) -> Option<&str> {
         self.differences
             .get(&code)
             .map(|s| s.as_str())
             .or_else(|| self.encoding.map_code(code))
+    }
+
+    fn code_to_name(&self, code: u8) -> Option<&str> {
+        self.declared_code_to_name(code)
             // See PDFJS-6410 - PDF has no base encoding, so let's fallback to
             // standard here.
             .or_else(|| standard::get(code))

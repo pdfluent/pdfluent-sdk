@@ -1,0 +1,33 @@
+# Gates that can only be judged on the machine the operator is sitting at.
+#
+# One name per line -- the short name local_ci_gate.sh prints -- followed by why.
+# Read by local_ci_gate.sh (GATE_LANE_PLACE) and by
+# scripts/ci/test_gate_places_partition_the_lane.py, which fails when a name here
+# is not a gate the file actually runs. One list, two readers: a second copy
+# would drift, and the one that drifts is the one nobody runs.
+#
+# WHY THIS FILE EXISTS. A gate run on a throwaway instance (#474) is a different
+# machine with a different identity: no `gh` keyring, no private lists under
+# ~/.config/pdfluent, and root rather than a user a chmod can keep out. Every
+# gate below answered "SKIPPED (not a pass)" on the first complete remote lane --
+# which is the honest answer and a red one, and the wrong lever would have been
+# to soften it. So these five stay here, where they mean something, and cost
+# seconds; everything else goes to the instance, where it costs minutes of
+# somebody else's CPU.
+#
+# Adding a name is a decision about where a gate can be judged, not a way to
+# quiet one: a gate that fails on the instance for a reason that travels -- a
+# missing package, a ref nobody pushed -- belongs in the instance's preparation,
+# and three of the nine did.
+
+labelstest  # needs `gh` with administration:read; a token this repository's runners cannot hold
+prstale     # needs `gh` and the pull request list; no token on a throwaway instance
+withdrawn   # reads the withdrawn-objects list under the operator's ~/.config/pdfluent
+msgclean    # reads the customer and partner term list under the operator's ~/.config/pdfluent
+buildmnt    # tells a mount from a dead disk from a rights problem; as root, chmod 500 keeps nobody out
+wthooks     # the worktrees to judge are the operator's; an instance has one, made by the gate's own preparation
+enumseal    # the pinned nightly rustdoc against the v1.0.0 tag, as for semver below; the instance preparation does not install that nightly yet
+semver      # cargo-semver-checks and the pinned nightly rustdoc against the v1.0.0 tag; the instance preparation installs neither yet (14-10-2026: added so the 1.x contract is checked before a release, not first at publish)
+
+# And one that does NOT need this machine, but must not wait for another one:
+fmt         # cheap and deterministic (the toolchain is pinned); judged here, before a machine is queued for, so a formatting slip costs seconds and not a two-hour queue ending in a refusal (1948, 23-09-2026)

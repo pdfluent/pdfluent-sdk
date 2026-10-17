@@ -6,24 +6,100 @@
 # version for remediation.
 
 [advisories]
+# The same list as deny.toml's `[advisories] ignore`, and
+# scripts/ci/the_advisory_lists_agree.py compares the two rather than trusting
+# them. The reasons are written out once, in deny.toml; repeating prose in two
+# files is how the two stopped agreeing the first time (#294).
 ignore = [
-    # rsa 0.9.x — Marvin Attack timing side-channel (RUSTSEC-2023-0071 / CVE-2023-49092).
-    # Used transitively by pdf-sign → cms → rsa for RSA signature operations.
-    # No patch available upstream; mitigated for our use-case because the signing
-    # key is never exposed to network-observable timing attacks (offline signing
-    # in a controlled environment).
-    # Tracked: upgrade rsa when a patched version is released.
+    # ------------------------------------------------------------------ FIXED
+    # Not listed, because they are gone from the tree rather than accepted:
+    #   RUSTSEC-2026-0190 (anyhow, unsound `Error::downcast_mut`)  -> 1.0.104
+    #   RUSTSEC-2026-0204 (crossbeam-epoch, invalid pointer deref) -> 0.9.21
+    #   RUSTSEC-2026-0187 (lopdf 0.34, stack overflow on nested arrays)
+    #       -> the dependency was declared by xfa-pdfrest-compare and used by
+    #          nothing in it; removed rather than bumped.
+    #   RUSTSEC-2026-0049/0098/0099/0104 (rustls-webpki) were accepted here
+    #       until 08-09-2026; the tree now carries a patched version, so the
+    #       four entries described nothing and cargo-deny said so
+    #       ("advisory was not encountered"). An ignore that matches no crate
+    #       is not a decision on the record, it is a decision nobody can check.
+    #
+    # ----------------------------------------------------- ACCEPTED, WITH WHY
+    # rsa 0.9.x -- Marvin Attack timing side-channel (RUSTSEC-2023-0071).
+    # Transitively via pdf-sign -> cms -> rsa. No upstream patch; our signing is
+    # offline, so the timing channel is not network-observable.
     "RUSTSEC-2023-0071",
 
-    # rustls-webpki 0.103.x — four advisories published in 2026, all related to
-    # certificate validation edge cases (CRL parsing panic, distribution-point
-    # matching, URI name-constraint handling, wildcard name constraints).
-    # Used transitively by pdf-sign → rustls for TLS in timestamp/OCSP operations.
-    # Patched in rustls-webpki ≥ 0.103.10; we accept temporarily while the
-    # dependency tree is updated.
-    # Tracked: bump rustls-webpki via a dedicated dependency update PR.
-    "RUSTSEC-2026-0104",
-    "RUSTSEC-2026-0049",
-    "RUSTSEC-2026-0098",
-    "RUSTSEC-2026-0099",
+    # quick-xml -- two denial-of-service advisories against the READER:
+    # quadratic time on duplicate attribute names (RUSTSEC-2026-0194) and
+    # unbounded namespace-declaration allocation in `NsReader`
+    # (RUSTSEC-2026-0195). Fixed in >= 0.41.0, which is two semver-breaking
+    # releases away from the 0.37 our crates pin.
+    #
+    # Measured before accepting, because "we only write XML" is the kind of
+    # claim that is true until it is not: the workspace holds eight
+    # `quick_xml::Reader` call sites and every one of them is inside a
+    # `#[cfg(test)]` module reading back a document the test just wrote
+    # (pdf-docx, pdf-xlsx, pdf-pptx). pdf-invoice uses `Writer` only. No
+    # shipped code path hands attacker-controlled XML to quick-xml's reader.
+    # The second copy, 0.39.4, arrives under tauri -> plist and parses the
+    # desktop app's own Info.plist at build time.
+    #
+    # The migration to 0.41 is a code change with its own tests, not a lockfile
+    # bump, so it is not being done inside a CI repair. (#448)
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+
+    # ttf-parser 0.25 -- unmaintained (RUSTSEC-2026-0192). A direct dependency
+    # of pdf-compliance, and the only one of these that is ours to choose. The
+    # successor is skrifa, which this workspace already builds against
+    # elsewhere, so the replacement is a real piece of work with real tests
+    # rather than a version bump.
+    "RUSTSEC-2026-0192",
+
+    # fxhash 0.2.1 -- unmaintained (RUSTSEC-2025-0057). Via
+    # selectors -> scraper -> pdfluent-snippet-extract, the tool that reads
+    # code samples out of the website. A hasher, in a build-time tool.
+    "RUSTSEC-2025-0057",
+
+    # number_prefix 0.4.0 -- unmaintained (RUSTSEC-2025-0119). Via
+    # indicatif -> xfa-test-runner: it formats "1.2 MB" in a progress bar.
+    "RUSTSEC-2025-0119",
+
+    # paste 1.0.15 -- unmaintained, archived by its author (RUSTSEC-2024-0436).
+    # Via rav1e -> ravif -> image. A proc-macro that pastes identifiers; it does
+    # not run in the built product at all.
+    "RUSTSEC-2024-0436",
+
+    # proc-macro-error 1.0.4 -- unmaintained (RUSTSEC-2024-0370). Via
+    # glib-macros -> glib -> the gtk3 stack below. Also build-time only.
+    "RUSTSEC-2024-0370",
+
+    # unic-* 0.9.0 -- five unmaintained crates, one family
+    # (RUSTSEC-2025-0075/0080/0081/0098/0100). Via
+    # urlpattern -> tauri-utils -> tauri. Unicode character tables.
+    "RUSTSEC-2025-0075",
+    "RUSTSEC-2025-0080",
+    "RUSTSEC-2025-0081",
+    "RUSTSEC-2025-0098",
+    "RUSTSEC-2025-0100",
+
+    # The gtk3-rs bindings -- ten crates, one deprecation
+    # (RUSTSEC-2024-0411 through 0420). atk, gdk, gdkwayland, gdkx11, gtk and
+    # their -sys and -macros siblings, all under tauri -> pdf-desktop, which is
+    # the only crate in this workspace that draws a window. gtk4-rs is the
+    # maintained successor and tauri 2 does not use it; the version of this
+    # decision that matters is tauri's, not ours. `pdf-desktop` is excluded
+    # from every build in CI (`--exclude pdf-desktop`), so none of this reaches
+    # the SDK or the CLI.
+    "RUSTSEC-2024-0411",
+    "RUSTSEC-2024-0412",
+    "RUSTSEC-2024-0413",
+    "RUSTSEC-2024-0414",
+    "RUSTSEC-2024-0415",
+    "RUSTSEC-2024-0416",
+    "RUSTSEC-2024-0417",
+    "RUSTSEC-2024-0418",
+    "RUSTSEC-2024-0419",
+    "RUSTSEC-2024-0420",
 ]

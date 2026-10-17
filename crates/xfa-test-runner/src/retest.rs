@@ -196,6 +196,7 @@ fn run_one(
     // Build test config with oracle
     let test_config = tests::TestConfig {
         verapdf_oracle: Some(Arc::clone(oracle)),
+        ..Default::default()
     };
 
     let mut available = tests::all_tests(test_config);

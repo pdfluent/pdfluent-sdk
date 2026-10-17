@@ -3,7 +3,7 @@
 
 Milestone: XFA_QUALITY_METRICS_V2_GOLDEN_BASELINE
 
-MEASUREMENT ONLY. Wraps the existing `pdfluent measure` binary (no rendering/parser/
+MEASUREMENT ONLY. Wraps the existing `xfa-runner measure` binary (no rendering/parser/
 FreshMerge behavior change) and compares PDFluent's flattened output against golden
 oracle assets (oracle text + oracle flattened PDF page count). Emits one sanitized
 record per (doc, policy) conforming to metrics_v2_record.schema.json.

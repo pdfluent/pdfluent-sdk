@@ -12,8 +12,8 @@ keywords = ["pdf", "editing", "manipulation", "merge"]
 license = "MIT"
 readme = "README.md"
 name = "pdfluent-lopdf"
-repository = "https://pdfluent.com/source"
-version = "0.39.5"
+repository = "https://github.com/pdfluent/pdfluent-sdk"
+version = "0.39.6"
 # Raised from 1.85 by the merge to upstream 0.44.0, not by choice: the merged
 # code uses let-chains (`if let Some(x) = e && ...`), stable in Rust 1.88, in
 # the reader, parser and object model. 1.85 was already wrong the moment those
@@ -32,7 +32,7 @@ ecb = "0.2"
 encoding_rs = "0.8.32"
 flate2 = "1.1"
 hayro-ccitt = { package = "pdfluent-ccitt", path = "../hayro-ccitt", optional = true, version = "=0.2.3" }
-hayro-jbig2 = { package = "pdfluent-jbig2", path = "../hayro-jbig2", optional = true, version = "=0.2.3" }
+hayro-jbig2 = { package = "pdfluent-jbig2", path = "../hayro-jbig2", optional = true, version = "=0.3.0" }
 hayro-jpeg2000 = { package = "pdfluent-jpeg2000", path = "../hayro-jpeg2000", optional = true, default-features = false, version = "=0.4.0" }
 image = { version = "0.25", optional = true }
 indexmap = "2.14"

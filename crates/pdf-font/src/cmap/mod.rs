@@ -735,6 +735,27 @@ endcodespacerange
         CMap::parse(&data, |_| None).unwrap()
     }
 
+    /// A `/CMapName` whose value is a file path leaves bare tokens behind, and
+    /// a stray `-` is not a number in any of them. Dropping the whole map over
+    /// one turned every code in `issue7492.pdf` into its own code point (#431).
+    #[test]
+    fn a_token_we_cannot_read_does_not_cost_the_whole_map() {
+        let data = br#"/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CMapName /-usr-share-fonts-truetype-Panton-Panton Family-Fontfabric - Panton.otf,000-UTF16 def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+1 beginbfchar
+<0055> <0050>
+endbfchar
+endcmap"#;
+
+        let cmap = CMap::parse(data, |_| None).expect("the map survives the file path");
+        assert_eq!(cmap.lookup_bf_string(0x0055), Some(BfString::Char('P')));
+    }
+
     #[test]
     fn metadata_parsing() {
         let data = br#"

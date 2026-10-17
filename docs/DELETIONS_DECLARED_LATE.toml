@@ -1,0 +1,60 @@
+# Deletions that reached master without a `Removes-deliberately:` trailer,
+# declared afterwards (#592). A trailer can only travel on the commit that
+# deletes, so these could never be declared the ordinary way, and
+# deletions-declare-themselves.yml -- whose push base is the last green run --
+# reported the same paths on every run and was not green once from 12-09 on.
+#
+# An entry counts only when its commit is in the history being checked AND
+# deletes every path it lists (scripts/ci/a_deletion_declares_itself.py). This
+# is for the past: a new deletion carries its trailer.
+[[late]]
+commit = "4d3df7d6b0a63af73ce1862a720790d7896cee52"
+why = "The licence commit of 07-09 (#349): LICENSE became the AGPL text itself, so the per-crate LICENSE-AGPL copies beside it went. Deliberate; the commit predates the trailer being required on master's pushes."
+paths = [
+  "LICENSE-AGPL",
+  "bindings/dotnet/src/PDFluent/LICENSE-AGPL",
+  "bindings/java/LICENSE-AGPL",
+  "crates/formcalc-interpreter/LICENSE-AGPL",
+  "crates/pdf-annot/LICENSE-AGPL",
+  "crates/pdf-capi/LICENSE-AGPL",
+  "crates/pdf-compliance/LICENSE-AGPL",
+  "crates/pdf-docx/LICENSE-AGPL",
+  "crates/pdf-engine/LICENSE-AGPL",
+  "crates/pdf-extract/LICENSE-AGPL",
+  "crates/pdf-forms/LICENSE-AGPL",
+  "crates/pdf-invoice/LICENSE-AGPL",
+  "crates/pdf-manip/LICENSE-AGPL",
+  "crates/pdf-node/LICENSE-AGPL",
+  "crates/pdf-ocr/LICENSE-AGPL",
+  "crates/pdf-pptx/LICENSE-AGPL",
+  "crates/pdf-python/LICENSE-AGPL",
+  "crates/pdf-redact/LICENSE-AGPL",
+  "crates/pdf-sign/LICENSE-AGPL",
+  "crates/pdf-standard-fonts/LICENSE-AGPL",
+  "crates/pdf-text-format/LICENSE-AGPL",
+  "crates/pdf-xfa/LICENSE-AGPL",
+  "crates/pdf-xlsx/LICENSE-AGPL",
+  "crates/pdfluent-cli/LICENSE-AGPL",
+  "crates/pdfluent/LICENSE-AGPL",
+  "crates/xfa-cli/LICENSE-AGPL",
+  "crates/xfa-dom-resolver/LICENSE-AGPL",
+  "crates/xfa-js-sandboxed/LICENSE-AGPL",
+  "crates/xfa-json/LICENSE-AGPL",
+  "crates/xfa-layout-engine/LICENSE-AGPL",
+  "crates/xfa-wasm/LICENSE-AGPL",
+]
+
+[[late]]
+commit = "429d1dcc412036894930d8ee28cc1b9b15d52e0b"
+why = "The PDF/A comparison of 07-09 replaced these two 300-sample JSONs with the four-converter run; its message says so, it carried no trailer."
+paths = [
+  "benchmarks/pdfa/comparison/ghostscript-10.07.1-300sample.json",
+  "benchmarks/pdfa/comparison/pdfluent-source-7ff6e9ee-300sample.json",
+]
+
+[[late]]
+commit = "6f3c0eb72503baa4973d986e50863ac146bd2859"
+why = "#358 kept one publish_ordered.sh (scripts/release/) and removed the duplicate in scripts/; the commit message says so, without the trailer."
+paths = [
+  "scripts/publish_ordered.sh",
+]

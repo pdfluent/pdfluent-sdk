@@ -15,7 +15,6 @@ Run from crates/pdf-python/:
 
 from __future__ import annotations
 
-from typing import List, Optional
 
 from pdfluent import (
     Annotation,
@@ -197,11 +196,12 @@ def use_extract_text(page: Page) -> str:
     return text
 
 
-def use_extract_text_doc(doc: Document) -> str:
-    text: str = doc.extract_text(0)
+def use_extract_markdown(doc: Document) -> str:
+    text: str = doc.extract_markdown()
+    full: str = doc.extract_markdown(
+        include_headers=True, include_footers=True, page_separators="none"
+    )
     return text
-
-
 def use_text_blocks(page: Page) -> List[TextBlock]:
     blocks: List[TextBlock] = page.extract_text_blocks()
     for block in blocks:

@@ -105,6 +105,8 @@ For each artifact, the audit MUST verify:
 
 `--allow-dirty` is banned for any publish that produces a public-channel artifact. It is permitted only for the internal `--dry-run` exploration step, and even then the operator should prefer a clean state.
 
+**One exception, and it is the audit's own output.** `prepublish_crate_audit.sh` writes three report files per crate into `benchmarks/runs/prepublish_audits/`, so on a multi-crate publish the audit of crate N would leave exactly the dirt that made the audit of crate N+1 refuse: the 1.0.0 publish of 16-09-2026 stopped at crate 5 of 32 for that reason. The check therefore drops **untracked** paths under that one directory, and nothing else. A tracked report that was edited, staged or deleted still stops the audit, because that is a change to the evidence of an earlier release rather than the output of this one -- with one narrower exception on top: the three report files the running audit is itself about to overwrite (`<crate>-<version>.md`, `.audit.md`, `.audit.json`) do not count either, whatever their git status, so that re-auditing a version whose reports are already committed does not stop the next crate in the train.
+
 ## 8. Dependency / yanked-version checks
 
 The audit MUST query the registry index (crates.io / npm / PyPI / etc.) and verify:
@@ -146,6 +148,7 @@ After publish, the operator MUST:
 3. Confirm licence files are present in the downloaded artifact.
 4. Run a fresh consumer smoke build in `/tmp` against the published version.
 5. Write a post-publish verification report under `benchmarks/runs/post_publish_verify/` (or the phase's `benchmarks/runs/PHASE*_ROUND*_*.md` for in-train work).
+6. For crates.io: run `python3 scripts/release/published_version_matches_the_workspace.py --all --record` and commit `scripts/release/published_crate_contents.json`. CI compares every push with that record, offline, so a commit that changes a published crate without moving its version fails at that commit, not at the next release. The next `--all` refuses a published version the record does not hold.
 
 Post-publish drift between the audited local artifact and the registry-distributed artifact is treated as a defect.
 
@@ -212,7 +215,7 @@ For each stop, write a `STOPPED.md` line at the bottom of the audit report stati
 - **Rollback runbook**: `docs/release/ROLLBACK_PROCEDURE.md` — consolidates §12 + §13 of this protocol into an under-pressure-readable runbook with per-channel yank commands.
 - **SHA ledger**: `docs/release/sha_ledger/` — append-only per-channel JSON record of every published artefact's sha256, used for indefinite post-publish drift detection. Tools: `scripts/release/ledger_add_entry.py`, `ledger_verify.py`, `ledger_mark_yanked.py`.
 - **Post-publish smoke orchestrator**: `scripts/release/post_publish_smoke_runner.sh` — runs every applicable consumer smoke per channel, aggregates into `benchmarks/runs/post_publish_verify/<ts>/SUMMARY.md`.
-- **New consumer smokes**: `docs/release/consumer_smokes/smoke_node.sh` (NAPI binding) and `smoke_binary.sh` (binary release tarball).
+- **New consumer smokes**: `scripts/release/consumer_smokes/smoke_node.sh` (NAPI binding) and `smoke_binary.sh` (binary release tarball).
 
 ## 16. Authoritative source
 

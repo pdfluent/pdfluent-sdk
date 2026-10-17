@@ -1,0 +1,210 @@
+# The compiling binding suites, each scoped to the tree it reads.
+#
+# Dispatch-only, by hand. This job stood in ci.yml, where it compiled the
+# engine on the desktop on every push to master -- the heavy work
+# heavy_work_leaves_the_desktop.py refuses there (#267, #350). On
+# ubuntu-latest a dispatch is a decision and may cost; the desktop keeps the
+# cheap guard jobs in ci.yml. Without a base commit every suite below runs
+# in full.
+#
+# The same scripts ride the landing lane beside this workflow (officext,
+# xtractpy, xtractjs, balbind, doordiff, r4py, r4node, r4java, r4dotnet and
+# r4capi in scripts/ci/local_ci_gate.sh), so the suites stay runnable
+# outside the lane too.
+name: Binding suites (dispatch-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binding-suites-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  # CI never edits twice: no incremental state, like ci.yml.
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  binding-suites:
+    name: The binding suites that compile, in their own job
+    # These three suites build the engine (maturin develop, napi build, npm
+    # install): minutes on a cold target dir, not the seconds of file
+    # scanning orchestration-guard promises. They lived there behind a
+    # PUSH_BEFORE diff — and on a new branch, where before=0000, the diff
+    # matches nothing and the light guard job compiled everything. Here the
+    # cost is explicit, scoped per suite, and parallel with the guards.
+    #
+    # ubuntu-latest: a dispatch is a decision and may cost, and this job
+    # compiles the engine -- the heavy work the desktop refuses (#267, #350).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The extract_office suite against this tree, but only when pdf-python
+      # moved: a throwaway venv plus a debug engine build is no per-push tax
+      # when the binding is untouched. No base (manual/scheduled run) builds.
+      - name: extract_office suite against this tree (when pdf-python moved)
+        if: ${{ !cancelled() }}
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$PUSH_BEFORE" ] && git diff --quiet "$PUSH_BEFORE"..HEAD -- crates/pdf-python/ scripts/release/run_office_tests.sh; then
+            echo "pdf-python untouched; skipping the extension build."
+            exit 0
+          fi
+          bash scripts/release/run_office_tests.sh
+      # The full extract suites, scoped to their trees: a debug engine build
+      # and an npm install are no per-push tax when the wrappers are untouched.
+      - name: pdfluent-extract suite against this tree (when it moved)
+        if: ${{ !cancelled() }}
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$PUSH_BEFORE" ] && git diff --quiet "$PUSH_BEFORE"..HEAD -- integrations/pdfluent-extract/ crates/pdf-python/ scripts/release/run_extract_tests.sh; then
+            echo "extract wrapper and engine untouched; skipping."
+            exit 0
+          fi
+          bash scripts/release/run_extract_tests.sh
+      - name: '@pdfluent/extract suite (when it moved)'
+        if: ${{ !cancelled() }}
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$PUSH_BEFORE" ] && git diff --quiet "$PUSH_BEFORE"..HEAD -- integrations/pdfluent-extract-js/ scripts/release/run_extract_js_tests.sh; then
+            echo "extract-js untouched; skipping."
+            exit 0
+          fi
+          bash scripts/release/run_extract_js_tests.sh
+      # The balanced-tier binding parity, both channels, against the CLI
+      # references they pin: scoped to the tree it reads, because it builds
+      # the CLI, the wheel and the addon from this tree first -- the script
+      # judges a prepared machine and does not prepare one. The wheel and
+      # the addon build with both ort features, the CLI with ort-layout for
+      # `models install`; the models come from the release base and stay in
+      # the per-user dir, so a warm machine installs nothing. (#661)
+      - name: Balanced-tier binding parity (when it moved)
+        if: ${{ !cancelled() }}
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$PUSH_BEFORE" ] && git diff --quiet "$PUSH_BEFORE"..HEAD -- crates/pdf-python/ crates/pdf-node/ crates/pdfluent-cli/ crates/pdf-engine/ scripts/release/run_balanced_binding_tests.sh; then
+            echo "balanced tree untouched; skipping."
+            exit 0
+          fi
+          set -euo pipefail
+          cargo build -q -p pdfluent-cli --features ort-layout --locked
+          WORK="$(mktemp -d "${TMPDIR:-/tmp}/balanced-binding-ci.XXXXXX")"
+          trap 'rm -rf "$WORK"' EXIT
+          python3 -m venv "$WORK/venv"
+          . "$WORK/venv/bin/activate"
+          python -m pip install --quiet --upgrade pip "maturin==1.15.0" pytest
+          (cd crates/pdf-python && maturin develop --features ort-layout,ort-tables)
+          (cd crates/pdf-node && npm install --no-audit --no-fund && npm run build)
+          export PDFLUENT_CLI="$PWD/target/debug/pdfluent"
+          export PDFLUENT_MODELS_BASE="https://github.com/pdfluent/pdfluent-sdk/releases/download/models-v1/"
+          bash scripts/release/run_balanced_binding_tests.sh
+      # The door difference self-test: the three D7 chunk tests report
+      # difference on base-14 boxes only, and any new divergence still fails
+      # rather than joining them. Needs pytest but no built binding and no
+      # spec checkout, so a throwaway venv is the whole preparation.
+      - name: Door difference self-test (when the door dir moved)
+        if: ${{ !cancelled() }}
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$PUSH_BEFORE" ] && git diff --quiet "$PUSH_BEFORE"..HEAD -- crates/pdf-python/tests/door/; then
+            echo "door dir untouched; skipping."
+            exit 0
+          fi
+          set -euo pipefail
+          WORK="$(mktemp -d "${TMPDIR:-/tmp}/door-difference-ci.XXXXXX")"
+          trap 'rm -rf "$WORK"' EXIT
+          python3 -m venv "$WORK/venv"
+          . "$WORK/venv/bin/activate"
+          python -m pip install --quiet pytest
+          python -m pytest crates/pdf-python/tests/door/test_door_difference_self.py -q
+      # The r4 pdf-python suites against this tree: the font-info door test,
+      # the known-images and plain-images suites, and the door OCR content
+      # test. A throwaway venv plus a debug engine build, scoped to the
+      # binding tree like the office suite above.
+      - name: r4 pdf-python suites (when pdf-python moved)
+        if: ${{ !cancelled() }}
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$PUSH_BEFORE" ] && git diff --quiet "$PUSH_BEFORE"..HEAD -- crates/pdf-python/ scripts/release/run_r4_pdfpython_tests.sh; then
+            echo "pdf-python untouched; skipping."
+            exit 0
+          fi
+          bash scripts/release/run_r4_pdfpython_tests.sh
+      # The r4 Node suites: known-images, plain-images, and the journal
+      # smoke, against a debug addon. The guards job above runs the whole
+      # tests/ directory without the addon, where these announce SKIPPED;
+      # here they run for real. Scoped to the binding tree: an npm install
+      # plus a debug napi build is no per-push tax when it is untouched.
+      - name: r4 Node suites (when pdf-node moved)
+        if: ${{ !cancelled() }}
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$PUSH_BEFORE" ] && git diff --quiet "$PUSH_BEFORE"..HEAD -- crates/pdf-node/ scripts/release/run_r4_node_tests.sh; then
+            echo "pdf-node untouched; skipping."
+            exit 0
+          fi
+          bash scripts/release/run_r4_node_tests.sh
+      # The r4 Java suites: KnownImagesTest and ImageExtractionTest against
+      # tree-built natives. java-bindings.yml covers crates/pdf-java only;
+      # bindings/java ran solely inside the dispatch-only release packaging
+      # until this step. Scoped to both native crates and the binding.
+      - name: r4 Java suites (when the Java tree moved)
+        if: ${{ !cancelled() }}
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$PUSH_BEFORE" ] && git diff --quiet "$PUSH_BEFORE"..HEAD -- bindings/java/ crates/pdf-java/ crates/pdf-capi/ scripts/release/run_r4_java_tests.sh; then
+            echo "java tree untouched; skipping."
+            exit 0
+          fi
+          bash scripts/release/run_r4_java_tests.sh
+      # The r4 .NET suite: PDFluent.Tests against a tree-built C ABI
+      # library, for the runtime's own architecture. Nothing ran `dotnet
+      # test` anywhere in the pipeline until this step; the r4 bodies --
+      # mirrored, known-images, and image extraction -- live in that
+      # project. Scoped to the binding and the native crate behind it.
+      - name: r4 .NET suite (when the dotnet tree moved)
+        if: ${{ !cancelled() }}
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$PUSH_BEFORE" ] && git diff --quiet "$PUSH_BEFORE"..HEAD -- bindings/dotnet/ crates/pdf-capi/ scripts/release/run_r4_dotnet_tests.sh; then
+            echo "dotnet tree untouched; skipping."
+            exit 0
+          fi
+          bash scripts/release/run_r4_dotnet_tests.sh
+      # The C API tests: `make run` over a release pdf-capi, whose TESTS
+      # list the r4 merge extended with the journal, form-write and plain
+      # image binaries. The same two commands capi-ephemeral.yml runs on
+      # its instance, scoped here to the crate they read.
+      - name: r4 C API tests (when pdf-capi moved)
+        if: ${{ !cancelled() }}
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$PUSH_BEFORE" ] && git diff --quiet "$PUSH_BEFORE"..HEAD -- crates/pdf-capi/ scripts/release/run_r4_capi_tests.sh; then
+            echo "pdf-capi untouched; skipping."
+            exit 0
+          fi
+          bash scripts/release/run_r4_capi_tests.sh
+      # 1.1.0 ships without the front door (#636): the parity suite and its
+      # matrix check stood here, scoped to the tree they read. Both stay in
+      # the tree, run by hand.

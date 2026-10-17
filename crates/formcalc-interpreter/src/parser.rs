@@ -89,24 +89,31 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<Expr>> {
     Ok(script)
 }
 
-/// Depth of the deepest path in a script, measured with an explicit stack.
-///
-/// The match is exhaustive on purpose: a variant added later must not be
-/// scored as a leaf by a wildcard arm, which would silently reopen this hole.
-/// How often the backstop had to refuse a tree that construction accepted.
-///
-/// Test-only, and it exists because there is nothing else to observe. The
-/// backstop below refuses an under-counted tree in *both* profiles, so
-/// "accepted implies `ast_depth <= MAX_DEPTH`" is true no matter how badly
-/// construction miscounts -- an assertion on the returned tree cannot fail.
-/// Only the `debug_assert` told the two apart, and that is compiled out of the
-/// `cargo test --release` that nightly.yml runs. (T2 review, #1642)
+// How often the backstop had to refuse a tree that construction accepted.
+//
+// Test-only, and it exists because there is nothing else to observe. The
+// backstop below refuses an under-counted tree in *both* profiles, so
+// "accepted implies `ast_depth <= MAX_DEPTH`" is true no matter how badly
+// construction miscounts -- an assertion on the returned tree cannot fail.
+// Only the `debug_assert` told the two apart, and that is compiled out of the
+// `cargo test --release` that nightly.yml runs. (T2 review, #1642)
+//
+// `//` and not `///`: rustdoc documents an item, and a `thread_local!` is a
+// macro invocation rather than one. The doc comment that stood here therefore
+// documented nothing, and it also swallowed ast_depth's own -- the two blocks
+// had merged into one when this was inserted between them. Under the wave's
+// `RUSTFLAGS: -D warnings` that is `unused_doc_comments`, i.e. an error, which
+// is why `formcalc-interpreter` did not compile as a lib test. (#361)
 #[cfg(test)]
 thread_local! {
     pub(crate) static BACKSTOP_FIRED: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
 
+/// Depth of the deepest path in a script, measured with an explicit stack.
+///
+/// The match is exhaustive on purpose: a variant added later must not be
+/// scored as a leaf by a wildcard arm, which would silently reopen this hole.
 fn ast_depth(script: &[Expr]) -> usize {
     let mut max = 0;
     let mut work: Vec<(&Expr, usize)> = script.iter().map(|e| (e, 1)).collect();
@@ -1951,33 +1958,54 @@ mod depth_bounds {
         );
     }
 
-    /// The error path, on the smallest stack the bound is meant to hold on.
+    /// A stack far too small to drop the tree these shapes would build, and
+    /// comfortably large enough to parse them.
+    ///
+    /// Both halves are the measurement. Too large and the drop fits, so
+    /// removing the construction bound would pass; too small and the *parser*
+    /// runs out of stack, which is a different bug and a red for the wrong
+    /// reason.
+    ///
+    /// It was 64 KB, measured on macOS, and it aborted the whole lib-test
+    /// binary the first time this suite ran on Linux (wave 34163246411, #448).
+    /// Not a bigger frame: glibc carves the guard page, the `struct pthread`
+    /// and the static TLS block out of the size you ask for, so a 64 KB request
+    /// is some 55 KB of usable stack there against a full 64 KB on macOS. The
+    /// old number had no room for that difference, and a platform constant
+    /// tuned to one platform is not a bound, it is a coincidence.
+    const DROP_STACK_BYTES: usize = 256 * 1024;
+
+    /// The error path, on a stack far smaller than the tree it must not build.
     ///
     /// A deep tree followed by a syntax error is dropped by unwinding, at the
     /// depth it reached, with nothing after it to measure -- so the only thing
     /// standing between that input and a crash is construction refusing before
-    /// the tree gets deep. Recursive `Drop` costs ~61 bytes per level: 64 KB
-    /// survives about a thousand levels, and the shapes here would build twenty
-    /// thousand. The shapes are chosen so the *parser's* recursion stays shallow
-    /// -- chains are loops, and the one nested shape nests twice, because a
-    /// debug build's descent costs about 15 KB per level and four levels
-    /// already overflow 64 KB on their own. That is what makes the thread's
-    /// stack a measurement of the drop and not of the descent; the deep
-    /// descent on a small stack is `MAX_RECURSION`'s job, tested elsewhere.
+    /// the tree gets deep. Recursive `Drop` costs ~61 bytes per level, so
+    /// `DROP_STACK_BYTES` survives around four thousand levels and every shape
+    /// here would build fifty thousand: a twelvefold margin, which is what makes
+    /// this a bound rather than a tuned number.
+    ///
+    /// The shapes are chosen so the *parser's* recursion stays shallow --
+    /// chains are loops, and the one nested shape nests twice -- so the thread's
+    /// stack measures the drop and not the descent. The deep descent on a small
+    /// stack is `MAX_RECURSION`'s job, tested elsewhere.
     ///
     /// Removing the construction bound does not fail this test -- it aborts the
     /// test binary with a stack overflow, which is red in a louder register.
     /// That is stated so nobody reads the SIGABRT as flake. (#303)
     #[test]
-    fn a_deep_tree_that_fails_to_parse_is_refused_on_a_64_kb_stack() {
-        let deep = 20_000;
+    fn a_deep_tree_that_fails_to_parse_is_refused_on_a_small_stack() {
+        let deep = 50_000;
         let shapes = vec![
             format!("{}1 +", "1 + ".repeat(deep)),
             format!("{}2 *", "2 * ".repeat(deep)),
             format!("{}1 or", "1 or ".repeat(deep)),
             format!("a{}.", ".b".repeat(deep)),
             {
-                let tail = " + 1".repeat(2_000);
+                // The tail is a chain, so it costs the parser nothing and the
+                // drop everything: without the bound this shape alone reaches
+                // forty thousand levels, which is 2.4 MB of recursive `Drop`.
+                let tail = " + 1".repeat(20_000);
                 let mut src = String::from("1");
                 for _ in 0..2 {
                     src = format!("Abs({src}{tail})");
@@ -1987,8 +2015,8 @@ mod depth_bounds {
             },
         ];
         let worker = std::thread::Builder::new()
-            .name("formcalc-64kb".into())
-            .stack_size(64 * 1024)
+            .name("formcalc-drop".into())
+            .stack_size(DROP_STACK_BYTES)
             .spawn(move || {
                 for src in shapes {
                     assert!(
@@ -1998,10 +2026,10 @@ mod depth_bounds {
                     );
                 }
             })
-            .expect("spawn a 64 KB thread");
+            .expect("spawn the small-stack thread");
         worker
             .join()
-            .expect("the 64 KB thread must finish without overflowing");
+            .expect("the small-stack thread must finish without overflowing");
     }
 
     /// The other half: a bound low enough to break real forms is also a bug.

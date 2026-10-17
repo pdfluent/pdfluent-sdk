@@ -1,9 +1,7 @@
 name: Fuzzing
 
+# Paid compute is disabled by owner decision. No timer/push may provision.
 on:
-  schedule:
-    - cron: '30 4 * * *'    # nightly smoke: build all + 60s on core targets
-    - cron: '30 6 * * 0'    # weekly deep: all targets, full duration
   workflow_dispatch:
     inputs:
       duration:
@@ -36,17 +34,20 @@ jobs:
     # dispatch lets the caller pick the ref -- and this job sits on the machine
     # with the corpus, the warm cache and the runner token. Not a boundary
     # against a hostile branch (#268), but it stops the accident.
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.event_name == 'workflow_dispatch' && vars.PAID_COMPUTE_ENABLED == 'true' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
     # Without this the create action polls for a runner that may never
     # register, holding the one desktop runner while everything else
     # queues behind it. Fifteen minutes of that is what a wedged
     # provisioning looked like (#274).
     timeout-minutes: 10
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: [self-hosted, xfa-local-checks]
     outputs:
       label: ${{ steps.create.outputs.label }}
       server_id: ${{ steps.create.outputs.server_id }}
     steps:
+      - uses: actions/checkout@v4
+      - name: Paid compute requires a new owner authorization
+        run: python3 scripts/ci/require_paid_compute_permission.py
       # Forty seconds before spending anything. `cancel-in-progress` kills a
       # superseded run almost at once, so a second push inside this window
       # cancels the first one *before* it has bought a machine. Without it,
@@ -90,7 +91,7 @@ jobs:
   smoke:
     name: Smoke ${{ matrix.target }}
     needs: [create-runner, build]
-    if: github.event.schedule == '30 4 * * *' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ needs.create-runner.outputs.label }}
     strategy:
       fail-fast: false
@@ -127,7 +128,7 @@ jobs:
         with:
           name: fuzz-smoke-crashes-${{ matrix.target }}
           path: fuzz/artifacts/${{ matrix.target }}/
-          retention-days: 30
+          retention-days: 1
       - name: Check for crashes
         if: always()
         run: |
@@ -142,7 +143,7 @@ jobs:
   deep:
     name: Deep ${{ matrix.target }}
     needs: [create-runner, build]
-    if: github.event.schedule == '30 6 * * 0' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ needs.create-runner.outputs.label }}
     strategy:
       fail-fast: false
@@ -202,7 +203,7 @@ jobs:
         with:
           name: fuzz-crashes-${{ matrix.target }}
           path: fuzz/artifacts/${{ matrix.target }}/
-          retention-days: 30
+          retention-days: 1
       - name: Check for crashes
         if: always()
         run: |
@@ -220,7 +221,7 @@ jobs:
     # queues behind it. Fifteen minutes of that is what a wedged
     # provisioning looked like (#274).
     timeout-minutes: 10
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: [self-hosted, xfa-local-checks]
     steps:
       # A failed create leaves the outputs empty; a genuinely half-created
       # instance is swept by hetzner-orphan-sweep.yml.

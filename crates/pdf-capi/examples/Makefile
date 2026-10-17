@@ -58,13 +58,18 @@ endif
 LDFLAGS := -L$(TARGET_DIR)
 LIBS    := -lpdf_capi
 
-EXAMPLES := license_activate
+# One name per .c file beside this Makefile, read rather than listed. The list
+# said `license_activate` until 10-09-2026 and that file was deleted with the
+# licence machinery in #226, so `make` here had failed on every invocation
+# since -- found by a retroactive review (#515), not by anything that runs.
+# A wildcard cannot go stale the way a hand-kept list did.
+EXAMPLES := $(patsubst %.c,%,$(notdir $(wildcard $(dir $(lastword $(MAKEFILE_LIST)))*.c)))
 
 .PHONY: all clean $(addprefix run-,$(EXAMPLES))
 
 all: $(EXAMPLES)
 
-license_activate: license_activate.c ../include/pdfluent.h
+%: %.c ../include/pdfluent.h
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS) $(LIBS)
 
 $(addprefix run-,$(EXAMPLES)): run-%: %

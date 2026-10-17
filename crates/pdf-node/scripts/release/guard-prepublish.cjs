@@ -4,7 +4,8 @@
 // READ-ONLY prepublish guard — the replacement for `napi prepublish -t npm`.
 //
 // `napi prepublish` ran as the main package's `prepublishOnly` hook and REWROTE
-// package.json's optionalDependencies down to a 3-of-6 subset, which then
+// package.json's optionalDependencies down to a 3-of-6 subset (six then,
+// seven since linux-arm64-musl joined), which then
 // shipped (the @pdfluent/node@1.0.0-beta.17 incident). This guard does the
 // opposite: it only READS, asserts the manifest is release-safe, and fails the
 // publish on drift. It never writes package.json, so no lifecycle step on the
@@ -31,7 +32,7 @@ const od = manifest.optionalDependencies || {}
 const have = Object.keys(od).sort()
 const want = [...PLATFORM_PKG_NAMES].sort()
 if (have.length !== want.length || have.some((n, i) => n !== want[i])) {
-  problems.push(`optionalDependencies must list all 6 platforms; have ${have.length}: ${have.join(', ') || '(none)'}`)
+  problems.push(`optionalDependencies must list all ${want.length} platforms; have ${have.length}: ${have.join(', ') || '(none)'}`)
 }
 
 // The main meta-package ships NO binary by construction: `*.node` is not in
@@ -53,4 +54,4 @@ if (problems.length) {
   console.error('  Fix the manifest / move binaries out; this guard never auto-edits package.json.')
   process.exit(1)
 }
-console.log(`[guard-prepublish] OK — ${MAIN_PKG} manifest is release-safe (6/6 platforms, no stray binary)`)
+console.log(`[guard-prepublish] OK — ${MAIN_PKG} manifest is release-safe (${want.length}/${want.length} platforms, no stray binary)`)

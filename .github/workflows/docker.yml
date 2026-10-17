@@ -26,6 +26,17 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Container Registry
+        # THE CREDENTIAL IS THE HAZARD, NOT ONLY THE PUSH (#358). The push step
+        # at the bottom of this file is commented out, so today this job builds
+        # an image and tests it and nothing leaves the machine. What a
+        # pre-release tag did on 10-09-2026 was arm every publish job in the
+        # five tag-triggered workflows at once, and the one that was live
+        # published to npm. Gating the login means that whoever uncomments the
+        # push cannot ship a release candidate to ghcr by surprise: on a tag
+        # with '-' in its name this run has no registry write access at all.
+        # Held by scripts/ci/a_pre_release_tag_arms_no_publish.py.
+        if: >-
+          !(github.ref_type == 'tag' && contains(github.ref_name, '-'))
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -78,8 +89,11 @@ jobs:
         run: |
           docker run --rm "${REGISTRY}/${IMAGE_NAME}:${REF_NAME}" --help
 
-      # Publish step (commented out - uncomment to enable)
+      # Publish step (commented out - uncomment to enable). The condition is
+      # part of it: uncommenting must not also drop the pre-release rule (#358).
       # - name: Push to Registry
+      #   if: >-
+      #     !(github.ref_type == 'tag' && contains(github.ref_name, '-'))
       #   uses: docker/build-push-action@v6
       #   with:
       #     context: .

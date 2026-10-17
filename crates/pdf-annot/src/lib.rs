@@ -26,7 +26,7 @@ mod types;
 pub use annotation::*;
 pub use appearance::*;
 #[cfg(feature = "write")]
-pub use flatten::flatten_annotations;
+pub use flatten::{ensure_appearances, flatten_annotations};
 pub use geometric::*;
 pub use link::*;
 pub use markup::*;

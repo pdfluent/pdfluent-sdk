@@ -48,7 +48,7 @@ except ImportError as e:
 
 PDFLUENT = os.environ.get(
     "PDFLUENT_BIN",
-    str(Path(__file__).parent.parent / "target" / "release" / "pdfluent"),
+    str(Path(__file__).parent.parent / "target" / "release" / "xfa-runner"),
 )
 PDFTOPPM = "pdftoppm"
 DPI = 150
@@ -73,7 +73,7 @@ def render_pdf_to_pngs(pdf_path: Path, out_dir: Path, dpi: int = DPI) -> list[Pa
     """Render all pages of a PDF to PNG files. Returns list of PNG paths (sorted by page)."""
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Try pdfluent render first (preferred — uses our engine)
+    # Try xfa-runner render first (preferred — uses our engine)
     pdfluent_bin = Path(PDFLUENT)
     if pdfluent_bin.exists():
         result = subprocess.run(

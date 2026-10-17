@@ -9,12 +9,12 @@
          ================================================================ -->
     <groupId>com.pdfluent</groupId>
     <artifactId>pdfluent</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <packaging>jar</packaging>
 
     <name>PDFluent Java SDK</name>
     <description>
-        High-performance PDF processing library for Java via JNI. Supports text
+        PDF processing library for Java via JNI. Supports text
         extraction, page rendering, AcroForm and XFA form processing, annotations,
         PDF/A compliance, encryption, merging, and more.
     </description>
@@ -23,11 +23,15 @@
     <licenses>
         <license>
             <name>AGPL-3.0-only OR LicenseRef-PDFluent-Commercial</name>
-            <url>https://pdfluent.com/terms</url>
+            <url>https://pdfluent.com/sdk/pricing</url>
             <distribution>repo</distribution>
             <comments>
-                Commercial license. Contact sales@pdfluent.com for pricing.
-                Evaluation use permitted under the evaluation terms.
+                AGPL-3.0 or a commercial licence, at your option. The AGPL is the
+                default and the complete product: no licence key, no activation
+                call, no tier, every feature in every build. The commercial
+                licence lifts the copyleft obligation and is sold yearly and
+                self-service at https://pdfluent.com/sdk/pricing -- the prices are
+                published, there is nothing to request and no quote to ask for.
             </comments>
         </license>
     </licenses>
@@ -107,6 +111,22 @@
                 </includes>
                 <targetPath>META-INF</targetPath>
             </resource>
+            <!-- THE THIRD-PARTY NOTICES TRAVEL WITH THE BINARY (#541). The
+                 native libraries this jar loads contain the Foxit Standard 14
+                 faces, the Liberation and Noto substitutes and Adobe's CMap
+                 resources; BSD-3-Clause and OFL 1.1 both ask for their notice
+                 with a redistribution in binary form, and the two files above
+                 provide our terms and none of theirs. Taken from the repository
+                 root rather than copied here, because Maven can read a
+                 directory outside the module and npm and maturin cannot. -->
+            <resource>
+                <directory>${project.basedir}/../..</directory>
+                <includes>
+                    <include>NOTICE</include>
+                    <include>THIRD_PARTY_LICENSES.txt</include>
+                </includes>
+                <targetPath>META-INF</targetPath>
+            </resource>
         </resources>
 
         <plugins>
@@ -140,6 +160,90 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
+            </plugin>
+
+            <!-- THE NATIVES ARE REQUIRED, NOT OPTIONAL.
+                 The 1.0.0 jar held no native library at all: pom.xml bundled
+                 only the licence files, src/main/resources did not exist, and
+                 `mvn package` passed anyway. `scripts/release/stage_java_natives.sh`
+                 stages both libraries for all seven platforms into
+                 src/main/resources/native/ before the build; this rule refuses
+                 to package unless all fourteen files reached target/classes.
+                 Skip ONLY for a local dev loop that loads natives from
+                 java.library.path, and for the release workflow's
+                 partial-validation path (release-natives.yml skips it only
+                 behind a non-empty .missing-legs, so the gate judges the
+                 present legs; the run still fails at the end, the gate and
+                 the maven channel guard still refuse the partial jar, and
+                 it never publishes): mvn -Denforcer.skip=true package. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>require-staged-natives</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireFilesExist>
+                                    <files>
+                                        <file>${project.build.outputDirectory}/native/linux-x64/libpdfluent_java.so</file>
+                                        <file>${project.build.outputDirectory}/native/linux-x64/libpdf_capi.so</file>
+                                        <file>${project.build.outputDirectory}/native/linux-arm64/libpdfluent_java.so</file>
+                                        <file>${project.build.outputDirectory}/native/linux-arm64/libpdf_capi.so</file>
+                                        <file>${project.build.outputDirectory}/native/linux-x64-musl/libpdfluent_java.so</file>
+                                        <file>${project.build.outputDirectory}/native/linux-x64-musl/libpdf_capi.so</file>
+                                        <file>${project.build.outputDirectory}/native/linux-arm64-musl/libpdfluent_java.so</file>
+                                        <file>${project.build.outputDirectory}/native/linux-arm64-musl/libpdf_capi.so</file>
+                                        <file>${project.build.outputDirectory}/native/osx-x64/libpdfluent_java.dylib</file>
+                                        <file>${project.build.outputDirectory}/native/osx-x64/libpdf_capi.dylib</file>
+                                        <file>${project.build.outputDirectory}/native/osx-arm64/libpdfluent_java.dylib</file>
+                                        <file>${project.build.outputDirectory}/native/osx-arm64/libpdf_capi.dylib</file>
+                                        <file>${project.build.outputDirectory}/native/win-x64/pdfluent_java.dll</file>
+                                        <file>${project.build.outputDirectory}/native/win-x64/pdf_capi.dll</file>
+                                    </files>
+                                </requireFilesExist>
+                                <!-- Existence is not enough: a 0-byte file
+                                     passes requireFilesExist. Each staged
+                                     native must clear 100 KB — a stub or an
+                                     interrupted copy fails the packaging, by
+                                     file. The artefact gate holds the real
+                                     1 MB floor plus kind/arch/libc; this is
+                                     the backstop at `mvn package` time.
+                                     The maxsize is Long.MAX_VALUE on purpose:
+                                     the rule refuses a file over its max, and
+                                     its default max is 10000 bytes — setting
+                                     minsize only refused every real native as
+                                     "too large. Max. is 10000" (build 6). -->
+                                <requireFilesSize>
+                                    <minsize>100000</minsize>
+                                    <maxsize>9223372036854775807</maxsize>
+                                    <files>
+                                        <file>${project.build.outputDirectory}/native/linux-x64/libpdfluent_java.so</file>
+                                        <file>${project.build.outputDirectory}/native/linux-x64/libpdf_capi.so</file>
+                                        <file>${project.build.outputDirectory}/native/linux-arm64/libpdfluent_java.so</file>
+                                        <file>${project.build.outputDirectory}/native/linux-arm64/libpdf_capi.so</file>
+                                        <file>${project.build.outputDirectory}/native/linux-x64-musl/libpdfluent_java.so</file>
+                                        <file>${project.build.outputDirectory}/native/linux-x64-musl/libpdf_capi.so</file>
+                                        <file>${project.build.outputDirectory}/native/linux-arm64-musl/libpdfluent_java.so</file>
+                                        <file>${project.build.outputDirectory}/native/linux-arm64-musl/libpdf_capi.so</file>
+                                        <file>${project.build.outputDirectory}/native/osx-x64/libpdfluent_java.dylib</file>
+                                        <file>${project.build.outputDirectory}/native/osx-x64/libpdf_capi.dylib</file>
+                                        <file>${project.build.outputDirectory}/native/osx-arm64/libpdfluent_java.dylib</file>
+                                        <file>${project.build.outputDirectory}/native/osx-arm64/libpdf_capi.dylib</file>
+                                        <file>${project.build.outputDirectory}/native/win-x64/pdfluent_java.dll</file>
+                                        <file>${project.build.outputDirectory}/native/win-x64/pdf_capi.dll</file>
+                                    </files>
+                                </requireFilesSize>
+                            </rules>
+                            <fail>true</fail>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
 
             <!-- Sources JAR (required by Maven Central) -->

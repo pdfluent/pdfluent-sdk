@@ -7,10 +7,11 @@
 
 """The count parsers in `tests_actually_ran.py`, against real runner output.
 
-These five formats are the guard. If a parser silently stops matching, the
-binding job it protects goes back to being green on zero tests, which is the
-failure it was written for -- so the parsers need a test of their own, and the
-samples below are copied from actual job logs rather than written from memory.
+These formats are the guard. If a parser silently stops matching, the job it
+protects goes back to being green on zero tests, which is the failure it was
+written for -- so the parsers need a test of their own, and the samples below
+are copied from actual job logs rather than written from memory. The five
+bindings keep their own floor below; `cargo` rides along for the CLI suite.
 
 Two of them are the cases that a first version got wrong:
 
@@ -71,6 +72,24 @@ CASES: list[tuple[str, str, int | None]] = [
     ("dotnet", "MSBUILD : error MSB1003: Specify which project or solution\n", None),
     ("node", "npm ERR! missing script: test\n", None),
     ("java", "[ERROR] Failed to execute goal ... The JAVA_HOME variable is not\n", None),
+    # cargo: REAL output of `cargo test -q -p pdfluent-cli`, captured
+    # 01-10-2026. Quiet mode prints no `Running ...` lines and no per-test
+    # `test ... ok` lines -- only `running N`, dots, and one `test result:`
+    # per target, and the totals add up.
+    ("cargo", "\nrunning 27 tests\n...........................\n"
+              "test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; "
+              "0 filtered out; finished in 8.09s\n", 27),
+    ("cargo", "\nrunning 27 tests\n...........................\n"
+              "test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; "
+              "0 filtered out; finished in 8.09s\n"
+              "\n"
+              "\nrunning 21 tests\n.....................\n"
+              "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; "
+              "0 filtered out; finished in 0.32s\n", 48),
+    ("cargo", "\nrunning 0 tests\n\n"
+              "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; "
+              "0 filtered out; finished in 0.00s\n", 0),
+    ("cargo", "error: no test target named `nope` in `pdfluent-cli` package\n", None),
 ]
 
 

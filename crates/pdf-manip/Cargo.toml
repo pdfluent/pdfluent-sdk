@@ -1,6 +1,6 @@
 [package]
 name = "pdf-manip"
-version = "1.0.0"
+version = "1.1.0"
 edition.workspace = true
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
 license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
@@ -10,22 +10,19 @@ homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 description = "PDF manipulation: pages, encryption, watermarks, optimization, bookmarks"
 
-# This integration test reaches a sibling fixture crate by relative path, so
-# it cannot run from a published crate. Keep the reason generic: naming the
-# internal directory here would put that path straight back into the packaged
-# manifest, which is what the prepublish audit flags.
-# Tests and examples do not travel. They read fixtures from the repository, which are not in
-# the tarball -- so they cannot build outside this workspace, and what they do
-# carry into a published crate is a path into a tree the reader does not have.
-# `pdfluent` and `pdf-xfa` have kept them out for that reason since they were
-# first published; this one had not.
+# Tests and examples do not travel. They read fixtures from the repository,
+# three directories up, which are not in the tarball -- so they cannot build
+# outside this workspace, and what they do carry into a published crate is a
+# path into a tree the reader does not have. `pdfluent` and `pdf-xfa` have kept
+# them out for that reason since they were first published; this one had not
+# (#358).
 exclude = ["tests/", "examples/"]
 
 [dependencies]
 regex = "1"
 lopdf = { workspace = true, features = ["embed_image"] }
 pdf-font.workspace = true
-pdf-standard-fonts = { path = "../pdf-standard-fonts", version = "=1.0.0" }
+pdf-standard-fonts = { path = "../pdf-standard-fonts", version = "=1.1.0" }
 thiserror.workspace = true
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -38,15 +35,42 @@ xmp-writer = { workspace = true, optional = true }
 roxmltree.workspace = true
 ttf-parser = { workspace = true }
 cff-parser = { workspace = true }
-hayro-jbig2 = { package = "pdfluent-jbig2", path = "../hayro-jbig2", optional = true, version = "=0.2.3" }
+hayro-jbig2 = { package = "pdfluent-jbig2", path = "../hayro-jbig2", optional = true, version = "=0.3.0" }
 
 [features]
-default = ["serde", "image-insert", "font-subset", "pdfa-convert"]
+# The bundled substitute fonts (4.2 MB). On by default on every native target,
+# so the output cannot depend on the machine; never present on wasm32, whatever
+# this flag says, because the dependency itself is target-conditional below.
+#
+# A FEATURE WOULD NOT HAVE HELD THE BROWSER
+# The note that stood here from 24-08 said `default-features = false` keeps
+# @pdfluent/sdk-wasm at 13.8 MB. It does not: xfa-wasm reaches pdf-manip along
+# four paths -- directly, through pdfluent, through pdf-redact and through
+# pdf-text-format -- and cargo unifies features across the graph, so one
+# consumer with defaults on turns it back on for all of them. Measured with
+# `cargo tree -e features -p xfa-wasm` on 08-09-2026.
+#
+# So the browser rule is a target, not a feature. Claim B07 publishes the bundle
+# at 2.5 MB brotli / 9.6 MB unpacked, and a flag any dependant can undo is not a
+# way to hold a published number.
+#
+# The consequence, where it applies: a typeface outside the Standard 14 falls
+# through to a compiled-in Standard 14 rather than to a metric-compatible
+# Liberation face, so the text can reflow. In the browser that is the accepted
+# trade -- PDF/A conversion there is not a claim.
+bundled-substitute-fonts = ["pdf-substitute-fonts/bundled"]
+default = ["serde", "image-insert", "font-subset", "pdfa-convert", "bundled-substitute-fonts"]
 serde = ["dep:serde", "dep:serde_json"]
 watermark-image = ["dep:image"]
 image-insert = ["dep:image"]
 font-subset = ["dep:subsetter"]
 pdfa-convert = ["dep:xmp-writer", "dep:hayro-jbig2"]
+
+# Not on wasm32, and not by a feature -- see bundled-substitute-fonts above.
+# Proof that no path reaches it:
+#   cargo tree --target wasm32-unknown-unknown -p xfa-wasm -i pdf-substitute-fonts
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pdf-substitute-fonts = { path = "../pdf-substitute-fonts", version = "=1.1.0", default-features = false }
 
 # `SystemTime::now()` panics on wasm32-unknown-unknown; the browser clock is
 # read through js-sys instead. See src/clock.rs.
@@ -55,6 +79,10 @@ js-sys = "0.3"
 
 [dev-dependencies]
 test-skip = { path = "../test-skip" }
+# The .notdef tests read the glyph names out of the program the substitute
+# pipeline embedded; asserting a name the font does not carry would pass while
+# veraPDF still read .notdef. (#489)
+cff-parser = { workspace = true }
 tempfile = "3"
 pdf-syntax = { path = "../pdf-syntax" }
 pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign" }
@@ -64,3 +92,9 @@ pdf-engine = { path = "../pdf-engine" }
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+# `pdfluent_release` is set by scripts/release/release_rustflags.sh for release
+# artefact builds only: it drops the checkout-only lookups whose `env!` paths
+# would otherwise ship the builder's directory.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(pdfluent_release)"] }

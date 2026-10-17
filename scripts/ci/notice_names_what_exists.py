@@ -37,6 +37,34 @@ REPO = pathlib.Path(os.environ.get("PDFLUENT_NOTICE_ROOT")
 ROOT_NOTICE = REPO / "NOTICE"
 COPY_NOTICE = REPO / "bindings/dotnet/src/PDFluent/NOTICE"
 
+# EVERY COPY, NOT ONLY THE .NET ONE (#541). Three packaging tools cannot reach a
+# file outside their own directory -- npm packs what is inside the package, and
+# maturin refuses `..` in an include pattern -- so the .NET, Node and Python
+# packages carry committed copies of the two registers, and a copy that has
+# drifted is a licence text that says something the tree does not. Written by
+# scripts/ci/regenerate_registers.sh; held to the original here.
+KOPIEEN = (
+    ("bindings/dotnet/src/PDFluent/NOTICE", "NOTICE"),
+    ("bindings/dotnet/src/PDFluent/THIRD_PARTY_LICENSES.txt", "THIRD_PARTY_LICENSES.txt"),
+    ("crates/pdf-node/NOTICE", "NOTICE"),
+    ("crates/pdf-node/THIRD_PARTY_LICENSES.txt", "THIRD_PARTY_LICENSES.txt"),
+    ("crates/pdf-python/NOTICE", "NOTICE"),
+    ("crates/pdf-python/THIRD_PARTY_LICENSES.txt", "THIRD_PARTY_LICENSES.txt"),
+    # The RAG loader packages ship our two licence texts in their sdists (#630).
+    ("integrations/langchain-pdfluent/LICENSE", "LICENSE"),
+    ("integrations/langchain-pdfluent/LICENSE-COMMERCIAL", "LICENSE-COMMERCIAL"),
+    ("integrations/llama-index-readers-pdfluent/LICENSE", "LICENSE"),
+    ("integrations/llama-index-readers-pdfluent/LICENSE-COMMERCIAL", "LICENSE-COMMERCIAL"),
+    # And the MCP server package (#625).
+    ("integrations/pdfluent-mcp/LICENSE", "LICENSE"),
+    ("integrations/pdfluent-mcp/LICENSE-COMMERCIAL", "LICENSE-COMMERCIAL"),
+    # And the two extract packages (#636).
+    ("integrations/pdfluent-extract/LICENSE", "LICENSE"),
+    ("integrations/pdfluent-extract/LICENSE-COMMERCIAL", "LICENSE-COMMERCIAL"),
+    ("integrations/pdfluent-extract-js/LICENSE", "LICENSE"),
+    ("integrations/pdfluent-extract-js/LICENSE-COMMERCIAL", "LICENSE-COMMERCIAL"),
+)
+
 # A path-shaped word: segments joined by `/`, or a bare file with an extension.
 PATH_LIKE = re.compile(r"(?<![\w/.-])((?:\.?[\w.-]+/)+[\w.-]+/?|[\w-]+\.[A-Za-z][\w.]*)")
 
@@ -54,6 +82,41 @@ def paths(text: str, roots: set[str]) -> list[str]:
     return found
 
 
+def lijsten_komen_overeen() -> list[str]:
+    """Complaints about KOPIEEN above disagreeing with the regenerator's list.
+
+    Two lists of the same six pairs, one in this guard and one in
+    `scripts/ci/regenerate_registers.sh`, and a copy that only one of them knows
+    about is either written and never checked or checked and never written.
+    Same shape, same reason, as `touched_crates.py`'s `excludes_agree()`.
+    """
+    # Beside THIS file, not under the tree being judged: the two lists are code,
+    # and a fixture tree that stands in for the repository (PDFLUENT_NOTICE_ROOT)
+    # has neither of them.
+    script = pathlib.Path(__file__).resolve().parent / "regenerate_registers.sh"
+    if not script.is_file():
+        return [f"{script.name} is missing, so its list of copies could not be read"]
+    # The KOPIEEN block of that script and nothing else: the file holds a second
+    # array of `file|command|command` rows for the generated registers, and
+    # reading those as copies would report four disagreements that are not.
+    tekst = script.read_text(errors="replace")
+    blok = re.search(r"^KOPIEEN=\((.*?)^\)", tekst, re.S | re.M)
+    if not blok:
+        return ["regenerate_registers.sh has no KOPIEEN list, so nothing writes "
+                "the packaged copies"]
+    hier = {f"{kopie}|{origineel}" for kopie, origineel in KOPIEEN}
+    daar = set(re.findall(r'"([^"|]+\|[^"|]+)"', blok.group(1)))
+    ontbreekt = sorted(hier - daar)
+    teveel = sorted(daar - hier)
+    klachten = []
+    if ontbreekt:
+        klachten.append("regenerate_registers.sh does not write: " + ", ".join(ontbreekt))
+    if teveel:
+        klachten.append("regenerate_registers.sh writes copies this guard does not "
+                        "check: " + ", ".join(teveel))
+    return klachten
+
+
 def main() -> int:
     if not ROOT_NOTICE.exists() or not COPY_NOTICE.exists():
         print("[notice] SKIPPED (not a pass): one of the two NOTICE files is "
@@ -61,13 +124,39 @@ def main() -> int:
               "compared.", file=sys.stderr)
         return 1
 
-    a, b = ROOT_NOTICE.read_bytes(), COPY_NOTICE.read_bytes()
-    if a != b:
-        print("[notice] the two NOTICE files have diverged.\n"
-              "  NOTICE                                (repository)\n"
-              "  bindings/dotnet/src/PDFluent/NOTICE   (travels in the NuGet package)\n\n"
-              "  A .NET user reads the second. Two versions means one of them is\n"
-              "  untrue, and the reader cannot see which.",
+    a = ROOT_NOTICE.read_bytes()
+
+    verschil = lijsten_komen_overeen()
+    if verschil:
+        print("[notice] the two lists of packaged copies disagree:\n", file=sys.stderr)
+        for regel in verschil:
+            print(f"  {regel}", file=sys.stderr)
+        print("\n  One list writes the copies and the other checks them; a copy only "
+              "one of them\n  knows about is written and never checked, or checked and "
+              "never written.", file=sys.stderr)
+        return 1
+
+    afgedreven = []
+    for kopie, origineel in KOPIEEN:
+        pad, bron = REPO / kopie, REPO / origineel
+        if not bron.is_file():
+            print(f"[notice] SKIPPED (not a pass): {origineel} is missing, so its "
+                  "copies could not be compared.", file=sys.stderr)
+            return 1
+        if not pad.is_file() or pad.read_bytes() != bron.read_bytes():
+            afgedreven.append((kopie, origineel))
+    if afgedreven:
+        print("[notice] a packaged copy has diverged from the file it copies:\n",
+              file=sys.stderr)
+        for kopie, origineel in afgedreven:
+            staat = "missing" if not (REPO / kopie).is_file() else "differs"
+            print(f"  {kopie}  ({staat}; copies {origineel})", file=sys.stderr)
+        print("\n  Those copies travel inside the packages -- the NuGet package, the\n"
+              "  npm one and the wheel -- because npm packs only what is in the\n"
+              "  package directory and maturin refuses `..`. A reader has one of them\n"
+              "  in front of them and not the original, so two versions means one is\n"
+              "  untrue and the reader cannot see which.\n\n"
+              "      bash scripts/ci/regenerate_registers.sh\n",
               file=sys.stderr)
         return 1
 
@@ -95,8 +184,8 @@ def main() -> int:
               "way nothing was checked.", file=sys.stderr)
         return 1
 
-    print(f"[notice] OK: both copies identical, {len(set(candidates))} named "
-          "path(s) exist.")
+    print(f"[notice] OK: {len(KOPIEEN)} packaged copies identical to what they "
+          f"copy, {len(set(candidates))} named path(s) exist.")
     return 0
 
 

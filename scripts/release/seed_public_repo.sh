@@ -366,6 +366,15 @@ FILTER_BRANCH_SQUELCH_WARNING=1 git -C "$SPIEGEL" filter-branch --force \
     --tag-name-filter cat \
     -- --all
 
+# The tags, which the commit filters do not reach. `--tag-name-filter cat` moves
+# an annotated tag onto the rewritten commit and copies the tag OBJECT across
+# unchanged -- tagger and message included. Both are published. On 06-09-2026
+# this seeding reported success with every check at zero and GitHub refused five
+# of six tags with GH007, "your push would publish a private email address": the
+# tagger of each one was still the owner's. The branch had already gone.
+python3 "$FILTER" retag "$SPIEGEL" --alias "$ALIAS" \
+    --redact "$REDACT" --trailers "$TRAILERS"
+
 # filter-branch keeps the pre-rewrite refs under refs/original/. They carry
 # exactly the history that was supposed to go -- and `push --mirror` pushes every
 # ref, so leaving them would publish the trailers under a different name while
@@ -380,7 +389,16 @@ git -C "$SPIEGEL" for-each-ref --format='delete %(refname)' 'refs/original' \
 git -C "$SPIEGEL" reflog expire --expire=now --all >/dev/null 2>&1 || true
 git -C "$SPIEGEL" gc --prune=now --quiet >/dev/null 2>&1 || true
 
-NA="$(git -C "$SPIEGEL" log --all --format='%H %B' | grep -cE "$TRAILERS" || true)"
+# Commits and annotated tags both: the trailer gate reads what is published, and
+# a tag message is published. `cat-file tag` per annotated tag and not
+# `for-each-ref --format=%(contents)`, which answers with the COMMIT's message
+# for a lightweight tag and would count the same trailer twice.
+NA="$( { git -C "$SPIEGEL" log --all --format='%H %B'
+         git -C "$SPIEGEL" for-each-ref --format='%(refname) %(objecttype)' refs/tags \
+           | while read -r ref soort; do
+                 [ "$soort" = tag ] && git -C "$SPIEGEL" cat-file tag "$ref"
+             done
+       } | grep -cE "$TRAILERS" || true)"
 echo "[seed] trailer lines after the rewrite: $NA"
 
 if [ "$NA" != "0" ]; then

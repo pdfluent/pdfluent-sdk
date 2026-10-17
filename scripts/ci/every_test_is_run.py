@@ -128,7 +128,11 @@ def recorded_exceptions() -> dict[str, str]:
 
 
 def main() -> int:
-    files = sorted(p.name for p in CI.glob("test_*.py"))
+    # rglob, for the reason every_guard_has_a_job.py carries: a guard in a
+    # subdirectory used to be invisible to both registers, and #366 puts the
+    # loop scaffolding in one. A test nothing runs is the failure this file
+    # exists for, and a directory is not an excuse for it.
+    files = sorted(p.name for p in CI.rglob("test_*.py"))
     if len(files) < FLOOR:
         print(f"[tests-run] FAIL: found {len(files)} test file(s) under "
               f"{CI.relative_to(REPO)}, expected at least {FLOOR}. The search is "

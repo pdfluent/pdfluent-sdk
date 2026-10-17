@@ -10,8 +10,10 @@
 // the PDFluent Commercial Licence. See the LICENSE file in this repository --
 // that file travels with the copy you received, which a URL does not.
 
-use lopdf::{dictionary, Object, ObjectId, Stream};
+use lopdf::{dictionary, Document, Object, ObjectId, Stream};
 use std::collections::HashSet;
+
+use crate::builder::{AnnotRect, AnnotSubtype, AnnotationBuilder};
 
 /// Pick a `/XObject` resource name of the form `FlatAnnotN` that is not already
 /// present in `xobjects`. `next` is advanced past the chosen index so repeated
@@ -222,6 +224,279 @@ fn get_matrix_and_bbox(n_stream_dict: &lopdf::Dictionary, rect: &[f64; 4]) -> Op
         let ty = ry0 - by0 * sy;
         Some([sx, 0.0, 0.0, sy, tx, ty])
     }
+}
+
+/// Whether an annotation dictionary already carries a normal appearance
+/// that [`flatten_annotations`] can paint: `/AP` with a `/N` stream.
+fn has_usable_appearance(doc: &Document, annot_dict: &lopdf::Dictionary) -> bool {
+    let ap = match annot_dict.get(b"AP") {
+        Ok(Object::Dictionary(d)) => d.clone(),
+        Ok(Object::Reference(id)) => match doc.get_object(*id) {
+            Ok(Object::Dictionary(d)) => d.clone(),
+            _ => return false,
+        },
+        _ => return false,
+    };
+    match ap.get(b"N") {
+        Ok(Object::Stream(_)) => true,
+        Ok(Object::Reference(id)) => {
+            matches!(doc.get_object(*id), Ok(Object::Stream(_)))
+        }
+        _ => false,
+    }
+}
+
+/// Read `/C` or `/IC` as an RGB triple: grey repeats, CMYK converts naively.
+fn annot_rgb(value: &Object) -> Option<(f64, f64, f64)> {
+    let arr = value.as_array().ok()?;
+    let nums: Vec<f64> = arr.iter().filter_map(as_number).collect();
+    match nums.as_slice() {
+        [g] => Some((*g, *g, *g)),
+        [r, g, b] => Some((*r, *g, *b)),
+        [c, m, y, k] => Some((
+            (1.0 - (c + k).min(1.0)).max(0.0),
+            (1.0 - (m + k).min(1.0)).max(0.0),
+            (1.0 - (y + k).min(1.0)).max(0.0),
+        )),
+        _ => None,
+    }
+}
+
+/// Border width from `/BS /W`, else the `/Border` array's third number.
+fn annot_border_width(doc: &Document, annot_dict: &lopdf::Dictionary) -> Option<f64> {
+    if let Ok(bs) = annot_dict.get(b"BS") {
+        let dict = match bs {
+            Object::Dictionary(d) => Some(d.clone()),
+            Object::Reference(id) => doc.get_dictionary(*id).ok().cloned(),
+            _ => None,
+        };
+        if let Some(d) = dict {
+            if let Ok(w) = d.get(b"W") {
+                if let Some(w) = as_number(w) {
+                    return Some(w);
+                }
+            }
+        }
+    }
+    if let Ok(Object::Array(border)) = annot_dict.get(b"Border") {
+        if let Some(w) = border.get(2).and_then(as_number) {
+            return Some(w);
+        }
+    }
+    None
+}
+
+/// Dash array from `/BS /D`.
+fn annot_dash(doc: &Document, annot_dict: &lopdf::Dictionary) -> Option<Vec<f64>> {
+    let bs = annot_dict.get(b"BS").ok()?;
+    let dict = match bs {
+        Object::Dictionary(d) => d.clone(),
+        Object::Reference(id) => doc.get_dictionary(*id).ok().cloned()?,
+        _ => return None,
+    };
+    let dash = dict.get(b"D").ok()?.as_array().ok()?.clone();
+    let nums: Vec<f64> = dash.iter().filter_map(as_number).collect();
+    if nums.is_empty() {
+        None
+    } else {
+        Some(nums)
+    }
+}
+
+/// Text of a direct `/Contents` string.
+fn annot_text(value: &Object) -> Option<String> {
+    match value {
+        Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).into_owned()),
+        _ => None,
+    }
+}
+
+/// Give every flattenable annotation without one a default appearance.
+///
+/// [`flatten_annotations`] only paints annotations that carry `/AP /N`; this
+/// pass runs first so annotations without an appearance flatten too instead
+/// of silently staying live. Widget and link annotations are left alone, as
+/// are subtypes the builder cannot draw. Returns how many appearances were
+/// added.
+pub fn ensure_appearances(doc: &mut Document) -> Result<usize, crate::error::AnnotBuildError> {
+    let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+    let mut added = 0usize;
+    for page_id in page_ids {
+        let page_dict = match doc.get_object(page_id) {
+            Ok(Object::Dictionary(d)) => d.clone(),
+            _ => continue,
+        };
+        let annots_arr = match page_dict.get(b"Annots") {
+            Ok(Object::Array(arr)) => arr.clone(),
+            Ok(Object::Reference(id)) => match doc.get_object(*id) {
+                Ok(Object::Array(arr)) => arr.clone(),
+                _ => continue,
+            },
+            _ => continue,
+        };
+        for annot_obj in &annots_arr {
+            let annot_id = match annot_obj {
+                Object::Reference(id) => *id,
+                _ => continue,
+            };
+            let annot_dict = match doc.get_object(annot_id) {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => continue,
+            };
+            let subtype = match annot_dict.get(b"Subtype") {
+                Ok(Object::Name(name)) => String::from_utf8_lossy(name).into_owned(),
+                _ => continue,
+            };
+            if subtype == "Widget" || subtype == "Link" {
+                continue;
+            }
+            let parsed = match AnnotSubtype::from_name(&subtype) {
+                Some(found) => found,
+                None => continue,
+            };
+            if has_usable_appearance(doc, &annot_dict) {
+                continue;
+            }
+            let rect = match annot_dict.get(b"Rect") {
+                Ok(Object::Array(arr)) if arr.len() >= 4 => [
+                    as_number(&arr[0]),
+                    as_number(&arr[1]),
+                    as_number(&arr[2]),
+                    as_number(&arr[3]),
+                ],
+                _ => continue,
+            };
+            let [Some(x0), Some(y0), Some(x1), Some(y1)] = rect else {
+                continue;
+            };
+            if (x1 - x0).abs() < f64::EPSILON || (y1 - y0).abs() < f64::EPSILON {
+                continue;
+            }
+            let rect = AnnotRect::new(x0, y0, x1, y1);
+            let mut builder = match parsed {
+                AnnotSubtype::Ink => {
+                    let strokes = match annot_dict.get(b"InkList") {
+                        Ok(Object::Array(paths)) => paths
+                            .iter()
+                            .filter_map(|p| p.as_array().ok())
+                            .map(|a| a.iter().filter_map(as_number).collect::<Vec<_>>())
+                            .filter(|p| p.len() >= 2)
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    AnnotationBuilder::ink(rect, strokes)
+                }
+                AnnotSubtype::Polygon => {
+                    let verts = match annot_dict.get(b"Vertices") {
+                        Ok(Object::Array(arr)) => {
+                            arr.iter().filter_map(as_number).collect::<Vec<_>>()
+                        }
+                        _ => Vec::new(),
+                    };
+                    AnnotationBuilder::polygon(rect, verts)
+                }
+                AnnotSubtype::PolyLine => {
+                    let verts = match annot_dict.get(b"Vertices") {
+                        Ok(Object::Array(arr)) => {
+                            arr.iter().filter_map(as_number).collect::<Vec<_>>()
+                        }
+                        _ => Vec::new(),
+                    };
+                    AnnotationBuilder::polyline(rect, verts)
+                }
+                other => AnnotationBuilder::new(other, rect),
+            };
+            if parsed == AnnotSubtype::Line {
+                if let Ok(Object::Array(line)) = annot_dict.get(b"L") {
+                    if line.len() >= 4 {
+                        let ends = [
+                            as_number(&line[0]),
+                            as_number(&line[1]),
+                            as_number(&line[2]),
+                            as_number(&line[3]),
+                        ];
+                        if let [Some(x1), Some(y1), Some(x2), Some(y2)] = ends {
+                            builder.set_line_endpoints([x1, y1, x2, y2]);
+                        }
+                    }
+                }
+            }
+            if let Ok(color) = annot_dict.get(b"C") {
+                if let Some((r, g, b)) = annot_rgb(color) {
+                    builder = builder.color(r, g, b);
+                }
+            }
+            if let Ok(ic) = annot_dict.get(b"IC") {
+                if let Some((r, g, b)) = annot_rgb(ic) {
+                    builder = builder.interior_color(r, g, b);
+                }
+            }
+            if let Ok(ca) = annot_dict.get(b"CA") {
+                if let Some(alpha) = as_number(ca) {
+                    builder = builder.opacity(alpha);
+                }
+            }
+            if let Some(w) = annot_border_width(doc, &annot_dict) {
+                builder = builder.border_width(w);
+            }
+            if let Some(dash) = annot_dash(doc, &annot_dict) {
+                builder = builder.dash(dash);
+            }
+            if let Ok(contents) = annot_dict.get(b"Contents") {
+                if let Some(text) = annot_text(contents) {
+                    builder = builder.contents(text);
+                }
+            }
+            if let Ok(Object::Integer(q)) = annot_dict.get(b"Q") {
+                builder = builder.alignment(*q);
+            }
+            if matches!(parsed, AnnotSubtype::Stamp | AnnotSubtype::Text) {
+                if let Ok(Object::Name(name)) = annot_dict.get(b"Name") {
+                    builder.set_icon_name(String::from_utf8_lossy(name).into_owned());
+                }
+            }
+            if let Ok(Object::Array(qp)) = annot_dict.get(b"QuadPoints") {
+                let nums: Vec<f64> = qp.iter().filter_map(as_number).collect();
+                if !nums.is_empty() {
+                    builder = builder.quad_points(nums);
+                }
+            }
+            let ap_id = match builder.appearance_stream(doc) {
+                Ok(id) => id,
+                Err(crate::error::AnnotBuildError::InvalidRect) => continue,
+                Err(other) => return Err(other),
+            };
+            // Keep any existing /R or /D entries beside the new /N.
+            let ap_ref = Object::Reference(ap_id);
+            match annot_dict.get(b"AP").cloned() {
+                Ok(Object::Dictionary(mut ap)) => {
+                    ap.set("N", ap_ref);
+                    if let Ok(Object::Dictionary(d)) = doc.get_object_mut(annot_id) {
+                        d.set("AP", Object::Dictionary(ap));
+                        added += 1;
+                    }
+                }
+                Ok(Object::Reference(id)) => {
+                    if let Ok(Object::Dictionary(ap)) = doc.get_object_mut(id) {
+                        ap.set("N", ap_ref);
+                        added += 1;
+                    } else if let Ok(Object::Dictionary(d)) = doc.get_object_mut(annot_id) {
+                        let ap = dictionary! { "N" => ap_ref };
+                        d.set("AP", Object::Dictionary(ap));
+                        added += 1;
+                    }
+                }
+                _ => {
+                    if let Ok(Object::Dictionary(d)) = doc.get_object_mut(annot_id) {
+                        let ap = dictionary! { "N" => ap_ref };
+                        d.set("AP", Object::Dictionary(ap));
+                        added += 1;
+                    }
+                }
+            }
+        }
+    }
+    Ok(added)
 }
 
 /// Flatten all non-widget, non-link annotations on all pages.
@@ -491,8 +766,9 @@ pub fn flatten_annotations(doc: &mut lopdf::Document) -> Result<(), crate::error
 
 #[cfg(test)]
 mod tests {
-    use super::unique_xobject_name;
-    use lopdf::{Dictionary, Object};
+    use super::{ensure_appearances, flatten_annotations, unique_xobject_name};
+    use lopdf::Dictionary;
+    use lopdf::{dictionary, Document, Object, ObjectId, Stream};
 
     #[test]
     fn unique_xobject_name_skips_existing_entries() {
@@ -515,5 +791,123 @@ mod tests {
         let mut next = 0usize;
         assert_eq!(unique_xobject_name(&xobjects, &mut next), "FlatAnnot0");
         assert_eq!(unique_xobject_name(&xobjects, &mut next), "FlatAnnot1");
+    }
+
+    fn one_page_doc() -> (Document, ObjectId) {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let content_id = doc.add_object(Stream::new(dictionary! {}, b"".to_vec()));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => content_id,
+            "Resources" => dictionary! {},
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![Object::Reference(page_id)],
+                "Count" => 1_i64,
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        (doc, page_id)
+    }
+
+    fn add_annot(doc: &mut Document, page_id: ObjectId, subtype: &str, with_ap: bool) -> ObjectId {
+        let mut dict = dictionary! {
+            "Type" => "Annot",
+            "Subtype" => Object::Name(subtype.as_bytes().to_vec()),
+            "Rect" => vec![10.into(), 10.into(), 110.into(), 60.into()],
+        };
+        if with_ap {
+            let ap = Stream::new(
+                dictionary! {
+                    "Type" => "XObject",
+                    "Subtype" => "Form",
+                    "BBox" => vec![0.into(), 0.into(), 100.into(), 50.into()],
+                },
+                b"0 0 1 RG 0 0 100 50 re S".to_vec(),
+            );
+            let ap_id = doc.add_object(Object::Stream(ap));
+            dict.set(
+                "AP",
+                Object::Dictionary(dictionary! { "N" => Object::Reference(ap_id) }),
+            );
+        }
+        let id = doc.add_object(Object::Dictionary(dict));
+        let page = doc.get_dictionary_mut(page_id).unwrap();
+        match page.get(b"Annots").cloned() {
+            Ok(Object::Array(mut arr)) => {
+                arr.push(Object::Reference(id));
+                page.set("Annots", Object::Array(arr));
+            }
+            _ => {
+                page.set("Annots", Object::Array(vec![Object::Reference(id)]));
+            }
+        }
+        id
+    }
+
+    fn ap_normal(doc: &Document, annot_id: ObjectId) -> Option<ObjectId> {
+        let dict = doc.get_dictionary(annot_id).ok()?;
+        let ap = dict.get(b"AP").ok()?.clone();
+        let ap_dict = match ap {
+            Object::Dictionary(d) => d,
+            Object::Reference(id) => doc.get_dictionary(id).ok()?.clone(),
+            _ => return None,
+        };
+        match ap_dict.get(b"N").ok()?.clone() {
+            Object::Reference(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn ensure_appearances_backfills_only_what_flatten_paints() {
+        let (mut doc, page_id) = one_page_doc();
+        let square = add_annot(&mut doc, page_id, "Square", false);
+        let highlight = add_annot(&mut doc, page_id, "Highlight", false);
+        let kept = add_annot(&mut doc, page_id, "Square", true);
+        let kept_ap = ap_normal(&doc, kept).expect("fixture has an appearance");
+        let link = add_annot(&mut doc, page_id, "Link", false);
+        let widget = add_annot(&mut doc, page_id, "Widget", false);
+        let sound = add_annot(&mut doc, page_id, "Sound", false);
+
+        assert_eq!(ensure_appearances(&mut doc).unwrap(), 2);
+        assert!(ap_normal(&doc, square).is_some());
+        assert!(ap_normal(&doc, highlight).is_some());
+        // Untouched: existing appearance, link, widget, undrawable subtype.
+        assert_eq!(ap_normal(&doc, kept), Some(kept_ap));
+        assert_eq!(ap_normal(&doc, link), None);
+        assert_eq!(ap_normal(&doc, widget), None);
+        assert_eq!(ap_normal(&doc, sound), None);
+    }
+
+    #[test]
+    fn backfilled_appearances_flatten_away() {
+        let (mut doc, page_id) = one_page_doc();
+        add_annot(&mut doc, page_id, "Circle", false);
+        add_annot(&mut doc, page_id, "Link", false);
+
+        assert_eq!(ensure_appearances(&mut doc).unwrap(), 1);
+        flatten_annotations(&mut doc).unwrap();
+
+        let page = doc.get_dictionary(page_id).unwrap();
+        let annots = page.get(b"Annots").unwrap().as_array().unwrap().clone();
+        assert_eq!(annots.len(), 1);
+        let survivor = doc
+            .get_dictionary(annots[0].as_reference().unwrap())
+            .unwrap();
+        assert_eq!(
+            survivor.get(b"Subtype").unwrap().as_name().unwrap(),
+            b"Link"
+        );
     }
 }

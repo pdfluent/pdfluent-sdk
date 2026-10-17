@@ -1286,23 +1286,33 @@ fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
         _ => "6.6.4",
     };
 
-    // §6.7.2 (PDF/A-1) / §6.6.2.1 (PDF/A-2/3) / §6.5.x (PDF/A-4):
-    // The metadata stream dictionary shall NOT contain a /Filter key.
-    // veraPDF fires §6.7.2 testNumber=2 for this. (#FN-6.7.2)
-    {
+    // §6.7.2 test 2 (PDF/A-1 ONLY): the metadata stream dictionary shall NOT
+    // contain a /Filter key.
+    //
+    // This is an ISO 19005-1 requirement and nothing else. ISO 19005-2/-3
+    // (§6.6.2.3.1) and ISO 19005-4 require the XMP packet to be well-formed
+    // and, for parts 2 and 3, the stream not to be encrypted -- a
+    // FlateDecode-compressed metadata stream conforms. The oracle we measure
+    // against agrees: counting the rule `isCatalogMetadata == false || Filter
+    // == null` over veraPDF 1.28.2's profiles, it appears in PDFA-1A and
+    // PDFA-1B and in none of 2A/2B/2U, 3A/3B/3U, 4/4E/4F.
+    //
+    // Firing it for parts 2 and up made every document this library converts
+    // non-conforming by its own measurement, because the converter compresses
+    // XMP for part >= 2 on purpose (`pdfa_xmp.rs`: `allows_compression =
+    // conformance.part() != 1`). The converter was right. (#458, #FN-6.7.2)
+    //
+    // The /FFilter, /F and /FDecodeParms scan in `check_external_file_refs`
+    // is a separate rule and applies to every part; it stays.
+    if level.part() == 1 {
         use pdf_syntax::object::dict::keys;
         if let Some(cat) = check::catalog(pdf) {
             if let Some(xmp_stream) = cat.get::<pdf_syntax::object::Stream<'_>>(keys::METADATA) {
                 let xmp_dict = xmp_stream.dict();
                 if xmp_dict.contains_key(b"Filter" as &[u8]) {
-                    let filter_rule = match level.part() {
-                        1 => "6.7.2",
-                        4 => "6.5.2",
-                        _ => "6.6.2.1",
-                    };
                     check::error(
                         report,
-                        filter_rule,
+                        "6.7.2",
                         "XMP metadata stream dictionary contains /Filter key (not permitted)",
                     );
                 }
@@ -1835,6 +1845,34 @@ fn try_skip_zlib(data: &[u8], start: usize) -> Option<usize> {
     }
 }
 
+/// Environment variable naming the directory that holds the external PDF/A
+/// fixtures used by the `#[ignore]` diagnostic tests in this crate. The files
+/// are third-party corpus samples that do not ship with the repository.
+#[cfg(test)]
+pub(crate) const COMPLIANCE_FIXTURES_ENV: &str = "PDFLUENT_COMPLIANCE_FIXTURES";
+
+/// Resolve `name` inside the fixture directory named by
+/// [`COMPLIANCE_FIXTURES_ENV`].
+///
+/// # Panics
+///
+/// When the variable is unset or the file is not in that directory. The
+/// tests that call this are `#[ignore]`; when someone does run one, a missing
+/// fixture is a failure that names what to provide, never a silent pass.
+#[cfg(test)]
+pub(crate) fn compliance_fixture(name: &str) -> std::path::PathBuf {
+    let Some(dir) = std::env::var_os(COMPLIANCE_FIXTURES_ENV) else {
+        panic!("{COMPLIANCE_FIXTURES_ENV} is not set; point it at the directory that holds {name}");
+    };
+    let path = std::path::PathBuf::from(dir).join(name);
+    assert!(
+        path.is_file(),
+        "fixture {} does not exist; {COMPLIANCE_FIXTURES_ENV} must hold {name}",
+        path.display()
+    );
+    path
+}
+
 #[cfg(test)]
 mod string_scan_tests {
     use super::content_stream_has_long_string;
@@ -1844,7 +1882,8 @@ mod string_scan_tests {
     fn gen152_content_stream_not_flagged() {
         // Direct test + debug trace of content_stream_has_long_string on actual gen-152.
         use pdf_syntax::Pdf;
-        let data = std::fs::read("/tmp/gen-152_152696-converted.pdf").unwrap();
+        let path = super::compliance_fixture("gen-152_152696-converted.pdf");
+        let data = std::fs::read(&path).unwrap();
         let pdf = Pdf::new(data).unwrap();
         let page = pdf.pages().first().unwrap();
         let content = page.page_stream().unwrap().to_vec();

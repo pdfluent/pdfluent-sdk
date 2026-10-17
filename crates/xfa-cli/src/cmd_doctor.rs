@@ -129,7 +129,7 @@ pub fn run() -> Result<()> {
     println!();
     if issues > 0 {
         println!(
-            "{} issue{} found. Run 'pdfluent doctor --fix' for auto-fix suggestions.",
+            "{} issue{} found. Run 'xfa-runner doctor --fix' for auto-fix suggestions.",
             issues,
             if issues > 1 { "s" } else { "" }
         );

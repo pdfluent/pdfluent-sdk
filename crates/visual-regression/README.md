@@ -56,8 +56,17 @@ changes can be accepted. It never updates source PDFs implicitly. Without the en
 variable, a missing fixture, extra fixture, missing/extra baseline page,
 unreadable PNG, failed render or unexpected page count fails the suite.
 
-A pull request touching `baseline/` must explain **each changed image**.
-Reviewers look at the images, not at the hashes. Inspect expected, actual and
+A commit touching `baseline/` must name **each changed image** in a
+`Rerenders-deliberately:` trailer, and
+`scripts/ci/a_rerendered_baseline_declares_itself.py` refuses the push
+otherwise -- in both directions, so a trailer naming an image the commit
+does not change fails as well. This is the only thing standing between
+this suite and the one way it can be defeated: change the renderer, run
+`UPDATE_VISUAL_BASELINE=1`, commit both, and every gate is green because
+the reference moved to meet the regression. Measured on 06-09-2026 -- a
+one-pixel inset of the background fill turns the suite red on its own and
+green again once its 39 pages are regenerated in the same commit (#293).
+Look at the images, not at the hashes. Inspect expected, actual and
 diff together before accepting a change. The baseline deliberately preserves
 current renderer behavior, including any current limitations.
 
@@ -96,9 +105,8 @@ the workspace encryption API. The fixture uses deterministic RC4-40 revision 2
 instead. AES-256 revision 5 is assembled using fixed salts, keys and IVs solely
 for test data; it must never be reused as a production encryption recipe.
 No renderer determinism fix or tolerance was necessary for the initial set.
-The conversion fixture preserves the default free-tier watermark. Run without
-optional `PDFLUENT_LICENSE_FILE` / `PDFLUENT_LICENSE_KEY` settings; changing the
-conversion license profile changes the generated document and fails equality.
+The conversion fixture contains no automatic licence notice or watermark.
+The separate `watermark` fixture exercises an explicitly requested watermark.
 
 ## Fixture coverage
 
@@ -161,7 +169,7 @@ document and capability registers are refreshed with their existing tools.
 The territory map explicitly claims the crate and its narrow integration paths.
 The persistent-build guard registers the additional build job.
 
-The workflow runs only on pushes to `master`, on `[self-hosted, xfa-fast]`.
+The workflow runs only on pushes to `master`, on `[self-hosted, xfa-local-checks]`.
 It has no pull-request, dispatch or scheduled trigger and uses no hosted runner.
 Pull-request coverage comes from the required local pre-push gate, whose
 `visreg` step runs `cargo test -p visual-regression --release`. A failure rejects

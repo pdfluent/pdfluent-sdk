@@ -47,6 +47,20 @@ WHAT IT CHECKS
      run file. A citation to a run that does not exist is the same defect from
      the other end.
 
+  6. A competitor figure names a run whose LICENCE allows it to be published.
+     Measuring somebody else's software is a contract question before it is a
+     technical one: several commercial SDKs grant an evaluation licence "for
+     internal purposes only", which is a refusal written politely, and one set
+     of model weights forbids any use at all by a company that sells a
+     competing product (#390). So each capability that compares itself with
+     other tools keeps a register -- benchmarks/pdfa/comparison/CONVERTERS.toml
+     for conversion, benchmarks/extraction/comparison/EXTRACTORS.toml for text
+     extraction -- with a verdict per vendor and the clause that was read; every
+     comparison run file repeats that verdict beside its numbers; and the two
+     must agree. A tool the register marks unpublishable may not be named in any
+     published table under that capability's directory -- measured internally is
+     allowed and says so in the run file; printed is not.
+
 # FLOOR: run files >= 1 and published rows >= 3 -- a guard with nothing to
 # check reports green. The first version of this file passed on an empty
 # directory, which is the same green a correct tree gives and means the
@@ -70,6 +84,74 @@ import tomllib
 
 MIN_RUNS = 1
 MIN_ROWS = 3
+# Same reasoning as the two above: with no register and no comparison runs there
+# is nothing for rule 6 to refuse, and silence would read as a pass.
+MIN_CONVERTERS_ON_THE_RIG = 2
+MIN_COMPARISON_RUNS = 1
+
+# What a comparison run must repeat from the register, beside the identity
+# field each capability uses. `publishable` is the one that gates publication;
+# the other three are what makes it checkable rather than asserted -- a `true`
+# with no clause behind it is the state this rule exists to refuse.
+#
+# The identity is in there too, not only the verdict. A table cell carries
+# "LibreOffice 24.2.7.2" -- the register's name and the version that ran -- and
+# the rule below finds the column by that prefix. If a run file were free to
+# call the same tool something else, the column would stop resolving and the
+# rule would go quiet instead of red, which is the one failure a guard may not
+# have.
+VERDICT_FIELDS = {
+    "publishable": "publishable",
+    "licence": "licence",
+    "licence_clause": "clause",
+    "licence_read_on": "read_on",
+}
+
+
+class Comparison:
+    """One capability's competitor comparison: a register, runs, and a document.
+
+    Rule 6 was written for PDF/A and is now asked of text extraction too (#390),
+    which has its own register, its own run files and its own tools. The rule
+    itself does not change -- a figure needs a run, a run needs a verdict, and a
+    verdict needs a clause -- so the rule is written once and the paths and the
+    field names are what differ.
+
+    A second copy would have been the obvious move and the wrong one: the PDF/A
+    half of this file exists because a number got published without a reading
+    behind it, and two copies of a rule are two rules, one of which is a version
+    behind.
+    """
+
+    def __init__(self, capability, register, table, id_field, name_field,
+                 is_a_tool, documents, min_on_the_rig=2, min_runs=1):
+        self.capability = capability
+        self.register = pathlib.Path("benchmarks") / capability / "comparison" / register
+        self.runs = pathlib.Path("benchmarks") / capability / "comparison"
+        self.table = table
+        self.id_field = id_field
+        self.name_field = name_field
+        self.is_a_tool = is_a_tool
+        # Where a comparison of this capability is published, and nowhere else.
+        # Scoped, because a tool's NAME in a table cell is not by itself a
+        # figure about it: `benchmarks/runs/.../GATE_CORPUS_HARDENING_V2.md` has
+        # an oracle table with an `iText` column of page counts, which is a
+        # different measurement of a different thing, and demanding a run file
+        # for it would be a guard fining people for using a word.
+        self.documents = pathlib.Path("benchmarks") / documents
+        self.min_on_the_rig = min_on_the_rig
+        self.min_runs = min_runs
+
+    def fields(self):
+        return {self.name_field: "name", **VERDICT_FIELDS}
+
+
+COMPARISONS = (
+    Comparison("pdfa", "CONVERTERS.toml", "converters", "converter_id",
+               "converter", "is_a_converter", "pdfa"),
+    Comparison("extraction", "EXTRACTORS.toml", "extractors", "extractor_id",
+               "extractor", "is_an_extractor", "extraction"),
+)
 
 # A measurement in prose: a number wearing a unit, or a count of documents.
 # `PDF/A-2b`, `Apache-2.0` and `veraPDF 1.28.2` are not measurements and do not
@@ -82,6 +164,12 @@ MEASUREMENT = re.compile(
 
 # The escape hatch of rule 4, spelled out so it can be grepped for.
 THRESHOLD = "(threshold)"
+
+# The escape hatch of rule 6: this table quotes a vendor's own published
+# figures rather than reporting a measurement of ours, and here is where they
+# came from. Same idea as THRESHOLD, same deliberate ugliness.
+THIRD_PARTY = "<!-- third-party-figures: ... -->"
+THIRD_PARTY_MARKER = r"<!--\s*third-party-figures:(.*?)-->"
 
 RUN_MENTION = re.compile(r"v7-\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*")
 
@@ -157,6 +245,207 @@ def check_run(path: pathlib.Path, run: dict, classes: set[str],
                 problems.append(f"{name}: axis {axis_name} measured nothing and "
                                 f"still reports {', '.join(extra)}")
     return problems
+
+
+def check_competitors(repo: pathlib.Path) -> list[str]:
+    """Rule 6, for every capability that compares itself with somebody else.
+
+    Three directions, because the defect can arrive from any of them: a run
+    whose verdict disagrees with the register (someone edited one of the two), a
+    published document naming a tool we may not publish, and a register that has
+    quietly emptied out so the rule guards nothing.
+    """
+    problems: list[str] = []
+    for comparison in COMPARISONS:
+        problems += check_comparison(repo, comparison)
+    return problems
+
+
+def check_comparison(repo: pathlib.Path, spec) -> list[str]:
+    register_path = repo / spec.register
+    if not register_path.is_file():
+        return [f"{spec.register} is missing; no {spec.name_field} figure can "
+                f"name the licence reading that allowed it"]
+    try:
+        register = tomllib.loads(register_path.read_text())
+    except tomllib.TOMLDecodeError as exc:
+        return [f"{spec.register}: is not readable TOML ({exc})"]
+
+    tools = register.get(spec.table, {})
+    on_the_rig = [name for name, entry in tools.items() if entry.get("on_the_rig")]
+    if len(on_the_rig) < spec.min_on_the_rig:
+        problems = [
+            f"{spec.register}: {len(on_the_rig)} {spec.name_field}(s) on the rig, "
+            f"floor is {spec.min_on_the_rig}. One tool compared with itself is "
+            f"not a comparison"]
+    else:
+        problems = []
+    for name, entry in tools.items():
+        if entry.get("publishable") and not entry.get("clause"):
+            problems.append(
+                f"{spec.register}: {name} is marked publishable and names no "
+                f"clause. A permission with no reading behind it is what this "
+                f"register exists to prevent")
+        if not entry.get("on_the_rig") and not entry.get("why_not"):
+            problems.append(
+                f"{spec.register}: {name} is off the rig and does not say "
+                f"why, so the question gets reopened every round")
+
+    runs = sorted((repo / spec.runs).glob("*.json")) if (repo / spec.runs).is_dir() else []
+    if len(runs) < spec.min_runs:
+        problems.append(
+            f"{len(runs)} comparison run(s) in {spec.runs}, floor is "
+            f"{spec.min_runs}")
+    published_ids: set[str] = set()
+    for path in runs:
+        try:
+            run = json.loads(path.read_text())
+        except json.JSONDecodeError as exc:
+            problems.append(f"{path.name}: is not readable JSON ({exc})")
+            continue
+        cid = run.get(spec.id_field)
+        if cid not in tools:
+            problems.append(
+                f"{path.name}: names {spec.name_field} {cid!r}, which has no "
+                f"entry in {spec.register}. A measurement of a tool nobody read "
+                f"the terms of cannot be published or filed")
+            continue
+        entry = tools[cid]
+        for field, in_register in spec.fields().items():
+            if run.get(field) != entry.get(in_register):
+                problems.append(
+                    f"{path.name}: says {field}={run.get(field)!r} and "
+                    f"{spec.register} says {entry.get(in_register)!r} for "
+                    f"{cid}. The run and the reading that allowed it have come "
+                    f"apart; the register is the answer")
+        if run.get("publishable"):
+            published_ids.add(cid)
+
+    # The other end: a published TABLE carrying a tool's figures. Tables and not
+    # prose, because naming a competitor in a sentence is not publishing a
+    # measurement of it, and a rule that could not tell the two apart would be
+    # asking people to write around it.
+    # Only tools that do the thing being compared, and only somebody else's.
+    # veraPDF, qpdf and pdfcpu are in the PDF/A register so the question stops
+    # being reopened, not because a tool inventory listing them publishes a
+    # comparison; and our own name appears in tables all over these directories
+    # for reasons that have nothing to do with a competitor's licence.
+    by_shown_name = {entry["name"]: name for name, entry in tools.items()
+                     if entry.get(spec.is_a_tool) and not entry.get("ours")}
+    for path in published_documents(repo, spec):
+        for table in tables(path.read_text()):
+            if table.cited:
+                # Somebody else's published figures, quoted with a source. Our
+                # licence reading governs what WE may measure and print, not
+                # what a vendor has already put on its own website.
+                if not table.cited.strip():
+                    problems.append(
+                        f"{path.relative_to(repo)}: a table is marked "
+                        f"{THIRD_PARTY} and names no source. The marker is the "
+                        f"claim that these are somebody else's numbers; without "
+                        f"a source it is an assertion that they are not ours")
+                continue
+            for cell in table.cells:
+                # Prefix and not equality: a column header carries the version
+                # that ran ("Ghostscript 10.07.1") while the register holds the
+                # identity ("Ghostscript"). Requiring equality would let a
+                # versioned column slip past the rule in silence, which is the
+                # failure mode a guard must not have.
+                cell = cell.strip().strip("*`")
+                name = next((n for shown, n in by_shown_name.items()
+                             if names_converter(cell, shown)), None)
+                if name is None:
+                    continue
+                entry = tools[name]
+                if not entry.get("publishable"):
+                    problems.append(
+                        f"{path.relative_to(repo)}: a table carries figures for "
+                        f"{cell.strip()!r}, whose verdict in {spec.register} "
+                        f"is publishable = false "
+                        f"({entry.get('why_not', 'no reason recorded')}). "
+                        f"Measure it internally if you like; it does not go in a "
+                        f"published document. If the figures are the vendor's "
+                        f"own, mark the table {THIRD_PARTY}")
+                elif name not in published_ids:
+                    problems.append(
+                        f"{path.relative_to(repo)}: a table carries figures for "
+                        f"{cell.strip()!r} and no run file in {spec.runs} "
+                        f"measured it with publishable = true. A column with no "
+                        f"run behind it is the defect this file exists to catch")
+    return problems
+
+
+def published_documents(repo: pathlib.Path, spec) -> list[pathlib.Path]:
+    """Where this capability's comparison is published, and nowhere else.
+
+    The convention it enforces is that a comparison lives under
+    `benchmarks/<capability>/`. That is where the harness, the register and the
+    run files are, so a table of these figures somewhere else is already lost.
+    """
+    directory = repo / spec.documents
+    return sorted(directory.rglob("*.md")) if directory.is_dir() else []
+
+
+def names_converter(cell: str, shown: str) -> bool:
+    """Does this table cell head a column of that converter's figures?
+
+    The name, or the name and the version that ran: a column header carries
+    "Ghostscript 10.07.1" while the register holds the identity. Requiring
+    equality would let a versioned column past the rule in silence.
+
+    What follows the name has to look like a version, though, and not like
+    prose. `benchmarks/runs/.../PHASE7_D13_EXECUTION_PROMPT.md` has a row
+    labelled "Ghostscript on VPS", which is a machine and not a release; a rule
+    that demanded a run file for that would be teaching people to rename their
+    rows.
+    """
+    if cell == shown:
+        return True
+    if not cell.startswith(shown + " "):
+        return False
+    rest = cell[len(shown) + 1:].lstrip("v")
+    return bool(rest) and rest[0].isdigit()
+
+
+class Table:
+    """A markdown table, and whether it was declared to be somebody else's."""
+
+    def __init__(self, cells: list[str], cited: str | None):
+        self.cells = cells
+        self.cited = cited
+
+
+def tables(text: str) -> list[Table]:
+    """Every pipe table in a markdown document, with its citation marker.
+
+    The marker sits on the line above the table and names where the figures came
+    from. It is an HTML comment on purpose: invisible to a reader, greppable,
+    and too ugly to add by habit -- the same reasoning as `(threshold)` in
+    rule 4.
+    """
+    found: list[Table] = []
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        if not lines[index].lstrip().startswith("|"):
+            index += 1
+            continue
+        start = index
+        cells: list[str] = []
+        while index < len(lines) and lines[index].lstrip().startswith("|"):
+            cells += [c for c in lines[index].split("|")[1:-1]]
+            index += 1
+        # The marker is an HTML comment and comments wrap, so the block above
+        # the table is read whole rather than line by line. It ends at the first
+        # blank line: a marker further up than that belongs to another table.
+        above: list[str] = []
+        cursor = start - 1
+        while cursor >= 0 and lines[cursor].strip() and len(above) < 12:
+            above.append(lines[cursor])
+            cursor -= 1
+        match = re.search(THIRD_PARTY_MARKER, "\n".join(reversed(above)), re.S)
+        found.append(Table(cells, match.group(1) if match else None))
+    return found
 
 
 def main() -> int:
@@ -241,6 +530,8 @@ def main() -> int:
                 problems.append(
                     f"{path.relative_to(repo)}: cites run {mention}, and there is "
                     f"no {mention}.json in {programme.RUNS_DIR}")
+
+    problems += check_competitors(repo)
 
     for problem in problems:
         print(f"FAIL: {problem}", file=sys.stderr)

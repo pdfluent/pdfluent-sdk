@@ -1,0 +1,28 @@
+Build and copy native module into specified dir
+
+$ napi build [destDir]
+
+Options
+
+  --platform                        Add platform triple to the .node file. [name].linux-x64-gnu.node for example
+  --release                         Bypass to cargo build --release
+  --config,-c #0                    napi config path, only JSON format accepted. Default to package.json
+  --cargo-name #0                   Override the name field in Cargo.toml
+  --target #0                       Bypass to cargo build --target
+  --features #0                     Bypass to cargo build --features
+  --bin #0                          Bypass to cargo build --bin
+  --dts #0                          The filename and path of .d.ts file, relative to cwd
+  --const-enum                      Generate const enum in .d.ts file or not, default is true
+  --no-dts-header                   Don't generate .d.ts header
+  -p #0                             Bypass to cargo -p
+  --profile #0                      Bypass to cargo --profile
+  --cargo-flags #0                  All the others flag passed to cargo build
+  --js #0                           Path to the JS binding file, pass false to disable it. Only affect if --target is specified.
+  --js-package-name #0              Package name in generated js binding file, Only affect if --target specified and --js is not false.
+  --cargo-cwd #0                    The cwd of Cargo.toml file
+  --pipe #0                         Pipe [.js/.ts] files to this command, eg prettier -w
+  --disable-windows-x32-optimize    Disable windows x32 lto and increase codegen-units. Disabled by default. See https://github.com/napi-rs/napi-rs/issues/297
+  --zig                             Use zig as linker (Experimental)
+  --zig-abi-suffix #0               The suffix of the zig --target ABI version. Eg. --target x86_64-unknown-linux-gnu --zig-abi-suffix=2.17
+  --zig-link-only                   Only link the library with zig
+  --strip                           Strip the library for minimum file size

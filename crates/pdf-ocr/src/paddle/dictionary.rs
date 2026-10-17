@@ -12,6 +12,9 @@ use std::path::Path;
 ///
 /// Index 0 is always the CTC blank token.
 /// Characters are loaded from a dict.txt file with one character per line.
+/// The last index is always the SPACE class: PP-OCR recognition heads emit
+/// `dict + blank + space` outputs, so the space class follows the file's
+/// characters and is not read from the file.
 pub struct Dictionary {
     chars: Vec<String>,
 }
@@ -29,7 +32,8 @@ impl Dictionary {
         let text = std::str::from_utf8(data)
             .map_err(|e| DictionaryError::Parse(format!("invalid UTF-8: {e}")))?;
 
-        // Blank token at index 0, then each line is a character
+        // Blank token at index 0, then each line is a character,
+        // then the trailing SPACE class the rec heads emit.
         let mut chars = vec![String::new()]; // index 0 = blank
         for line in text.lines() {
             if !line.is_empty() {
@@ -43,10 +47,12 @@ impl Dictionary {
             ));
         }
 
+        chars.push(" ".to_string()); // last index = space
+
         Ok(Self { chars })
     }
 
-    /// Number of entries including the blank token at index 0.
+    /// Number of entries: blank token at index 0, file characters, then SPACE last.
     pub fn len(&self) -> usize {
         self.chars.len()
     }
@@ -56,7 +62,8 @@ impl Dictionary {
         self.chars.len() <= 1
     }
 
-    /// Get the character at `index`. Index 0 is the CTC blank token (returns `None`).
+    /// Get the character at `index`. Index 0 is the CTC blank token (returns `None`);
+    /// the last index is the SPACE class (returns `Some(" ")`).
     pub fn get(&self, index: usize) -> Option<&str> {
         if index == 0 {
             return None; // blank token
@@ -92,13 +99,21 @@ mod tests {
     #[test]
     fn load_and_lookup() {
         let dict = Dictionary::from_bytes(b"a\nb\nc\nd\n").unwrap();
-        assert_eq!(dict.len(), 5); // 4 chars + blank token
+        assert_eq!(dict.len(), 6); // 4 chars + blank token + space class
         assert_eq!(dict.get(0), None); // blank
         assert_eq!(dict.get(1), Some("a"));
         assert_eq!(dict.get(2), Some("b"));
         assert_eq!(dict.get(3), Some("c"));
         assert_eq!(dict.get(4), Some("d"));
-        assert_eq!(dict.get(5), None); // out of range
+        assert_eq!(dict.get(5), Some(" ")); // trailing space class
+        assert_eq!(dict.get(6), None); // out of range
+    }
+
+    #[test]
+    fn trailing_space_class_comes_last() {
+        let dict = Dictionary::from_bytes(b"a\nb\n").unwrap();
+        assert_eq!(dict.len(), 4); // blank + a + b + space
+        assert_eq!(dict.get(dict.len() - 1), Some(" "));
     }
 
     #[test]
@@ -110,10 +125,11 @@ mod tests {
     #[test]
     fn dict_with_unicode() {
         let dict = Dictionary::from_bytes("日\n本\n語\n".as_bytes()).unwrap();
-        assert_eq!(dict.len(), 4);
+        assert_eq!(dict.len(), 5);
         assert_eq!(dict.get(1), Some("日"));
         assert_eq!(dict.get(2), Some("本"));
         assert_eq!(dict.get(3), Some("語"));
+        assert_eq!(dict.get(4), Some(" "));
     }
 
     #[test]
@@ -125,8 +141,9 @@ mod tests {
     #[test]
     fn skips_empty_lines() {
         let dict = Dictionary::from_bytes(b"a\n\nb\n").unwrap();
-        assert_eq!(dict.len(), 3); // blank + a + b
+        assert_eq!(dict.len(), 4); // blank + a + b + space
         assert_eq!(dict.get(1), Some("a"));
         assert_eq!(dict.get(2), Some("b"));
+        assert_eq!(dict.get(3), Some(" "));
     }
 }

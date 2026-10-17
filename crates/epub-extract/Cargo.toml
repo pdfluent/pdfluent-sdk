@@ -1,0 +1,17 @@
+[package]
+name = "epub-extract"
+version.workspace = true
+edition.workspace = true
+# AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+readme = "README.md"
+repository.workspace = true
+homepage = "https://pdfluent.com"
+documentation = "https://pdfluent.com/docs"
+description = "EPUB content extraction: chapters in spine order as structured blocks"
+
+[dependencies]
+pdf-engine = { path = "../pdf-engine", version = "=1.1.0" }
+thiserror.workspace = true
+zip = { version = "2", default-features = false, features = ["deflate"] }
+quick-xml = "0.37"

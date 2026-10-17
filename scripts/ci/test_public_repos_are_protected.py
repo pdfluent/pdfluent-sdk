@@ -110,10 +110,37 @@ def main() -> int:
 
     # --- coverage of the organisation ----------------------------------------
     repos = [{"full_name": "org/repo"}, {"full_name": "org/new"}]
-    case("a public repository in no row is fatal",
-         len(guard.beoordeel_dekking([rij()], repos)) == 1)
-    case("and a repository with a row is not",
-         guard.beoordeel_dekking([rij(), rij(name="org/new")], repos) == [])
+    fataal, _ = guard.beoordeel_dekking([rij()], repos)
+    case("a public repository in no row is fatal", len(fataal) == 1, str(fataal))
+    fataal, _ = guard.beoordeel_dekking([rij(), rij(name="org/new")], repos)
+    case("and a repository with a row is not", fataal == [], str(fataal))
+
+    # An excusal is an argument, and it is checked against the API rather than
+    # taken on trust: a repository that has stopped being the fork it was
+    # excused as is one of ours again.
+    excused = {"org/new": ("upstream/new", "it is upstream's, not ours")}
+    fataal, gemeld = guard.beoordeel_dekking(
+        [rij()], repos, buiten=excused, ouder=lambda name: (True, "upstream/new"))
+    case("a repository excused as a fork of the upstream it really forks passes",
+         fataal == [] and len(gemeld) == 1, str(fataal) + str(gemeld))
+    case("and its reason is reported rather than kept in the file",
+         "not ours" in " ".join(gemeld), str(gemeld))
+    fataal, _ = guard.beoordeel_dekking(
+        [rij()], repos, buiten=excused, ouder=lambda name: (False, None))
+    case("an excusal that has stopped being true is fatal",
+         len(fataal) == 1 and "no longer true" in fataal[0], str(fataal))
+    fataal, _ = guard.beoordeel_dekking(
+        [rij()], repos, buiten=excused, ouder=lambda name: (True, "someone/else"))
+    case("a fork re-pointed at another upstream is fatal too",
+         len(fataal) == 1 and "someone/else" in fataal[0], str(fataal))
+
+    # The excusal in this file, against the tree it ships in: an entry that
+    # names no reason is the way a list like this quietly becomes a way to
+    # silence question 1.
+    for naam, (ouder, reden) in guard.BUITEN.items():
+        case(f"{naam} names the upstream it is excused as a fork of", bool(ouder))
+        case(f"{naam} carries a reason somebody wrote", len(reden.split()) >= 20,
+             f"{len(reden.split())} words")
 
     # --- the register against a tree -----------------------------------------
     with tempfile.TemporaryDirectory() as d:

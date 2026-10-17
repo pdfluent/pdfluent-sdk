@@ -1,18 +1,19 @@
 [package]
 name = "pdf-engine"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
 license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 readme = "README.md"
 description = "Unified PDF rendering engine — page rendering, text extraction, thumbnails."
-# Tests and examples do not travel. They read fixtures from the repository, which are not in
-# the tarball -- so they cannot build outside this workspace, and what they do
-# carry into a published crate is a path into a tree the reader does not have.
-# `pdfluent` and `pdf-xfa` have kept them out for that reason since they were
-# first published; this one had not.
+# Tests and examples do not travel. They read fixtures from the repository,
+# two directories up, which are not in the tarball -- so they cannot build
+# outside this workspace, and what they do carry into a published crate is a
+# path into a tree the reader does not have. `pdfluent` and `pdf-xfa` have
+# kept them out for that reason since they were first published; this one had
+# not (#358).
 exclude = ["tests/", "examples/"]
-repository = "https://pdfluent.com/source"
+repository = "https://github.com/pdfluent/pdfluent-sdk"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 
@@ -22,24 +23,36 @@ categories = ["rendering", "text-processing"]
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.7" }
-pdf-interpret = { path = "../pdf-interpret", version = "=0.5.9" }
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, version = "=0.39.5" }
-pdf-render = { path = "../pdf-render", version = "=1.0.0" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0" }
-pdf-xfa = { path = "../pdf-xfa", optional = true, version = "=1.0.0" }
-xfa-layout-engine = { path = "../xfa-layout-engine", optional = true, version = "=1.0.0" }
-formcalc-interpreter = { path = "../formcalc-interpreter", optional = true, version = "=1.0.0" }
-xfa-json = { path = "../xfa-json", optional = true, version = "=1.0.0" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.6.0" }
+pdf-interpret = { path = "../pdf-interpret", version = "=0.6.0" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.1.0" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, version = "=0.39.6" }
+pdf-render = { path = "../pdf-render", version = "=1.1.0" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.1.0" }
+pdf-xfa = { path = "../pdf-xfa", optional = true, version = "=1.1.0" }
+xfa-layout-engine = { path = "../xfa-layout-engine", optional = true, version = "=1.1.0" }
+formcalc-interpreter = { path = "../formcalc-interpreter", optional = true, version = "=1.1.0" }
+xfa-json = { path = "../xfa-json", optional = true, version = "=1.1.0" }
 thiserror = { workspace = true }
 kurbo = "0.13.0"
 rayon = { version = "1", optional = true }
 ocrs = { version = "0.12", optional = true }
 rten = { version = "0.24", optional = true }
 dirs-sys = { version = "0.3", optional = true }
-pdf-ocr = { workspace = true, optional = true, features = ["paddle"] }
+# Unconditional since the balanced tier (#641): the model specs, the failure
+# types and the path resolution are plain Rust in every build, so a build
+# without the tier still reports a missing model with the typed `ModelError`
+# rather than a string. No `features` here on purpose: `ocr-onnx` wants the
+# paddle backend (ort) while `ocr-cli` wants only the system-binary backend
+# (std). The features that enable a backend name the backend they need, so
+# enabling one never drags in the other's runtime, and the default tree stays
+# pure Rust (held by the_default_tree_carries_no_ort.py).
+pdf-ocr = { workspace = true }
 reqwest = { workspace = true, optional = true }
-base64 = { workspace = true, optional = true }
+base64 = { workspace = true }
+# The cloud OCR clients encode page images as PNG (ocr.rs); without this the
+# library does not build with any ocr-* cloud feature, and only `cargo test`
+# (where image is a dev-dependency) hides it.
 image = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -48,6 +61,20 @@ sha2 = { version = "0.10", optional = true }
 rsa = { version = "0.9", default-features = false, features = ["sha2"], optional = true }
 pkcs8 = { version = "0.10", features = ["pem"], optional = true }
 time = { version = "0.3", features = ["formatting", "macros"], optional = true }
+# Optional ONNX runtime for the vision layer (#636). Licence: MIT OR Apache-2.0
+# (see THIRD_PARTY_LICENSES.txt). Off by default; no behaviour change unless
+# the `vision` feature is enabled. No default features: the `transformers`
+# op-set is not needed for the tiny detection/classification models here and
+# would grow the binary for no reason.
+tract-onnx = { version = "0.23", optional = true, default-features = false }
+# The model tiers' view of the shared ONNX Runtime layer (#641): the same
+# `ort` pdf-ocr loads (one per build graph), plus the tensors the model
+# features feed it. Optional, behind `ort`; the default tree never resolves
+# them (held by `the_default_tree_carries_no_ort.py`). The layout tier builds
+# its input tensor from `(shape, Vec<f32>)` and needs no `ndarray` of its
+# own; the tables tier does, hence the feature and the dep.
+ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic", "api-23"] }
+ndarray = { version = "0.17", optional = true }
 
 [features]
 default = []
@@ -62,15 +89,35 @@ xfa = ["dep:pdf-xfa", "dep:xfa-layout-engine", "dep:formcalc-interpreter", "dep:
 # default; no behaviour change unless both this feature and the env var are set.
 xfa-js-sandboxed = ["xfa", "pdf-xfa/xfa-js-sandboxed"]
 ocr = ["dep:ocrs", "dep:rten", "dep:dirs-sys"]
-ocr-mistral = ["dep:reqwest", "dep:base64", "dep:image", "dep:serde", "dep:serde_json"]
-ocr-google = ["dep:reqwest", "dep:base64", "dep:image", "dep:serde", "dep:serde_json", "dep:rsa", "dep:pkcs8", "dep:sha2", "dep:time"]
-ocr-aws = ["dep:reqwest", "dep:base64", "dep:image", "dep:serde", "dep:serde_json", "dep:hmac", "dep:sha2", "dep:time"]
-ocr-azure = ["dep:reqwest", "dep:base64", "dep:image", "dep:serde", "dep:serde_json"]
+ocr-mistral = ["dep:reqwest", "dep:image", "dep:serde", "dep:serde_json"]
+ocr-google = ["dep:reqwest", "dep:image", "dep:serde", "dep:serde_json", "dep:rsa", "dep:pkcs8", "dep:sha2", "dep:time"]
+ocr-aws = ["dep:reqwest", "dep:image", "dep:serde", "dep:serde_json", "dep:hmac", "dep:sha2", "dep:time"]
+ocr-azure = ["dep:reqwest", "dep:image", "dep:serde", "dep:serde_json"]
 ocr-cloud = ["ocr-mistral", "ocr-google", "ocr-aws", "ocr-azure"]
-ocr-onnx = ["dep:pdf-ocr"]
+ocr-onnx = ["pdf-ocr/paddle"]
+# The shared ONNX Runtime layer, and the two model tiers on top of it (#641).
+# Pin (see pdf-ocr): ort =2.0.0-rc.13, api-23, ONNX Runtime 1.23.2, loaded
+# dynamically, never linked, never downloaded. `ort-layout` and `ort-tables`
+# are empty placeholders here -- their model code lands in later jobs; the
+# names are fixed now. Off by default; the default build stays pure Rust.
+ort = ["pdf-ocr/onnx-runtime", "dep:ort", "dep:ndarray"]
+ort-layout = ["ort"]
+ort-tables = ["ort"]
+# OCR through the system `tesseract` binary (`TesseractCliEngine`): std only,
+# no paddle, no ort. The Python and Node bindings build with this on; where
+ocr-cli = ["pdf-ocr/tesseract-cli"]
+# Optional, fast vision layer: raster + ONNX runner on tract-onnx (#636).
+# Off by default; no trained model ships and default behaviour is unchanged.
+vision = ["dep:tract-onnx"]
 full = ["parallel", "xfa", "ocr", "ocr-onnx", "ocr-cloud"]
 # Research spikes — not compiled in normal CI.  Build explicitly with `--features spike`.
 spike = []
+# Measurement grids over the corridor guards (#574) — not compiled in normal
+# CI. Build explicitly with `--features corridor-grid`. With it on, the
+# `PDFLUENT_CORRIDOR` / `PDFLUENT_CORRIDOR_TRACE` overrides are read, so one
+# binary serves the whole grid; without it the decoder serves the shipped
+# config from the table switch and reads no environment.
+corridor-grid = []
 
 [[example]]
 name = "chunk_dump"
@@ -106,9 +153,38 @@ required-features = ["spike"]
 
 [dev-dependencies]
 test-skip = { path = "../test-skip" }
+# The render_page_png example writes its PNG with the `png` crate directly, in
+# process: the best tier measures these bytes, so they must not depend on a
+# converter outside this tree. Already in the lock via `image`.
+png = "0.18"
+# The Office extractors, for the office_markdown example and its test only.
+# Dev-dependencies, because every one of these crates depends on this engine:
+# a normal dependency would be a cycle, a dev-dependency is not. The same
+# shape as test-skip: versionless path crates the published build never sees.
+# The versions must stay off: cargo strips a path-only dev-dependency when it
+# packages, but a versioned one has to resolve on the index -- where
+# docx-extract and markup-extract never land (publish = false) and the other
+# three land only after this engine, so "cargo package" of this crate (and of
+# the workspace) fails before and after the publish either way. Measured with
+# "cargo package -p pdf-engine" on 03-10-2026: "no matching package named
+# docx-extract" with the versions on, a clean package with them off.
+docx-extract = { path = "../docx-extract" }
+pptx-extract = { path = "../pptx-extract" }
+xlsx-extract = { path = "../xlsx-extract" }
+markup-extract = { path = "../markup-extract" }
+epub-extract = { path = "../epub-extract" }
+# In-memory fixture zips for the office_markdown test (same shape as the
+# extractors' own dev-dependency).
+zip = { version = "2", default-features = false, features = ["deflate"] }
 image = { workspace = true }
 lopdf = { workspace = true }
-serde_json = { workspace = true }
+# `float_roundtrip`: the learned-model parity tests read LightGBM's feature
+# rows from JSON, and the default parser can land one ulp off a value -- which
+# is enough to send it to the other side of a split whose threshold IS that
+# value, and to fail parity for a model that is right (#599).
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+# The TATR end-to-end test decodes its fixtures' base64 crop PNGs.
+base64 = { workspace = true }
 # Dev-only pdfium reference comparator for the render-profiling milestone.
 # Binds at runtime to a local libpdfium (e.g. from pypdfium2); the native lib is
 # never committed. Used only by examples/pdfium_compare.rs.

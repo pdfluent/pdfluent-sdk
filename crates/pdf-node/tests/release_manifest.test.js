@@ -39,21 +39,22 @@ function mainPackFiles() {
 }
 
 describe('platform matrix', () => {
-  test('defines exactly the six supported platforms', () => {
-    expect(MATRIX).toHaveLength(6)
+  test('defines exactly the seven supported platforms', () => {
+    expect(MATRIX).toHaveLength(7)
     expect(PLATFORM_PKG_NAMES).toEqual([
       '@pdfluent/node-darwin-arm64',
       '@pdfluent/node-darwin-x64',
       '@pdfluent/node-linux-x64-gnu',
       '@pdfluent/node-linux-x64-musl',
       '@pdfluent/node-linux-arm64-gnu',
+      '@pdfluent/node-linux-arm64-musl',
       '@pdfluent/node-win32-x64-msvc',
     ])
   })
 })
 
 describe('main meta-package manifest', () => {
-  test('optionalDependencies lists the FULL six-platform matrix (no subset)', () => {
+  test('optionalDependencies lists the FULL seven-platform matrix (no subset)', () => {
     const od = manifest.optionalDependencies || {}
     expect(Object.keys(od).sort()).toEqual([...PLATFORM_PKG_NAMES].sort())
     for (const v of Object.values(od)) {
@@ -102,6 +103,18 @@ describe('deterministic platform-dir generation', () => {
       expect(p.main).toBe(nodeFileFor(m.tag))
       expect(p.files).toContain('LICENSE')
       expect(p.files).toContain(nodeFileFor(m.tag))
+      // THE PACKAGE THAT CARRIES THE BINARY CARRIES THE NOTICES (#541). This
+      // one holds `index.<tag>.node`, which contains the Foxit Standard 14
+      // faces, the Liberation and Noto substitutes and Adobe's CMap resources;
+      // BSD-3-Clause and OFL 1.1 both ask for their notice with a
+      // redistribution in binary form. The meta-package has no binary in it.
+      expect(p.files).toContain('NOTICE')
+      expect(p.files).toContain('THIRD_PARTY_LICENSES.txt')
+      // The `license` field is the main package's ("SEE LICENSE IN LICENSE-OFFER"): the file it names and the
+      // commercial text travel in the package that carries the binary (1.1.0 licence audit).
+      const named = (p.license || '').match(/SEE LICENSE IN (\S+)/)
+      if (named) expect(p.files).toContain(named[1])
+      expect(p.files).toContain('LICENSE-COMMERCIAL')
     }
   })
 })

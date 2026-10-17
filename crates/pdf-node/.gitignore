@@ -7,3 +7,6 @@
 # Generated per-platform sub-package directories
 # (scripts/release/generate-npm-dirs.cjs writes these from built binaries).
 /npm/
+
+# Local `npm pack` output; the types gate packs into a temp dir instead.
+*.tgz

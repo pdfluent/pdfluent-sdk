@@ -1,0 +1,120 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for Widget, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: Widget
+rust_path: pdfluent::compat::Widget
+names: {python: Widget, node: Widget, java: Widget, dotnet: Widget}
+members:
+  - name: __eq__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __eq__, node: eq, java: eq, dotnet: Eq}
+    rust: "Widget::PartialEq"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-widget-eq]
+  - name: __ge__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ge__, node: ge, java: ge, dotnet: Ge}
+    rust: "Widget::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-widget-ge]
+  - name: __gt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __gt__, node: gt, java: gt, dotnet: Gt}
+    rust: "Widget::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-widget-gt]
+  - name: __init__
+    kind: constructor
+    signature: "()"
+    names: {python: __init__, node: Widget, java: Widget, dotnet: Widget}
+    rust: "Widget::new"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.widget.add]
+  - name: __le__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __le__, node: le, java: le, dotnet: Le}
+    rust: "Widget::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-widget-le]
+  - name: __lt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __lt__, node: lt, java: lt, dotnet: Lt}
+    rust: "Widget::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-widget-lt]
+  - name: __ne__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ne__, node: ne, java: ne, dotnet: Ne}
+    rust: "Widget::PartialEq"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-widget-ne]
+  - name: button_states
+    kind: method
+    signature: "()"
+    names: {python: button_states, node: buttonStates, java: buttonStates, dotnet: ButtonStates}
+    rust: "Widget::button_states"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-widget-button-states]
+  - name: next
+    kind: property
+    signature: "()"
+    names: {python: next, node: next, java: getNext, dotnet: Next}
+    rust: "Widget::next"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-widget-next]
+  - name: on_state
+    kind: method
+    signature: "()"
+    names: {python: on_state, node: onState, java: onState, dotnet: OnState}
+    rust: "Widget::on_state"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-widget-on-state]
+  - name: reset
+    kind: method
+    signature: "()"
+    names: {python: reset, node: reset, java: reset, dotnet: Reset}
+    rust: "Widget::reset"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.widget.reset]
+  - name: update
+    kind: method
+    signature: "(sync_flags=False)"
+    names: {python: update, node: update, java: update, dotnet: Update}
+    rust: "Widget::update"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.widget.update_text]

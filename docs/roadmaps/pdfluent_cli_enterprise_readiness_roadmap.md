@@ -39,10 +39,11 @@ Scope guardrails: no binary rename, no publish, no XFA behavior change, no Fresh
 - ✅ no-secrets test; no network/telemetry; private-path scan in CI; license-file in crate.
 - ☐ SBOM/checksums + reproducible-build notes — deferred to M5 packaging.
 
-## M7 — Internal/public binary coexistence  ☐ DEFERRED
+## M7 — Internal/public binary coexistence  ✅ DONE (#636)
 - ✅ documented (`pdfluent-cli` vs internal `pdfluent`; no collision).
-- ☐ `pdfluent` takeover: inventory + repoint all `target/release/pdfluent` consumers
-  (XFA runners, D13/QM, CI) — its own milestone; must not break internal tooling.
+- ✅ `pdfluent` takeover: inventory + repoint all `target/release/pdfluent` consumers
+  (XFA runners, D13/QM, CI) to `target/release/xfa-runner`; public CLI promoted to
+  `pdfluent` with `pdfluent-cli` kept as an alias — its own milestone; internal tooling kept working.
 
 ## Commit boundaries
 1. tests + dev-dep (this milestone). 2. docs (cli.md extension + inventory + roadmap + final).

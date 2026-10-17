@@ -19,13 +19,11 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
+use crate::error;
+
 use pdfluent::text_edit::{
     CommitPolicy, FontFallback, MatchId, RegionRelation, ReplaceOptions, SignaturePolicy, TextQuery,
 };
-
-fn err(e: impl std::fmt::Display) -> napi::Error {
-    napi::Error::from_reason(e.to_string())
-}
 
 /// Find and replace PDF text while preserving fonts, positioning and the
 /// surrounding page content.
@@ -39,7 +37,7 @@ impl TextEditor {
     /// Open a PDF from a Buffer.
     #[napi(factory)]
     pub fn open(data: Buffer) -> Result<Self> {
-        let doc = pdfluent::PdfDocument::from_bytes(&data).map_err(err)?;
+        let doc = pdfluent::PdfDocument::from_bytes(&data).map_err(error::facade("open"))?;
         Ok(Self { doc })
     }
 
@@ -65,9 +63,12 @@ impl TextEditor {
     /// until the next applied edit on this document, and an `editable` flag.
     #[napi]
     pub fn find_text(&mut self, query_json: String) -> Result<String> {
-        let query = parse_query(&query_json).map_err(napi::Error::from_reason)?;
-        let matches = self.doc.find_text(query).map_err(err)?;
-        serde_json::to_string(&matches).map_err(err)
+        let query = parse_query(&query_json).map_err(|m| error::unsupported("findText", m))?;
+        let matches = self
+            .doc
+            .find_text(query)
+            .map_err(error::facade("findText"))?;
+        serde_json::to_string(&matches).map_err(|e| error::internal("findText", e.to_string()))
     }
 
     /// Find and replace in one call. Returns the JSON replacement report.
@@ -80,13 +81,14 @@ impl TextEditor {
         replacement: String,
         options_json: String,
     ) -> Result<String> {
-        let query = parse_query(&query_json).map_err(napi::Error::from_reason)?;
-        let options = parse_options(&options_json).map_err(napi::Error::from_reason)?;
+        let query = parse_query(&query_json).map_err(|m| error::unsupported("replaceText", m))?;
+        let options =
+            parse_options(&options_json).map_err(|m| error::unsupported("replaceText", m))?;
         let report = self
             .doc
             .replace_text(query, &replacement, options)
-            .map_err(err)?;
-        serde_json::to_string(&report).map_err(err)
+            .map_err(error::facade("replaceText"))?;
+        serde_json::to_string(&report).map_err(|e| error::internal("replaceText", e.to_string()))
     }
 
     /// Apply replacements to matches located earlier with `findText`.
@@ -101,9 +103,11 @@ impl TextEditor {
             id: String,
             text: String,
         }
-        let edits: Vec<EditIn> = serde_json::from_str(&edits_json)
-            .map_err(|e| napi::Error::from_reason(format!("expected [{{id, text}}, …]: {e}")))?;
-        let options = parse_options(&options_json).map_err(napi::Error::from_reason)?;
+        let edits: Vec<EditIn> = serde_json::from_str(&edits_json).map_err(|e| {
+            error::unsupported("replaceMatches", format!("expected [{{id, text}}, …]: {e}"))
+        })?;
+        let options =
+            parse_options(&options_json).map_err(|m| error::unsupported("replaceMatches", m))?;
         let edits: Vec<(MatchId, String)> = edits
             .into_iter()
             .map(|e| (MatchId::from_token(e.id), e.text))
@@ -111,21 +115,21 @@ impl TextEditor {
         let report = self
             .doc
             .replace_text_matches(&edits, options)
-            .map_err(err)?;
-        serde_json::to_string(&report).map_err(err)
+            .map_err(error::facade("replaceMatches"))?;
+        serde_json::to_string(&report).map_err(|e| error::internal("replaceMatches", e.to_string()))
     }
 
     /// Serialize the (possibly edited) document to a Buffer.
     #[napi]
     pub fn to_buffer(&self) -> Result<Buffer> {
-        let bytes = self.doc.to_bytes().map_err(err)?;
+        let bytes = self.doc.to_bytes().map_err(error::facade("toBuffer"))?;
         Ok(bytes.into())
     }
 
     /// Write the (possibly edited) document to `path`.
     #[napi]
     pub fn save(&self, path: String) -> Result<()> {
-        self.doc.save(&path).map_err(err)
+        self.doc.save(&path).map_err(error::facade("save"))
     }
 }
 

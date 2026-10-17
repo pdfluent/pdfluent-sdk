@@ -145,8 +145,10 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import functools
 import importlib.util
+import io
 import os
 import pathlib
 import re
@@ -713,7 +715,15 @@ def cmd_verify(a) -> int:
     # 3. Identity. `is_allowed` and not a second rule: the guard that refuses a
     #    personal address in a new commit is the guard that decides here.
     adressen = _git(mirror, "log", "--all", "--format=%ae%n%ce").stdout.split()
-    niet_toegestaan = sorted({e for e in adressen if not identiteit.is_allowed(e)})
+    # And the taggers. An annotated tag is an object no commit filter reaches,
+    # and its tagger is published with the tag. Reading only `git log` here is
+    # what let five tags carrying the owner's personal address through every
+    # check on 06-09-2026, until GitHub refused the push with GH007.
+    tag_adressen = [identiteit._address(r)
+                    for _, rauw in _tag_objects(mirror)
+                    for r in _tag_delen(rauw)[0] if r.startswith("tagger ")]
+    niet_toegestaan = sorted({e for e in adressen + tag_adressen
+                              if not identiteit.is_allowed(e)})
     if not adressen:
         fouten.append("the rewritten history holds no commits, so nothing was read")
     if niet_toegestaan:
@@ -730,6 +740,15 @@ def cmd_verify(a) -> int:
         naam, wat, ctx = treffers[0]
         wat, ctx = gi._toonbaar(naam, wat, ctx)
         fouten.append(f"{len(treffers)} internal term(s) in the commit messages, "
+                      f"first [{naam}] {wat}")
+    # A tag message is published as readably as a commit message, and the
+    # `--msg-filter` never sees it.
+    tag_berichten = "\n".join(_tag_delen(rauw)[1] for _, rauw in _tag_objects(mirror))
+    tag_treffers = gi.overtredingen(tag_berichten)
+    if tag_treffers:
+        naam, wat, ctx = tag_treffers[0]
+        wat, ctx = gi._toonbaar(naam, wat, ctx)
+        fouten.append(f"{len(tag_treffers)} internal term(s) in the tag messages, "
                       f"first [{naam}] {wat}")
 
     paden_van_oid: dict[str, set[str]] = {}
@@ -797,7 +816,8 @@ def cmd_verify(a) -> int:
                       f"{kapot[0]} -- a clone of this would not build")
 
     print(f"[seed-verify] {len(paden)} path(s), {gelezen} readable text blob(s), "
-          f"{len(set(adressen))} distinct identity/identities, "
+          f"{len(set(adressen + tag_adressen))} distinct identity/identities "
+          f"over commits and {len(tag_adressen)} annotated tag(s), "
           f"{len(manifest_oids)} version(s) of the root manifest")
 
     if fouten:
@@ -833,6 +853,94 @@ def cmd_alias(a) -> int:
     return 0
 
 
+def _tag_objects(mirror: pathlib.Path) -> list[tuple[str, str]]:
+    """Every annotated tag in this mirror, as (refname, raw object).
+
+    Lightweight tags are not here and need nothing: they are a ref pointing at a
+    commit, and the commit went through `filter-branch`. An annotated tag is an
+    object of its own, with a tagger and a message that no commit filter reaches.
+    """
+    uit = []
+    refs = _git(mirror, "for-each-ref", "--format=%(refname) %(objecttype)",
+                "refs/tags").stdout.splitlines()
+    for regel in refs:
+        naam, _, soort = regel.partition(" ")
+        if soort.strip() == "tag":
+            uit.append((naam, _git(mirror, "cat-file", "tag", naam).stdout))
+    return uit
+
+
+def _tag_delen(rauw: str) -> tuple[list[str], str]:
+    """An annotated tag object split into its header lines and its message."""
+    kop, _, bericht = rauw.partition("\n\n")
+    return kop.split("\n"), bericht
+
+
+def cmd_retag(a) -> int:
+    """The tagger and the message of every annotated tag, filtered like a commit.
+
+    `filter-branch --tag-name-filter cat` moves a tag onto the rewritten commit
+    and copies the tag object across as it stands -- so the tagger identity and
+    the tag message are the two things in a seeded history that the commit
+    filters never touch. Both are published: `git push` sends the tag object, and
+    a tag message is as readable as a commit message.
+
+    Found the hard way on 06-09-2026. The seeding reported success, every check
+    was zero, and GitHub refused five of the six tags with GH007 -- "your push
+    would publish a private email address" -- because the tagger of each one was
+    still the owner's personal address. The branch had already gone. A remote
+    that did not enforce email privacy would have published it.
+    """
+    identiteit = _module("commits_use_the_noreply_alias")
+    alias = a.alias
+    if not alias:
+        klasse = argparse.Namespace(mirror=a.mirror)
+        uit = io.StringIO()
+        with contextlib.redirect_stdout(uit):
+            if cmd_alias(klasse) != 0:
+                return 1
+        alias = uit.getvalue().strip()
+
+    herschreven = 0
+    for naam, rauw in _tag_objects(a.mirror):
+        kop, bericht = _tag_delen(rauw)
+        nieuw_kop = []
+        for regel in kop:
+            if regel.startswith("tagger "):
+                adres = identiteit._address(regel)
+                if not identiteit.is_allowed(adres):
+                    # The address is replaced and the name and the timestamp stay,
+                    # exactly as the env-filter does it for a commit: what is being
+                    # kept out is the address, not the fact that somebody tagged.
+                    regel = regel.replace(f"<{adres}>", f"<{alias}>", 1)
+            nieuw_kop.append(regel)
+
+        nieuw_bericht = bericht
+        if a.trailers:
+            nieuw_bericht = "\n".join(
+                r for r in nieuw_bericht.split("\n")
+                if not re.search(a.trailers, r))
+        if a.redact:
+            nieuw_bericht = subprocess.run(
+                ["sed", "-E", "-f", str(a.redact)], input=nieuw_bericht,
+                capture_output=True, text=True, check=True,
+                env={**os.environ, "LC_ALL": "C"}).stdout
+
+        nieuw = "\n".join(nieuw_kop) + "\n\n" + nieuw_bericht
+        if nieuw == rauw:
+            continue
+        oid = subprocess.run(["git", "-C", str(a.mirror), "mktag"],
+                             input=nieuw, capture_output=True, text=True,
+                             check=True).stdout.strip()
+        _git(a.mirror, "update-ref", naam, oid)
+        herschreven += 1
+
+    totaal = len(_tag_objects(a.mirror))
+    print(f"[seed-retag] {totaal} annotated tag(s), {herschreven} rewritten to "
+          f"the alias or a filtered message")
+    return 0
+
+
 def cmd_allowed(a) -> int:
     """Every address in this history that may stay as it is.
 
@@ -856,7 +964,7 @@ def main(argv: list[str]) -> int:
     for naam, fn in (("plan", cmd_plan), ("preflight", cmd_preflight),
                      ("trees", cmd_trees), ("alias", cmd_alias),
                      ("allowed", cmd_allowed), ("verify", cmd_verify),
-                     ("replacements", cmd_replacements)):
+                     ("replacements", cmd_replacements), ("retag", cmd_retag)):
         s = sub.add_parser(naam)
         s.add_argument("mirror", type=pathlib.Path)
         s.set_defaults(fn=fn)
@@ -867,6 +975,10 @@ def main(argv: list[str]) -> int:
         if naam == "replacements":
             s.add_argument("--map", type=pathlib.Path, required=True)
             s.add_argument("--sed", type=pathlib.Path, required=True)
+        if naam == "retag":
+            s.add_argument("--alias", default=None)
+            s.add_argument("--redact", type=pathlib.Path, default=None)
+            s.add_argument("--trailers", default=None)
         if naam == "plan":
             s.add_argument("--paths", type=pathlib.Path, required=True)
             s.add_argument("--withdrawn", type=pathlib.Path, required=True)

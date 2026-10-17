@@ -20,6 +20,8 @@
 
 use std::path::PathBuf;
 
+use pdf_engine::model::ModelError;
+
 use crate::compliance::{PdfAProfile, Violation};
 
 /// Unified result type for the `pdfluent` crate.
@@ -128,6 +130,46 @@ pub enum Error {
         limit: u64,
     },
 
+    // ---------- Caller mistakes ----------
+    /// A page number outside the document was asked for.
+    ///
+    /// Pages are numbered from 1 in this crate. Page `0` therefore never
+    /// exists, and it is the number a caller coming from a 0-based API
+    /// reaches for first -- so the message says which convention applies
+    /// rather than only that the number was out of range.
+    ///
+    /// This is a mistake in the call, not a fault in the engine, which is
+    /// why it is its own variant: [`Error::Internal`] asks the reader to
+    /// file a bug report, and sending someone to the issue tracker for
+    /// passing the wrong page number wastes their time and ours (#414).
+    PageOutOfRange {
+        /// The page number that was asked for.
+        requested: usize,
+        /// How many pages the document actually has.
+        page_count: usize,
+    },
+
+    /// A page range that the document cannot satisfy was asked for.
+    ///
+    /// A range fails in ways a single page number cannot, so it carries its
+    /// own fields rather than reusing [`Error::PageOutOfRange`]: `10..=99` on
+    /// a 20-page document names two numbers, only one of which is wrong, and
+    /// `3..=1` names two numbers that are both inside the document and still
+    /// describe nothing. Reporting either as "page 99 does not exist" throws
+    /// away what the caller actually wrote.
+    ///
+    /// Like [`Error::PageOutOfRange`] this is a mistake in the call rather
+    /// than a fault in the engine, and it was an [`Error::Internal`] until
+    /// #453 -- which sent a caller who passed `0..=5` to the issue tracker.
+    PageRangeInvalid {
+        /// The first page of the normalised 1-based inclusive range.
+        start: usize,
+        /// The last page of the normalised 1-based inclusive range.
+        end: usize,
+        /// How many pages the document actually has.
+        page_count: usize,
+    },
+
     // ---------- Unsupported ----------
     /// The requested operation or parameter is unsupported.
     Unsupported(String),
@@ -146,6 +188,13 @@ pub enum Error {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DecryptionFailureReason {
+    /// The document is encrypted and no password was supplied.
+    ///
+    /// Distinct from [`WrongPassword`](Self::WrongPassword) because the two
+    /// ask different things of a caller: one has a password to correct, the
+    /// other has none to offer yet. Saying "wrong password" to a caller who
+    /// supplied none sends them looking for a typo they never made (#450).
+    PasswordRequired,
     /// Wrong password.
     WrongPassword,
     /// Encryption algorithm not supported.
@@ -247,6 +296,7 @@ impl From<pdf_engine::LimitError> for Error {
 impl std::fmt::Display for DecryptionFailureReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::PasswordRequired => f.write_str("this document requires a password"),
             Self::WrongPassword => f.write_str("wrong password"),
             Self::UnsupportedAlgorithm => f.write_str("unsupported encryption algorithm"),
             Self::MalformedDictionary => f.write_str("malformed encryption dictionary"),
@@ -284,6 +334,8 @@ impl Error {
             Error::MissingDependency { .. } => "E-ENV-MISSING-DEPENDENCY",
             Error::MemoryBudgetExceeded { .. } => "E-BUDGET-MEMORY-EXCEEDED",
             Error::ResourceLimitExceeded { .. } => "E-BUDGET-RESOURCE-LIMIT",
+            Error::PageOutOfRange { .. } => "E-PAGE-OUT-OF-RANGE",
+            Error::PageRangeInvalid { .. } => "E-PAGE-RANGE-INVALID",
             Error::Unsupported(_) => "E-UNSUPPORTED",
             Error::Internal { .. } => "E-INTERNAL",
         }
@@ -320,8 +372,28 @@ impl Error {
             Error::ResourceLimitExceeded { .. } => {
                 "https://pdfluent.com/errors#E-BUDGET-RESOURCE-LIMIT"
             }
+            Error::PageOutOfRange { .. } => "https://pdfluent.com/errors#E-PAGE-OUT-OF-RANGE",
+            Error::PageRangeInvalid { .. } => "https://pdfluent.com/errors#E-PAGE-RANGE-INVALID",
             Error::Unsupported(_) => "https://pdfluent.com/errors#E-UNSUPPORTED",
             Error::Internal { .. } => "https://pdfluent.com/errors#E-INTERNAL",
+        }
+    }
+
+    /// The [`compat::ErrorKind`](crate::compat::ErrorKind) carried by this
+    /// error, if any.
+    ///
+    /// Compat lane failures ride as [`Error::Io`] with
+    /// [`std::io::ErrorKind::InvalidInput`] because this enum gains no new
+    /// variants in 1.x; this walks the chain back to the typed cause,
+    /// following the `OptionsError` pattern. Bindings read this to raise the
+    /// matching recorded exception class.
+    pub fn compat_kind(&self) -> Option<&crate::compat::ErrorKind> {
+        match self {
+            Error::Io { source, .. } => source
+                .get_ref()?
+                .downcast_ref::<crate::compat::CompatCause>()
+                .map(|cause| &cause.kind),
+            _ => None,
         }
     }
 }
@@ -386,6 +458,50 @@ impl std::fmt::Display for Error {
                 "Resource limit exceeded: {kind} (observed {observed}, limit {limit}).\n  Docs: {}",
                 self.docs_url()
             ),
+            Error::PageOutOfRange {
+                requested,
+                page_count,
+            } => {
+                // The convention goes in the message on purpose. "out of
+                // range" alone reads as though 0 were merely below some
+                // bound, which is exactly the wrong lesson for the caller
+                // most likely to hit this: one arriving from a 0-based API.
+                let pages = if *page_count == 1 { "page" } else { "pages" };
+                write!(
+                    f,
+                    "Page {requested} does not exist: pages are numbered from 1, \
+                     and this document has {page_count} {pages}.\n  Docs: {}",
+                    self.docs_url()
+                )
+            }
+            Error::PageRangeInvalid {
+                start,
+                end,
+                page_count,
+            } => {
+                let pages = if *page_count == 1 { "page" } else { "pages" };
+                // Two different mistakes, and the caller cannot act on the
+                // one they did not make. An empty range is usually an
+                // off-by-one in the caller's own arithmetic, not a page
+                // number they typed.
+                if end < start {
+                    write!(
+                        f,
+                        "Page range {start}..={end} is empty: it ends before it \
+                         starts. Pages are numbered from 1, and this document \
+                         has {page_count} {pages}.\n  Docs: {}",
+                        self.docs_url()
+                    )
+                } else {
+                    write!(
+                        f,
+                        "Page range {start}..={end} does not fit this document: \
+                         pages are numbered from 1, and this document has \
+                         {page_count} {pages}.\n  Docs: {}",
+                        self.docs_url()
+                    )
+                }
+            }
             Error::Unsupported(reason) => write!(f, "Unsupported operation: {reason}"),
             Error::Internal {
                 message,
@@ -407,14 +523,35 @@ impl std::error::Error for Error {
     }
 }
 
+impl Error {
+    /// The [`ModelError`] carried by this error, if any (#641).
+    ///
+    /// Model failures ride as [`Error::Io`] because this enum gains no new
+    /// variants in 1.x; this walks the chain back to the typed cause, on
+    /// every build. Branch on
+    /// [`ModelErrorKind::code`](pdf_engine::model::ModelErrorKind::code):
+    /// `MODEL_NOT_AVAILABLE` names the install command.
+    pub fn model_error(&self) -> Option<&ModelError> {
+        match self {
+            Error::Io { source, .. } => pdf_engine::model::model_error(source),
+            _ => None,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers (pub(crate) — not part of the public API)
 // ---------------------------------------------------------------------------
 
 /// Build an [`Error::Internal`] with the given message and the current
-/// crate version. Used for runtime invariant checks that should never fire
-/// under normal operation (e.g. out-of-range page index after bounds
-/// validation).
+/// crate version. For runtime invariant checks that should never fire: the
+/// message asks the reader to file a bug report, so it belongs to faults in
+/// this crate and not to mistakes in the call.
+///
+/// An out-of-range page number used to be the example here, and it was the
+/// wrong one -- it sent callers who passed `0` to the issue tracker for
+/// something they could fix themselves. That is [`Error::PageOutOfRange`]
+/// now (#414).
 pub(crate) fn internal_error(message: impl Into<String>) -> Error {
     Error::Internal {
         message: message.into(),
@@ -446,7 +583,28 @@ pub(crate) fn internal_error(message: impl Into<String>) -> Error {
 impl From<pdf_engine::EngineError> for Error {
     fn from(e: pdf_engine::EngineError) -> Self {
         use pdf_engine::EngineError as E;
+        // A mistake in the call, not a broken file: an OptionsError rides
+        // inside EngineError::Io, so without this check it falls into
+        // InvalidPdf below. Checked first, before the generic Io arm.
+        if e.options().is_some() {
+            return Error::Unsupported(e.to_string());
+        }
+        // OCR asked for and not runnable: the file is fine, the operation
+        // cannot run here. Without this a missing tesseract binary would
+        // report the valid document as unparseable. OCR failures ride as
+        // `Io` carrying a typed cause (the enum is exhaustive in 1.0.0), so
+        // this reads through `ocr_message`, which downcasts.
+        if let Some(message) = e.ocr_message() {
+            return Error::Unsupported(format!("OCR error: {message}"));
+        }
         match e {
+            // A model failure rides as Io carrying the typed ModelError: keep
+            // the chain as Io so `Error::model_error` still finds it, rather
+            // than reporting a valid document as unparseable below.
+            E::Io(io) if pdf_engine::model::model_error(&io).is_some() => Error::Io {
+                source: io,
+                path: None,
+            },
             E::Encrypted(_reason) => Error::DecryptionFailed {
                 reason: DecryptionFailureReason::WrongPassword,
             },
@@ -462,6 +620,14 @@ impl From<pdf_engine::EngineError> for Error {
                 reason: format!("{other:?}"),
             },
         }
+    }
+}
+
+impl From<pdf_engine::OptionsError> for Error {
+    fn from(e: pdf_engine::OptionsError) -> Self {
+        // A mistake in the call, not a broken file: the bare error reads the
+        // way it does riding inside `EngineError::Io` above.
+        Error::Unsupported(e.to_string())
     }
 }
 
@@ -515,6 +681,7 @@ impl From<pdf_sign::SignError> for Error {
             S::Pkcs12Load(reason)
             | S::UnsupportedKeyType(reason)
             | S::CmsBuild(reason)
+            | S::TimestampMismatch(reason)
             | S::SigningFailed(reason) => Error::InvalidSignature {
                 field: "<signing>".into(),
                 reason,
@@ -635,5 +802,16 @@ mod tests {
             url.ends_with(code),
             "docs_url {url:?} must end with code {code:?}"
         );
+    }
+
+    #[test]
+    fn clip_margins_errors_are_unsupported() {
+        let bad = pdf_engine::ClipMargins::new(-1.0, 0.0, 0.0, 0.0).expect_err("negative");
+        let err = Error::from(bad);
+        assert!(
+            matches!(err, Error::Unsupported(_)),
+            "a bad margin is a mistake in the call, got {err:?}"
+        );
+        assert!(err.to_string().contains("left"), "got: {err}");
     }
 }

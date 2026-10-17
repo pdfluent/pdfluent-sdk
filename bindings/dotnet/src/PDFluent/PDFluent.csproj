@@ -10,12 +10,12 @@
 
     <!-- NuGet package metadata -->
     <PackageId>PDFluent</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>Innovation Trigger BV</Authors>
     <Company>Innovation Trigger BV</Company>
     <Product>PDFluent</Product>
     <Copyright>Copyright (c) 2026 Innovation Trigger BV (operating as PDFluent)</Copyright>
-    <Description>Enterprise PDF SDK — find and replace PDF text while preserving fonts and layout, plus render, extract, forms, signatures, PDF/A. Pure-Rust core via P/Invoke. Requires netstandard2.1+ (Core 3.0+, .NET 5/6/7/8/9/10, Mono 6.4+, Xamarin/MAUI, Unity 2021.2+).</Description>
+    <Description>PDF SDK for .NET — find and replace PDF text while preserving fonts and layout, plus render, extract, forms, signatures, PDF/A. Pure-Rust core via P/Invoke. Requires netstandard2.1+ (Core 3.0+, .NET 5/6/7/8/9/10, Mono 6.4+, Xamarin/MAUI, Unity 2021.2+).</Description>
     <!-- NU5033 makes an expression and a licence file mutually exclusive, so one
          of the two has to go. It is the expression: `dotnet pack` accepts the
          compound but warns NU5124 that LicenseRef-PDFluent-Commercial is not a
@@ -44,13 +44,47 @@
     <None Include="LICENSE-OFFER" Pack="true" PackagePath="" />
     <None Include="LICENSE-COMMERCIAL" Pack="true" PackagePath="" />
     <None Include="README.md" Pack="true" PackagePath="" />
+    <!-- THE TWO REGISTERS TRAVEL WITH THE PACKAGE (#493). NOTICE sat in this
+         directory and was not packed, so `notice_names_what_exists.py` was
+         keeping two copies identical for a reader who never received either;
+         and THIRD_PARTY_LICENSES.txt is what BSD-3-Clause calls the material
+         provided with the distribution: it carries Adobe's notice for the
+         CMap resources, Foxit's for the Standard 14 fonts and the SIL text for
+         the substitute faces. A .NET user has the binaries and these files. -->
+    <None Include="NOTICE" Pack="true" PackagePath="" />
+    <None Include="THIRD_PARTY_LICENSES.txt" Pack="true" PackagePath="" />
   </ItemGroup>
 
-  <!-- Native library bundling per RID -->
+  <!-- Native library bundling per RID: seven RIDs (linux-arm64 and the two
+       musl RIDs joined the four 1.0.0 ones for 1.1.0). Each is still
+       Condition="Exists(...)", so an unstaged RID is left out SILENTLY and
+       `dotnet pack` passes; the artefact gate (the nupkg channel of
+       scripts/release/artifacts_cover_every_platform.py) refuses a nupkg
+       below seven runtimes/ entries, and the runbook check (§3.5) counts
+       them before the push. Note: no double hyphen may appear inside this
+       comment; XML ends the comment there and the file stops parsing. -->
   <ItemGroup>
     <None Include="runtimes\win-x64\native\pdf_capi.dll" Pack="true" PackagePath="runtimes\win-x64\native" Condition="Exists('runtimes\win-x64\native\pdf_capi.dll')" />
     <None Include="runtimes\linux-x64\native\libpdf_capi.so" Pack="true" PackagePath="runtimes\linux-x64\native" Condition="Exists('runtimes\linux-x64\native\libpdf_capi.so')" />
+    <None Include="runtimes\linux-arm64\native\libpdf_capi.so" Pack="true" PackagePath="runtimes\linux-arm64\native" Condition="Exists('runtimes\linux-arm64\native\libpdf_capi.so')" />
+    <None Include="runtimes\linux-musl-x64\native\libpdf_capi.so" Pack="true" PackagePath="runtimes\linux-musl-x64\native" Condition="Exists('runtimes\linux-musl-x64\native\libpdf_capi.so')" />
+    <None Include="runtimes\linux-musl-arm64\native\libpdf_capi.so" Pack="true" PackagePath="runtimes\linux-musl-arm64\native" Condition="Exists('runtimes\linux-musl-arm64\native\libpdf_capi.so')" />
     <None Include="runtimes\osx-arm64\native\libpdf_capi.dylib" Pack="true" PackagePath="runtimes\osx-arm64\native" Condition="Exists('runtimes\osx-arm64\native\libpdf_capi.dylib')" />
     <None Include="runtimes\osx-x64\native\libpdf_capi.dylib" Pack="true" PackagePath="runtimes\osx-x64\native" Condition="Exists('runtimes\osx-x64\native\libpdf_capi.dylib')" />
   </ItemGroup>
+
+  <!-- A nupkg with fewer than seven runtimes/ entries refuses to pack. The
+       ItemGroup above is Exists-guarded per RID, so without this target a
+       forgotten staging ships a nupkg that fails at load on that platform
+       (runbook §3.5 hazard). Runs before Pack; override ONLY for a local dev
+       pack that never leaves the machine: dotnet pack -p:SkipNativeCheck=true. -->
+  <Target Name="RequireAllSevenRuntimes" BeforeTargets="Pack" Condition="'$(SkipNativeCheck)' != 'true'">
+    <Error Condition="!Exists('runtimes\linux-x64\native\libpdf_capi.so')" Text="PDFluent: runtimes/linux-x64/native/libpdf_capi.so not staged. Run scripts/release/stage_dotnet_natives.sh first." />
+    <Error Condition="!Exists('runtimes\linux-arm64\native\libpdf_capi.so')" Text="PDFluent: runtimes/linux-arm64/native/libpdf_capi.so not staged. Run scripts/release/stage_dotnet_natives.sh first." />
+    <Error Condition="!Exists('runtimes\linux-musl-x64\native\libpdf_capi.so')" Text="PDFluent: runtimes/linux-musl-x64/native/libpdf_capi.so not staged. Run scripts/release/stage_dotnet_natives.sh first." />
+    <Error Condition="!Exists('runtimes\linux-musl-arm64\native\libpdf_capi.so')" Text="PDFluent: runtimes/linux-musl-arm64/native/libpdf_capi.so not staged. Run scripts/release/stage_dotnet_natives.sh first." />
+    <Error Condition="!Exists('runtimes\osx-x64\native\libpdf_capi.dylib')" Text="PDFluent: runtimes/osx-x64/native/libpdf_capi.dylib not staged. Run scripts/release/stage_dotnet_natives.sh first." />
+    <Error Condition="!Exists('runtimes\osx-arm64\native\libpdf_capi.dylib')" Text="PDFluent: runtimes/osx-arm64/native/libpdf_capi.dylib not staged. Run scripts/release/stage_dotnet_natives.sh first." />
+    <Error Condition="!Exists('runtimes\win-x64\native\pdf_capi.dll')" Text="PDFluent: runtimes/win-x64/native/pdf_capi.dll not staged. Run scripts/release/stage_dotnet_natives.sh first." />
+  </Target>
 </Project>

@@ -1,0 +1,208 @@
+{
+  "blocks": [
+    {
+      "index": 0,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": true,
+      "page": 0,
+      "bbox": [72, 680, 97.00000034332275, 690],
+      "text": "Band",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "Band", "x": 72, "y": 680, "width": 25.000000343322753, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 1,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": true,
+      "page": 0,
+      "bbox": [220, 680, 245.00000029563904, 690],
+      "text": "Units",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "Units", "x": 220, "y": 680, "width": 25.00000029563904, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 2,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": true,
+      "page": 0,
+      "bbox": [360, 680, 381.6700001335144, 690],
+      "text": "Rate",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "Rate", "x": 360, "y": 680, "width": 21.670000133514407, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 3,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [72, 662, 111.46999984741211, 672],
+      "text": "Standing",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "Standing", "x": 72, "y": 662, "width": 39.46999984741211, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 4,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [220, 662, 242.23999982833863, 672],
+      "text": "none",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "none", "x": 220, "y": 662, "width": 22.239999828338625, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 5,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [360, 662, 385.0199997997284, 672],
+      "text": "18.90",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "18.90", "x": 360, "y": 662, "width": 25.019999799728396, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 6,
+      "kind": "tableCell",
+      "row": 2,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [72, 644, 89.78000020980835, 654],
+      "text": "Day",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "Day", "x": 72, "y": 644, "width": 17.78000020980835, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 7,
+      "kind": "tableCell",
+      "row": 2,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [220, 644, 256.1399996852875, 654],
+      "text": "0 to 500",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "0 to 500", "x": 220, "y": 644, "width": 36.13999968528748, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 8,
+      "kind": "tableCell",
+      "row": 2,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [360, 644, 385.0199997997284, 654],
+      "text": "24.31",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "24.31", "x": 360, "y": 644, "width": 25.019999799728396, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 9,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [72, 626, 95.34000018119812, 636],
+      "text": "Night",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "Night", "x": 72, "y": 626, "width": 23.34000018119812, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 10,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [220, 626, 256.1399996852875, 636],
+      "text": "0 to 500",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "0 to 500", "x": 220, "y": 626, "width": 36.13999968528748, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 11,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [360, 626, 385.0199997997284, 636],
+      "text": "11.07",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 0, "fill": 1, "retriedFrom": 0, "fullRows": 4, "columns": 3},
+      "spans": [
+        { "text": "11.07", "x": 360, "y": 626, "width": 25.019999799728396, "height": 10, "fontSize": 10, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    }
+  ]
+}

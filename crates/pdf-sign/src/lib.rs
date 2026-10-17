@@ -14,10 +14,12 @@
 mod appearance;
 mod byte_range;
 mod chain;
+mod clock;
 pub mod cms;
 pub mod cms_builder;
 pub mod crypto;
 mod docmdp;
+mod increment;
 mod ltv;
 mod sig_dict;
 pub mod sign;
@@ -38,7 +40,10 @@ pub use ltv::*;
 pub use sig_dict::*;
 #[cfg(feature = "tsa")]
 pub use sign::sign_pdf_ltv;
-pub use sign::{sign_pdf, sign_pdf_incremental, SignOptions};
+pub use sign::{
+    sign_pdf, sign_pdf_incremental, sign_pdf_ltv_with_token, sign_pdf_pending_timestamp,
+    sign_pdf_timestamped, PendingTimestamp, SignOptions,
+};
 pub use signer::{PdfSigner, Pkcs12Signer, SignError};
 pub use types::*;
 pub use x509::X509Certificate;

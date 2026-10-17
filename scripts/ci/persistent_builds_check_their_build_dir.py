@@ -97,6 +97,16 @@ MINIMUM_WORKFLOWS = 10
 # its state, which is the direction the comment above calls the more likely one.
 # It is affordable there only because that state is warm, which is the same
 # reason it must check the build directory before it starts.
+# 10 -> 6 on 06-09-2026 (#350): FOUR lanes left this machine in one change, and
+# this is the downward direction the comment above warns about -- so here is
+# which four and where they went, because "the recogniser stopped seeing them"
+# would look identical from here. ci.yml's `workspace`, java-bindings.yml's
+# `jni-tests`, enterprise-acceptance.yml's `build` and
+# visual-regression.yml's `visual-regression` are all jobs of a wave of
+# ci-ephemeral.yml now, on a Hetzner instance bought per wave and thrown away.
+# They no longer name this runner at all, which is why the count falls by four
+# rather than by one: measured 06-09, this desktop had twenty-nine runs queued
+# on four cores with the oldest master commit under test two hours old.
 # 9 -> 10 on 06-09-2026: v7-benchmark.yml's `measure` job (#169). Upward again,
 # and for the one reason this machine is the right place rather than the cheap
 # one: a benchmark wants the same hardware every time, and a throwaway instance
@@ -105,7 +115,18 @@ MINIMUM_WORKFLOWS = 10
 # instance would trade a slow gate for a meaningless number. It builds two
 # examples against the warm cache, has neither a push nor a pull_request
 # trigger, and checks the build directory before it starts.
-EXPECTED_BUILD_JOBS = 10
+# 6 -> 7 on 03-10-2026 (#636): publish-crates.yml's `publish` job. No lane
+# moved: the job always ran here and always compiled, but only through
+# scripts/release/publish_ordered.sh, which this recogniser does not follow,
+# so it was never counted. The semver gate (#574) added a spelled-out
+# `cargo install cargo-semver-checks` to the job, which the recogniser sees --
+# this is the visibility half of the upward direction, made rather than
+# noticed. The job now checks the build directory and puts cargo on PATH
+# before that install, like the other six; it stays on this runner with
+# them because it is on the release path and there is no way to rehearse a
+# change to it without publishing (see ZWARE_BASELINE in
+# orchestration_stays_hosted.py, which already names it).
+EXPECTED_BUILD_JOBS = 7
 
 CHECK = "scripts/ci/cargo_target_health.sh"
 
@@ -141,10 +162,15 @@ PATH_MARKERS = ("GITHUB_PATH", ".cargo/bin")
 # crash-guard.yml have only been cancelled since 28-08; gate-ci.yml has not run
 # since May; publish-crates.yml:preflight fires on a release tag, which is the
 # worst possible moment to learn this.
+#
+# enterprise-acceptance.yml:build left the register on 06-09-2026 with the job
+# itself: it is a job of a wave of ci-ephemeral.yml now, on a Hetzner instance
+# whose image carries cargo in /usr/local/bin, so the latent exit 127 this row
+# recorded is not a thing that can happen to it any more (#350). The register
+# shrinks, which is the only direction it is allowed to move.
 KNOWN_PATHLESS = {
     "bench.yml:benchmark",
     "crash-guard.yml:crash-guard",
-    "enterprise-acceptance.yml:build",
     "gate-ci.yml:gate",
     "publish-crates.yml:preflight",
     "wasm-gate.yml:wasm-gate",
@@ -172,6 +198,12 @@ def runs_on_persistent(job: dict) -> bool:
     if "${{" in text:
         # `runs-on: ${{ needs.create-runner.outputs.label }}` — an ephemeral
         # Hetzner instance. It starts empty every time and is deleted after.
+        return False
+    if "pdfluent-release" in labels:
+        # The release pool (#636): a GCP VM gcp_runner.sh creates for one job
+        # and deletes after it, or the ephemeral runner mac_runner.sh registers
+        # in a fresh directory. New and empty every time, like the instance
+        # above; the persistent desktop never carries this label.
         return False
     return "self-hosted" in text
 

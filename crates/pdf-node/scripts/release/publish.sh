@@ -4,13 +4,13 @@
 # Replaces the `napi prepublish` path that mutated the manifest and shipped the
 # broken 3-of-6 @pdfluent/node@1.0.0-beta.17. Flow:
 #   1. refuse to run on a dirty tree (never publish uncommitted state);
-#   2. deterministically (re)generate all six npm/<tag>/ platform dirs;
+#   2. deterministically (re)generate all seven npm/<tag>/ platform dirs;
 #   3. publish each platform package — idempotent: a version already on the
 #      registry is SKIPPED, so a re-run after a partial failure is safe; each
 #      package's generated LICENSE is asserted byte-identical to
 #      crates/pdf-node/LICENSE before it ships (catches silent drift between
 #      the source LICENSE and the generated per-platform copies);
-#   4. validate the EXACT main tarball (6 platforms, no binary, LICENSE/README);
+#   4. validate the EXACT main tarball (7 platforms, no binary, LICENSE/README);
 #   5. publish the main meta-package with --ignore-scripts (no lifecycle script
 #      can mutate the manifest);
 #   6. verify every package resolves on the public registry.
@@ -31,7 +31,7 @@ cd "$ROOT"
 SCOPE="@pdfluent"
 MAIN_VER="$(node -p "require('./package.json').version")"
 PLAT_VER="${PDFLUENT_NODE_PLATFORM_VERSION:-$MAIN_VER}"
-TAGS=(darwin-arm64 darwin-x64 linux-x64-gnu linux-x64-musl linux-arm64-gnu win32-x64-msvc)
+TAGS=(darwin-arm64 darwin-x64 linux-x64-gnu linux-x64-musl linux-arm64-gnu linux-arm64-musl win32-x64-msvc)
 
 log() { echo "[publish] $*"; }
 die() { echo "[publish] ERROR: $*" >&2; exit 1; }
@@ -98,6 +98,6 @@ fi
 [[ "$DRY_RUN" == 1 ]] && { log "dry-run complete"; exit 0; }
 log "verifying on registry ..."
 od_count=$(npm view "$SCOPE/node@$MAIN_VER" optionalDependencies --json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(String(Object.keys(JSON.parse(s)).length)))")
-[[ "$od_count" == "6" ]] || die "published main has $od_count optionalDependencies, expected 6"
+[[ "$od_count" == "${#TAGS[@]}" ]] || die "published main has $od_count optionalDependencies, expected ${#TAGS[@]}"
 for t in "${TAGS[@]}"; do published "$SCOPE/node-$t" "$PLAT_VER" || die "$SCOPE/node-$t@$PLAT_VER not on registry"; done
-log "OK — $SCOPE/node@$MAIN_VER (6/6 platforms @ $PLAT_VER) fully published"
+log "OK — $SCOPE/node@$MAIN_VER (${#TAGS[@]}/${#TAGS[@]} platforms @ $PLAT_VER) fully published"

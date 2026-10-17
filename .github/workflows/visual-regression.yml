@@ -1,43 +1,80 @@
 name: Visual regression
+
+# CALLED, NOT TRIGGERED (#350).
+#
+# This ran on every push to master, on the desktop, next to four other suites
+# that did the same. Measured 06-09-2026 at 14:00Z: twenty-nine runs queued or
+# running on one four-core machine, the oldest master commit under test two
+# hours old, and the queue cancelled by hand. A verdict about a commit thirty
+# merges behind is not a verdict.
+#
+# So the trigger is gone and this is a reusable workflow. `ci-ephemeral.yml`
+# calls it on a two-hourly wave, on the throwaway instance that wave buys, and
+# passes the label of that instance in. There is no default for `runner_label`
+# on purpose: a default would be a label, the only label to hand is the
+# desktop's, and this file exists to stop running there.
+#
+# WHAT MOVING IT RISKS, WRITTEN DOWN RATHER THAN DISCOVERED
+#
+# The committed baselines were rendered on the desktop. crates/visual-regression
+# /README.md says the renderer uses no system font and no external command, so
+# on paper the pixels do not depend on the machine -- and on paper is exactly
+# the objection ZWARE_BASELINE recorded against moving this suite. The first
+# wave after this lands is the measurement; a difference here is a difference
+# between two machines until somebody has looked, and the lane is scheduled, so
+# it blocks no landing while that happens.
 on:
-  push:
-    branches: [master]
+  workflow_call:
+    inputs:
+      runner_label:
+        description: The throwaway instance to run on, from the create-runner job of ci-ephemeral.
+        required: true
+        type: string
 permissions:
   contents: read
 jobs:
   visual-regression:
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ inputs.runner_label }}
     timeout-minutes: 30
     env:
       UPDATE_VISUAL_BASELINE: "0"
     steps:
       - uses: actions/checkout@v4
-      # The same check as ci.yml's `Cargo on PATH`. `$HOME` for the runner
-      # service is not necessarily where cargo was installed, so adding the
-      # directory is not the same as making cargo runnable -- source the env
-      # file when it is there, and then CHECK, because a later step dying on
-      # `command not found` is a confusing way to learn the toolchain is
-      # missing. That is exactly how this workflow failed. (#292)
-      - name: Cargo on PATH
+      # THE TOOLCHAIN, INSTALLED BY THE JOB THAT NEEDS IT (#495).
+      #
+      # This job used to take cargo from the image's PATH, and said so. On
+      # 09-09-2026 the wave's instance was created from the sealed warm image
+      # (#482) and three reusable jobs died within minutes of each other on
+      # `cargo: command not found` -- this one after `Command failed: rustc -vV`
+      # from the cache action, which needs the compiler before it can key
+      # anything (wave 34365955374). `workspace`, on the same instance and the
+      # same image, compiled: it installs a toolchain of its own.
+      #
+      # So the image's PATH stops being a contract these jobs rely on. It is
+      # still repaired on the image side -- the seal writes /etc/profile.d and
+      # refuses to photograph a machine where `cargo --version` fails
+      # non-interactively -- but a job that compiles now carries its own
+      # toolchain, because an image is a thing that changes overnight and a
+      # step is a thing that is read in review.
+      #
+      # BEFORE the cache action, not after: `rustc -vV` is the first thing it
+      # runs. And the bin directory is put on PATH by hand for the reason
+      # ci-ephemeral's workspace job does it -- /usr/local/bin/cargo on this
+      # image is a plain binary that shadows rustup's shims, so `rustup which
+      # cargo` is the only answer that is about the toolchain just installed.
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        with:
+          toolchain: stable
+      - name: Put the pinned toolchain's bin directory on PATH
         run: |
           set -euo pipefail
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
-          export PATH="$HOME/.cargo/bin:$PATH"
-          if ! command -v cargo >/dev/null 2>&1; then
-            echo "::error::cargo is not runnable on this runner. \$HOME is $HOME; \$HOME/.cargo/bin is $([ -d "$HOME/.cargo/bin" ] && echo present || echo absent). Every step below that needs the toolchain will fail with a message that says nothing about this." >&2
-            exit 1
-          fi
-          # Status-checked, not `echo $(…)`: if cargo resolves but cannot run --
-          # a rustup shim with no toolchain installed -- the substitution fails,
-          # `echo` still returns 0, `set -e` sees nothing, and the step reports
-          # success with an empty version. (codex, #1659)
-          cargo --version || {
-            echo "::error::cargo is on PATH but does not run. A rustup shim without an installed toolchain does this: command -v cargo succeeds and every build fails." >&2
-            exit 1
-          }
-      - name: Check persistent build directory
-        run: bash scripts/ci/cargo_target_health.sh
+          toolchain_bin="$(dirname "$(rustup which cargo)")"
+          echo "$toolchain_bin" >> "$GITHUB_PATH"
+          echo "cargo comes from $toolchain_bin"
+          "$toolchain_bin/cargo" --version
+      # No build-directory check: that was about the desktop, whose target
+      # directory survives between jobs and can be left damaged by a killed
+      # one. This instance's did not exist ten minutes ago.
       - name: Compare generated fixtures against committed baselines
         run: cargo test -p visual-regression --release
       - name: Upload visual differences
@@ -46,5 +83,5 @@ jobs:
         with:
           name: visual-regression-differences
           path: target/visual-regression/**
-          retention-days: 14
+          retention-days: 1
           if-no-files-found: error

@@ -17,6 +17,12 @@ bin-dir = "xfa-cli{ binary-ext }"
 #
 # Required by the publish constitution: zero private-path strings in any
 # published artefact.
+#
+# Release builds do not use this block: every artefact-producing step in the
+# release workflows sources scripts/release/release_rustflags.sh (musl cdylibs
+# via scripts/release/musl_cdylib_rustflags.sh), which computes the same
+# mapping from the builder's own paths. This literal block is for local dev
+# builds on the Mac only.
 [build]
 rustflags = [
   "--remap-path-prefix", "/Users/jasperdewinter=/buildenv",
@@ -60,8 +66,30 @@ rustflags = [
 #
 # Same `--remap-path-prefix` block as [build] for private-path scrubbing
 # (target-specific rustflags REPLACE [build] rustflags, not merge).
+#
+# NO `-C target-feature=-crt-static` here, on either musl triple. rustc cannot
+# produce a `cdylib` for musl under the default static CRT, so the musl
+# `.so`/`.node` builds source `scripts/release/musl_cdylib_rustflags.sh`,
+# which exports that flag together with the remap block (env RUSTFLAGS replace
+# the config's flags outright, so the helper repeats them). Kept in the helper
+# rather than here because this file cannot tell a cdylib from a binary: with
+# the flag here the musl CLI came out dynamically linked, and the Docker image
+# (Debian, no ld-musl) plus every "runs anywhere" user broke. Held by
+# scripts/release/test_musl_crt_split.py.
 [target.x86_64-unknown-linux-musl]
 linker = "musl-gcc"
+rustflags = [
+  "--remap-path-prefix", "/Users/jasperdewinter=/buildenv",
+  "--remap-path-prefix", "/Users/jasperdewinter/Documents/XFA=/src",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/git=/git",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/registry=/registry",
+]
+
+# aarch64 musl: same remap block (target flags replace, not merge), no CRT
+# flag either — see above. No `linker` line: every aarch64 musl build goes
+# through cargo-zigbuild/maturin --zig, which supplies zig cc; a plain cargo
+# build would need an aarch64 musl-gcc the runners don't have.
+[target.aarch64-unknown-linux-musl]
 rustflags = [
   "--remap-path-prefix", "/Users/jasperdewinter=/buildenv",
   "--remap-path-prefix", "/Users/jasperdewinter/Documents/XFA=/src",

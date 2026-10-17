@@ -5,7 +5,7 @@ use crate::context::Context;
 use crate::device::Device;
 use crate::font::cid::Type0Font;
 use crate::font::generated::{
-    glyph_names, mac_expert, mac_os_roman, mac_roman, standard, win_ansi,
+    ams_glyph_names, glyph_names, mac_expert, mac_os_roman, mac_roman, standard, win_ansi,
 };
 use crate::font::true_type::TrueTypeFont;
 use crate::font::type1::Type1Font;
@@ -33,6 +33,7 @@ mod blob;
 mod cid;
 mod generated;
 mod glyph_simulator;
+mod marks;
 pub(crate) mod outline;
 mod standard_font;
 mod true_type;
@@ -66,6 +67,11 @@ pub(crate) fn strip_subset_prefix(name: &str) -> &str {
 }
 
 use crate::util::hash128;
+pub(crate) use marks::{MarkPlacement, NamedEntry, table_entry};
+use marks::{
+    MarkSite, is_combining_mark, mark_rows_set_aside, may_be_row_mark, placements_held,
+    row_mark_of, without_mark_rows,
+};
 pub use outline::OutlineFontData;
 use pdf_font::cmap::{BfString, CMap, CMapName, CharacterCollection};
 pub use standard_font::StandardFont;
@@ -91,6 +97,8 @@ impl Glyph<'_> {
     ///
     /// **For CID Fonts (Type0):**
     /// 1. `ToUnicode` cmap
+    /// 2. Font program fallback (`cmap`, `post`/charset/CharStrings glyph
+    ///    names via the Adobe Glyph List, Identity CID-as-Unicode)
     ///
     ///
     /// **For Type3 Fonts:**
@@ -104,6 +112,15 @@ impl Glyph<'_> {
         match self {
             Glyph::Outline(g) => g.as_unicode(),
             Glyph::Type3(g) => g.as_unicode(),
+        }
+    }
+
+    /// The resource name the glyph's font was set from, if the `Tf` handler
+    /// stamped one (see [`OutlineGlyph::font_resource_name`]).
+    pub fn font_resource_name(&self) -> Option<&str> {
+        match self {
+            Glyph::Outline(g) => g.font_resource_name(),
+            Glyph::Type3(_) => None,
         }
     }
 }
@@ -122,14 +139,76 @@ impl CacheKey for GlyphIdentifier {
 }
 
 /// A glyph defined by an outline.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct OutlineGlyph {
     pub(crate) id: GlyphId,
     pub(crate) font: OutlineFont,
     pub(crate) char_code: u32,
+    pub(crate) resource_name: Option<Rc<str>>,
+    /// The glyph's place in the page's record of combining marks (spec
+    /// `specs/text/circlecopyrt.md`, C4 and C5a): `None` for a glyph built
+    /// outside a page interpretation.
+    pub(crate) marks: Option<MarkSite>,
+    /// The code's text as the font gives it with the mark rows standing,
+    /// read once when the glyph is made: the interpreter and the device each
+    /// read a glyph several times, and the font's answer for one code does
+    /// not change. A plain value, no shared state.
+    pub(crate) text: Option<BfString>,
 }
 
+impl Clone for OutlineGlyph {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            font: self.font.clone(),
+            char_code: self.char_code,
+            resource_name: self.resource_name.clone(),
+            marks: self.marks,
+            text: self.text.clone(),
+        }
+    }
+}
+
+/// Where a glyph stands among the glyphs of the page interpretation that
+/// drew it: a plain value a device keeps in place of the glyph, to hand to
+/// [`OutlineGlyph::reread_previous`] when the next glyph arrives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GlyphPlace(MarkSite);
+
 impl OutlineGlyph {
+    /// Where this glyph stands among the glyphs of its page interpretation;
+    /// `None` for a glyph made outside one.
+    pub fn place(&self) -> Option<GlyphPlace> {
+        self.marks.map(GlyphPlace)
+    }
+
+    /// What the glyph drawn directly before this one, at `previous`, reads
+    /// as now, when drawing this glyph changed it; `None` when it did not.
+    ///
+    /// Drawing a combining mark from an AMS name row next to a glyph offers
+    /// the mark to that glyph (see [`OutlineGlyph::as_unicode`]), so the
+    /// glyph drawn before can read differently once this one is drawn: a
+    /// `c` drawn before its circle reads `c⃝`, a slash drawn before the `=`
+    /// it strikes reads as nothing. This read is what takes the offer, as
+    /// reading that glyph with `as_unicode` would; a caller that does not
+    /// make it leaves the offer to be refused. On a page where nothing was
+    /// offered it answers `None` at the cost of one load.
+    ///
+    /// Call it before reading this glyph itself (`as_unicode` and the
+    /// like): reading this glyph first decides the offer from this side, and
+    /// the glyph before then reads as it did. A `previous` from another page
+    /// interpretation, or not directly before this glyph, answers `None`.
+    pub fn reread_previous(&self, previous: GlyphPlace) -> Option<Option<BfString>> {
+        self.marks?.reread_previous(previous.0)
+    }
+
+    /// The resource name the glyph's font was set from (`Tf`'s operand), if
+    /// the `Tf` handler stamped one: the name extraction reads back to tell
+    /// the engine's own OCR layer apart from author text set in the same face.
+    pub fn font_resource_name(&self) -> Option<&str> {
+        self.resource_name.as_deref()
+    }
+
     /// Return the outline of the glyph, assuming an upem value of 1000.
     pub fn outline(&self) -> BezPath {
         self.font.outline_glyph(self.id, self.char_code)
@@ -150,7 +229,64 @@ impl OutlineGlyph {
     /// Returns the Unicode code point for this glyph, if available.
     ///
     /// See [`Glyph::as_unicode`] for details on the fallback chain used.
+    ///
+    /// A combining mark that an AMS name row gives (`circlecopyrt`,
+    /// `negationslash`) is never handed out on its own glyph. Where it is
+    /// placed, the glyph it marks reads as itself followed by the mark and the
+    /// mark's glyph reads as nothing; otherwise the mark's glyph reads as its
+    /// code did before the row existed (see `marks.rs`). A placement is
+    /// decided by which of the two glyphs is read first once it is offered,
+    /// so the glyph drawn before a mark can read differently when read again
+    /// after the mark is drawn.
     pub fn as_unicode(&self) -> Option<BfString> {
+        // A glyph whose text cannot be a row's mark, read while no placement
+        // exists anywhere, reads as the font gives it: the common case costs
+        // two tests (spec, "Performance").
+        if !may_be_row_mark(&self.text) && !placements_held() {
+            return self.text.clone();
+        }
+        self.placed_text()
+    }
+
+    /// [`Self::as_unicode`] where a row's mark or a placement may be
+    /// involved.
+    #[inline(never)]
+    fn placed_text(&self) -> Option<BfString> {
+        let text = self.cached_text();
+        if row_mark_of(text, || self.font_text()).is_some() {
+            if self.marks.as_ref().is_some_and(MarkSite::mark_taken) {
+                return None;
+            }
+            return without_mark_rows(|| self.font_text());
+        }
+        let text = text.clone();
+        let marks = self.marks.as_ref().map(MarkSite::base_marks);
+        match marks.filter(|marks| !marks.is_empty()) {
+            Some(marks) => {
+                let mut placed = match text {
+                    Some(BfString::Char(c)) => c.to_string(),
+                    Some(BfString::String(s)) => s,
+                    None => String::new(),
+                };
+                placed.push_str(&marks);
+                Some(BfString::String(placed))
+            }
+            None => text,
+        }
+    }
+
+    /// The text the font gives this glyph's code, before any placement: a
+    /// row-derived combining mark is its bare character here, and whether a
+    /// row gave it is read beside the text (`marks::row_mark_of`).
+    ///
+    /// Borrowed from the glyph's one read of its code, made with the glyph.
+    /// A read that sets the mark rows aside asks [`Self::font_text`].
+    pub(crate) fn cached_text(&self) -> &Option<BfString> {
+        &self.text
+    }
+
+    /// What the font gives this glyph's code now, as the mark rows stand.
+    pub(crate) fn font_text(&self) -> Option<BfString> {
         self.font.char_code_to_unicode(self.char_code)
     }
 
@@ -172,6 +308,21 @@ impl OutlineGlyph {
     /// field for the editor contract.
     pub fn postscript_name(&self) -> Option<String> {
         self.font.postscript_name()
+    }
+
+    /// The font dictionary's /BaseFont as the page named it, subset prefix
+    /// and all, where the font carries one (#623). [`Self::postscript_name`]
+    /// names the face that draws the glyphs, which for a font standing on a
+    /// standard face is that face, not the page's.
+    pub fn declared_name(&self) -> Option<String> {
+        self.font.declared_name()
+    }
+
+    /// The name text extraction reports for a span: the document's own name
+    /// for an embedded font, the substitute face otherwise. Subset prefix
+    /// and all, like [`Self::declared_name`]; callers strip.
+    pub fn document_name(&self) -> Option<String> {
+        self.font.document_name()
     }
 
     /// Get the glyph ID within the font.
@@ -196,6 +347,13 @@ impl OutlineGlyph {
     /// CFF fonts without a standard-font fallback, Type3).
     pub fn font_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
         self.font.font_metrics()
+    }
+
+    /// The substitute face's AFM pair for Type1/CFF, ignoring the
+    /// descriptor: the pre-E4 answer, kept for the default extraction path
+    /// (#643 follow-up).
+    pub fn substitute_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+        self.font.substitute_metrics()
     }
 
     /// Get the cache key for this glyph's font.
@@ -242,8 +400,15 @@ impl<'a> Type3Glyph<'a> {
     /// Returns the Unicode code point for this glyph, if available.
     ///
     /// Note: Type3 fonts can only provide Unicode via `ToUnicode` cmap.
+    ///
+    /// A combining mark that an AMS name row gives is not placed on a Type 3
+    /// glyph's neighbour: it reads as its code did before the row existed.
     pub fn as_unicode(&self) -> Option<BfString> {
-        self.font.char_code_to_unicode(self.char_code)
+        let text = self.font.char_code_to_unicode(self.char_code);
+        if row_mark_of(&text, || self.font.char_code_to_unicode(self.char_code)).is_some() {
+            return without_mark_rows(|| self.font.char_code_to_unicode(self.char_code));
+        }
+        text
     }
 }
 
@@ -254,7 +419,7 @@ impl CacheKey for Type3Glyph<'_> {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Font<'a>(u128, FontType<'a>);
+pub(crate) struct Font<'a>(u128, FontType<'a>, Option<Rc<str>>);
 
 impl<'a> Font<'a> {
     pub(crate) fn new(
@@ -296,7 +461,7 @@ impl<'a> Font<'a> {
 
         let cache_key = dict.cache_key();
 
-        Some(Self(cache_key, f_type))
+        Some(Self(cache_key, f_type, None))
     }
 
     pub(crate) fn new_standard(
@@ -305,7 +470,16 @@ impl<'a> Font<'a> {
     ) -> Option<Self> {
         let font = Type1Font::new_standard(standard_font, font_resolver)?;
 
-        Some(Self(0, FontType::Type1(Rc::new(font))))
+        Some(Self(0, FontType::Type1(Rc::new(font)), None))
+    }
+
+    /// Name the resource this font was set from (`Tf`'s operand): the name
+    /// extraction reads back to tell the engine's own OCR layer apart from
+    /// author text set in the same face. Stamped on the clone the `Tf`
+    /// handler takes out of the cache, so the cached font stays nameless and
+    /// one resource's name never leaks onto another's.
+    pub(crate) fn set_resource_name(&mut self, name: &str) {
+        self.2 = Some(Rc::from(name));
     }
 
     pub(crate) fn map_code(&self, code: u32) -> GlyphId {
@@ -344,26 +518,38 @@ impl<'a> Font<'a> {
         let glyph = match &self.1 {
             FontType::Type1(t) => {
                 let font = OutlineFont::Type1(t.clone());
+                let text = font.char_code_to_unicode(char_code);
                 Glyph::Outline(OutlineGlyph {
                     id: glyph,
                     font,
                     char_code,
+                    resource_name: self.2.clone(),
+                    marks: Some(ctx.marks.site()),
+                    text,
                 })
             }
             FontType::TrueType(t) => {
                 let font = OutlineFont::TrueType(t.clone());
+                let text = font.char_code_to_unicode(char_code);
                 Glyph::Outline(OutlineGlyph {
                     id: glyph,
                     font,
                     char_code,
+                    resource_name: self.2.clone(),
+                    marks: Some(ctx.marks.site()),
+                    text,
                 })
             }
             FontType::Type0(t) => {
                 let font = OutlineFont::Type0(t.clone());
+                let text = font.char_code_to_unicode(char_code);
                 Glyph::Outline(OutlineGlyph {
                     id: glyph,
                     font,
                     char_code,
+                    resource_name: self.2.clone(),
+                    marks: Some(ctx.marks.site()),
+                    text,
                 })
             }
             FontType::Type3(t) => {
@@ -708,18 +894,54 @@ pub(crate) fn glyph_name_to_unicode(name: &str) -> Option<char> {
 }
 
 /// AGL §2.2: resolve a glyph name to one or more Unicode code points. Handles
-/// everything `glyph_name_to_unicode` does, plus underscore-joined ligature
-/// names (e.g. `f_i` → "fi", `f_f_i` → "ffi") which glyph-list-based fonts
-/// use for Latin ligatures. Returns the full string, so ligatures surface as
-/// their component code points rather than being dropped when the composite
-/// name isn't in the AGL.
+/// everything `glyph_name_to_unicode` does, plus the `uniXXXX…` sequences of
+/// AGLFN §3 and underscore-joined ligature names (e.g. `f_i` → "fi",
+/// `f_f_i` → "ffi") which glyph-list-based fonts use for Latin ligatures.
+/// Returns the full string, so ligatures surface as their component code
+/// points rather than being dropped when the composite name isn't in the AGL.
 ///
 /// Strips the variant suffix (`.ss01`, `.swash`, …) from the base name before
 /// splitting, matching AGL §2.4. Bails out if any component fails to resolve
 /// so we never produce a partial string (which would be worse than None).
+///
+/// Only when no AGL rule reads the name is the small AMS math-font table
+/// asked, by exact name: it adds names, it never overrides an AGL answer.
+///
+/// A row that reads as a combining mark reads as no table knows it while the
+/// rows are set aside (see `marks.rs`), which is how a reader tells a mark
+/// the row gave from the same character given by `ToUnicode` or any other
+/// source.
 pub(crate) fn glyph_name_to_string(name: &str) -> Option<String> {
-    // Try the single-code-point fast path first — it also handles `.suffix`
-    // stripping, `uniXXXX`, and the `aNN` decimal convention.
+    glyph_name_reading(name).map(|(text, _)| text)
+}
+
+/// [`glyph_name_to_string`], with whether a combining-mark row of the AMS
+/// table gave the text.
+fn glyph_name_reading(name: &str) -> Option<(String, bool)> {
+    if let Some(text) = agl_name_to_string(name) {
+        return Some((text, false));
+    }
+    let c = ams_glyph_names::get(name)?;
+    if is_combining_mark(c) {
+        if mark_rows_set_aside() {
+            return None;
+        }
+        return Some((String::from(c), true));
+    }
+    Some((String::from(c), false))
+}
+
+/// The AGL half of [`glyph_name_to_string`].
+fn agl_name_to_string(name: &str) -> Option<String> {
+    // Then the `uni`/`u` sequences, which spell their own code points --
+    // including the multi-group `uni00410042` form, which the
+    // single-character path below cannot hold (#636).
+    if let Some(s) = unicode_string_from_name(name) {
+        return Some(s);
+    }
+
+    // Then the single-code-point path, which also handles `.suffix`
+    // stripping and the `aNN` decimal convention.
     if let Some(c) = glyph_name_to_unicode(name) {
         return Some(c.to_string());
     }
@@ -734,10 +956,47 @@ pub(crate) fn glyph_name_to_string(name: &str) -> Option<String> {
         if part.is_empty() {
             return None;
         }
-        let c = glyph_name_to_unicode(part)?;
-        out.push(c);
+        let text = unicode_string_from_name(part)
+            .or_else(|| glyph_name_to_unicode(part).map(|c| c.to_string()))?;
+        out.push_str(&text);
     }
     (!out.is_empty()).then_some(out)
+}
+
+/// AGLFN §3: read a `uni`/`u` name as the code points it spells, however many
+/// there are.
+///
+/// `uni` takes one or more groups of four hex digits (`uni20AC` is €,
+/// `uni00410042` is `AB`); `u` takes a single group of four to six
+/// (`u1F600` is 😀, longer runs join with underscores: `u0041_u0042`). The
+/// variant suffix of AGL §2.4 is stripped first, so `uni20AC.tnum` reads like
+/// `uni20AC`.
+///
+/// A name that is not well-formed under those rules -- a short group, a
+/// non-hex digit, a surrogate -- is refused rather than guessed at, and the
+/// caller falls through to the next step of the chain.
+pub(crate) fn unicode_string_from_name(name: &str) -> Option<String> {
+    let base = name.split_once('.').map(|(b, _)| b).unwrap_or(name);
+    if let Some(rest) = base.strip_prefix("uni") {
+        if rest.len() < 4 || !rest.len().is_multiple_of(4) {
+            return None;
+        }
+        let mut out = String::new();
+        for chunk in rest.as_bytes().chunks(4) {
+            let digits = core::str::from_utf8(chunk).ok()?;
+            let value = u32::from_str_radix(digits, 16).ok()?;
+            out.push(char::from_u32(value)?);
+        }
+        return Some(out);
+    }
+    if let Some(rest) = base.strip_prefix('u') {
+        if !(4..=6).contains(&rest.len()) {
+            return None;
+        }
+        let value = u32::from_str_radix(rest, 16).ok()?;
+        return Some(char::from_u32(value)?.to_string());
+    }
+    None
 }
 
 pub(crate) fn unicode_from_name(name: &str) -> Option<char> {
@@ -772,23 +1031,62 @@ pub(crate) fn read_to_unicode(
         })
 }
 
+/// A glyph name read as the text it spells, in cmap-string form.
+///
+/// Single-code-point names answer as [`BfString::Char`] so the common case
+/// keeps its shape; names that spell several code points (an underscore
+/// ligature like `f_i`, a multi-group `uni00410042`, an AGL sequence entry)
+/// answer as [`BfString::String`]. `None` when no rule reads the name.
+pub(crate) fn glyph_name_to_bfstring(name: &str) -> Option<BfString> {
+    glyph_name_to_string(name).map(bfstring_of)
+}
+
+/// `text` in cmap-string form: one code point as [`BfString::Char`].
+fn bfstring_of(text: String) -> BfString {
+    let mut chars = text.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) => BfString::Char(c),
+        _ => BfString::String(text),
+    }
+}
+
+/// True when a ToUnicode value holds nothing but control characters
+/// (U+0000-U+001F, U+007F-U+009F). Such a value carries no text: a simple
+/// font asks its glyph name instead, and keeps the value only when the name
+/// reads as nothing. An empty value is not control-only.
+pub(crate) fn is_control_only(value: &BfString) -> bool {
+    let is_control = |c: char| matches!(c, '\u{0}'..='\u{1F}' | '\u{7F}'..='\u{9F}');
+    match value {
+        BfString::Char(c) => is_control(*c),
+        BfString::String(s) => !s.is_empty() && s.chars().all(is_control),
+    }
+}
+
 /// Build a 256-entry Unicode map from the font's `/Encoding` entry.
-/// Used as a fallback when no `/ToUnicode` CMap is present.
-pub(crate) fn synthesize_unicode_map_from_encoding(dict: &Dict<'_>) -> Option<[Option<char>; 256]> {
+/// Used as a fallback when no `/ToUnicode` CMap is present. Each entry
+/// carries whether a combining-mark row gave it, so that it can be set aside
+/// with the rows (see [`table_entry`]).
+pub(crate) fn synthesize_unicode_map_from_encoding(
+    dict: &Dict<'_>,
+) -> Option<[Option<NamedEntry>; 256]> {
     let (base_encoding, differences) = true_type::read_encoding(dict);
     // Only synthesize if there is something to map (encoding name or differences).
     // For BuiltIn with no differences we cannot reliably guess the mapping.
     if matches!(base_encoding, Encoding::BuiltIn) && differences.is_empty() {
         return None;
     }
-    let mut table: [Option<char>; 256] = [None; 256];
+    let mut table: [Option<NamedEntry>; 256] = std::array::from_fn(|_| None);
     for code in 0u8..=255 {
         let glyph_name = differences
             .get(&code)
             .map(String::as_str)
             .or_else(|| base_encoding.map_code(code));
         if let Some(name) = glyph_name {
-            table[code as usize] = glyph_name_to_unicode(name);
+            table[code as usize] =
+                glyph_name_reading(name).map(|(text, from_mark_row)| NamedEntry {
+                    text: bfstring_of(text),
+                    from_mark_row,
+                });
         }
     }
     Some(table)
@@ -837,7 +1135,10 @@ mod normalized_glyph_name_tests {
 
 #[cfg(test)]
 mod glyph_name_to_unicode_tests {
-    use super::{glyph_name_to_string, glyph_name_to_unicode};
+    use super::{
+        BfString, glyph_name_to_bfstring, glyph_name_to_string, glyph_name_to_unicode,
+        unicode_string_from_name,
+    };
 
     #[test]
     fn standard_agl_name() {
@@ -918,6 +1219,169 @@ mod glyph_name_to_unicode_tests {
     #[test]
     fn unknown_name_returns_none() {
         assert_eq!(glyph_name_to_unicode("xyzzynonexistent"), None);
+    }
+
+    #[test]
+    fn bfstring_keeps_single_chars_and_strings_their_shape() {
+        assert_eq!(glyph_name_to_bfstring("A"), Some(BfString::Char('A')));
+        assert_eq!(
+            glyph_name_to_bfstring("f_i"),
+            Some(BfString::String("fi".to_string()))
+        );
+        assert_eq!(glyph_name_to_bfstring("xyzzynonexistent"), None);
+    }
+
+    /// The phase-4 rows (C5c) are plain characters: the name reads as the
+    /// mathematical angle bracket with no mark origin, set aside or not.
+    /// Without the rows the names read as today: no AGL rule knows them, so
+    /// the code keeps its old text (`h`/`i` in cmsy10).
+    #[test]
+    fn the_angle_bracket_rows_read_as_plain_characters() {
+        for (name, bracket) in [
+            ("angbracketleft", '\u{27E8}'),
+            ("angbracketright", '\u{27E9}'),
+        ] {
+            assert_eq!(super::agl_name_to_string(name), None, "{name}");
+            assert_eq!(
+                glyph_name_to_bfstring(name),
+                Some(BfString::Char(bracket)),
+                "{name}"
+            );
+            assert_eq!(super::glyph_name_reading(name).map(|r| r.1), Some(false));
+            assert_eq!(
+                super::without_mark_rows(|| glyph_name_to_bfstring(name)),
+                Some(BfString::Char(bracket))
+            );
+        }
+    }
+
+    /// The phase-5 row (C5b) is a plain character: `visiblespace` reads as
+    /// U+2423 OPEN BOX with no mark origin, set aside or not. Without the row
+    /// the name reads as today: no AGL rule knows it, so the glyph reads as
+    /// nothing.
+    #[test]
+    fn the_visiblespace_row_reads_as_the_open_box() {
+        let name = "visiblespace";
+        assert_eq!(super::agl_name_to_string(name), None);
+        assert_eq!(
+            glyph_name_to_bfstring(name),
+            Some(BfString::Char('\u{2423}'))
+        );
+        assert_eq!(super::glyph_name_reading(name).map(|r| r.1), Some(false));
+        assert_eq!(
+            super::without_mark_rows(|| glyph_name_to_bfstring(name)),
+            Some(BfString::Char('\u{2423}'))
+        );
+    }
+
+    /// Each combining-mark row reads as its bare mark, with its origin beside
+    /// it: set aside, the name reads as no row at all, while the same mark
+    /// from a `uni` name stays (C4 rule 6, C5a, table shape, review (c)). A
+    /// plain row reads as its character whether the rows stand or not.
+    #[test]
+    fn a_combining_mark_row_carries_its_origin() {
+        for (name, mark, uni) in [
+            ("circlecopyrt", '\u{20DD}', "uni20DD"),
+            ("negationslash", '\u{0338}', "uni0338"),
+        ] {
+            let named = glyph_name_to_bfstring(name);
+            assert_eq!(named, Some(BfString::Char(mark)), "{name}");
+            assert_eq!(super::glyph_name_reading(name).map(|r| r.1), Some(true));
+            assert_eq!(
+                super::row_mark_of(&named, || glyph_name_to_bfstring(name)),
+                Some(mark)
+            );
+            let elsewhere = glyph_name_to_bfstring(uni);
+            assert_eq!(elsewhere, Some(BfString::Char(mark)));
+            assert_eq!(
+                super::row_mark_of(&elsewhere, || glyph_name_to_bfstring(uni)),
+                None
+            );
+            assert_eq!(
+                super::without_mark_rows(|| glyph_name_to_bfstring(name)),
+                None
+            );
+            // A table entry the row wrote counts as absent while set aside.
+            let entry = Some(super::NamedEntry {
+                text: BfString::Char(mark),
+                from_mark_row: true,
+            });
+            assert_eq!(super::table_entry(&entry), named);
+            assert_eq!(
+                super::without_mark_rows(|| super::table_entry(&entry)),
+                None
+            );
+        }
+        assert_eq!(
+            super::without_mark_rows(|| glyph_name_to_bfstring("square")),
+            Some(BfString::Char('\u{25A1}'))
+        );
+        assert_eq!(
+            glyph_name_to_bfstring("square"),
+            Some(BfString::Char('\u{25A1}'))
+        );
+    }
+
+    #[test]
+    fn uni_sequence_spells_each_group() {
+        assert_eq!(
+            unicode_string_from_name("uni00410042"),
+            Some("AB".to_string())
+        );
+        assert_eq!(unicode_string_from_name("uni20AC"), Some("€".to_string()));
+        assert_eq!(glyph_name_to_string("uni00410042"), Some("AB".to_string()));
+    }
+
+    #[test]
+    fn uni_sequence_strips_the_variant_suffix_first() {
+        // The suffix itself holds an underscore, so splitting before
+        // stripping would resolve `tnum` as a ligature component.
+        assert_eq!(
+            glyph_name_to_string("uni00410042.tnum_lnum"),
+            Some("AB".to_string())
+        );
+        assert_eq!(glyph_name_to_string("uni20AC.tnum"), Some("€".to_string()));
+    }
+
+    #[test]
+    fn u_prefix_holds_four_to_six_digits() {
+        assert_eq!(unicode_string_from_name("u0041"), Some("A".to_string()));
+        assert_eq!(unicode_string_from_name("u1F600"), Some("😀".to_string()));
+        assert_eq!(unicode_string_from_name("u01F600"), Some("😀".to_string()));
+        assert_eq!(unicode_string_from_name("u041"), None);
+        assert_eq!(unicode_string_from_name("u00410042"), None);
+        assert_eq!(glyph_name_to_string("u0041_u0042"), Some("AB".to_string()));
+    }
+
+    #[test]
+    fn malformed_uni_names_are_refused() {
+        assert_eq!(unicode_string_from_name("uni"), None);
+        assert_eq!(unicode_string_from_name("uni00"), None);
+        assert_eq!(unicode_string_from_name("uni00410"), None);
+        assert_eq!(unicode_string_from_name("uni00ZZ"), None);
+        assert_eq!(unicode_string_from_name("uniD800"), None);
+        assert_eq!(glyph_name_to_string("uni00ZZ"), None);
+        assert_eq!(glyph_name_to_string("uniD800"), None);
+    }
+
+    #[test]
+    fn ligature_components_may_spell_sequences() {
+        // A component may itself spell several code points -- the
+        // single-character path reads neither of these first halves.
+        assert_eq!(
+            glyph_name_to_string("uni00410042_uni0043"),
+            Some("ABC".to_string())
+        );
+        assert_eq!(
+            glyph_name_to_string("uni00410042_X"),
+            Some("ABX".to_string())
+        );
+        assert_eq!(
+            glyph_name_to_string("uni0041_uni0042"),
+            Some("AB".to_string())
+        );
+        assert_eq!(glyph_name_to_string("A_uni0042"), Some("AB".to_string()));
+        assert_eq!(glyph_name_to_string("A_u0042"), Some("AB".to_string()));
     }
 }
 

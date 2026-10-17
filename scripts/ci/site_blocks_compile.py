@@ -47,6 +47,33 @@ as wrong as a block that fails without an entry -- an exception list consulted
 only on failure only ever grows, and one nobody prunes means nothing after a
 while. The same shape as a test that stopped asserting.
 
+A PUBLISHED GUIDE IS NOT DEBT
+
+One ceiling over the whole site still hides the thing it is there to catch.
+`how-to-guides/pdfa.json` described `fix_pdf_a_errors` and `PdfAFixOptions` for
+months -- neither exists in any crate -- on a page with no `status`, so in the
+sitemap, so served. Three broken programs inside a ceiling of 97: the number
+never moved, and nothing was red. Repair one program elsewhere and you buy room
+for a new invented API here; that is what a count does (#499).
+
+So the three directories a reader is sent to in order to copy code --
+`public/content/en/how-to-guides/`, `public/content/en/how-to/` and
+`public/content/en/errors/` -- are judged by name instead of by number, as long
+as the page is actually published (`status` other than `hidden`). Such a program
+compiles, or it is named in `docs/site/guides_debt.toml`, and that list may only
+shrink. A program that starts failing there is refused on the spot rather than
+absorbed, and one that starts compiling has to leave the list.
+
+The error pages joined on 10-09-2026 (#476), for the same reason and with a
+sharper edge: a reader lands there with a stack trace and pastes the fix. Two of
+them applied `?` to a `Page`, which is not a `Result`, so the very first line of
+the fix did not build -- and the ceiling had been paying for both since the day
+it was drawn.
+
+The page's status travels in the export and is part of the handover digest.
+Without that, publishing a hidden page after the hand-over would switch this
+half off and nothing would hash differently.
+
 THE HANDOVER
 
 `docs/site-rust-blocks.json` is a copy of an export generated in the website
@@ -106,6 +133,64 @@ MIN_SOURCE_BLOCKS = 600
 # which is how a floor gets lowered on autopilot instead of being thought about.
 MIN_COMPILING_BLOCKS = 350
 
+# The trees a reader is sent to in order to copy code. A page under any of
+# them, unless it is hidden, is judged by name in `docs/site/guides_debt.toml`
+# rather than by the ratchet's number (#499).
+#
+# `errors/` joined the two how-to trees on 10-09-2026 (#476). An error page is
+# where a reader arrives with a stack trace in hand and copies the fix straight
+# out of the page -- `errors/itext-out-of-memory.json` and
+# `errors/pdfbox-slow-performance.json` both applied `?` to a `Page`, which is
+# not a `Result`, so both fixes stopped at the first line the reader pasted.
+# Those two sat inside the ceiling for as long as it existed: repair a how-to
+# somewhere else and there was room for them. The same argument as for the
+# how-tos, on a page type that is read under more pressure than any of them.
+GUIDE_TREES = (
+    "public/content/en/how-to-guides/",
+    "public/content/en/how-to/",
+    "public/content/en/errors/",
+)
+GUIDES_DEBT = REPO / "docs" / "site" / "guides_debt.toml"
+
+# CEILING: entries in the debt list <= 33 -- measured 33 on 10-09-2026.
+#
+# The four directions in `judge_guides` refuse a stale entry and a missing one.
+# None of them refuses a NEW one: add a broken program to the list in the same
+# commit that breaks it and every check is satisfied, while the ratchet over the
+# whole site can stay level because something else was repaired. That is the
+# ceiling problem again, one file down (#476, raised in review of #1885).
+#
+# So the count is held here. It is a number in this file, not a machine-kept
+# baseline, and that is the point: growing the list means editing this line in
+# the same commit, where a reviewer sees it. It does not catch a swap -- one
+# entry out, one in, count unchanged -- and nothing short of a stored list of
+# accepted keys would; what it stops is the list quietly getting longer.
+MAX_DEBT_ENTRIES = 33
+
+# FLOOR: published copy-from programs >= 110 -- measured 134 of 239 on
+# 10-09-2026 (121 how-to, 13 error pages).
+#
+# The strict half of this gate reads a field that comes from the other
+# repository. Lose it, hide the whole tree, move the directories, and the set it
+# judges goes empty; every entry in the debt list would then read as "no longer a
+# published guide", the strict rule would have nothing to refuse, and the gate
+# would say green while checking nothing at all. That is the same shape as the
+# zero-of-551 this file already carries two scars from.
+MIN_PUBLISHED_GUIDE_PROGRAMS = 110
+
+# FLOOR: published error-page programs >= 10 -- measured 13 on 10-09-2026.
+#
+# One floor over both trees is one floor too few, and the arithmetic says so:
+# the how-to trees alone carry 121, so the exporter could stop emitting the
+# error pages altogether and the combined floor of 110 would still pass. Once
+# the seven entries below are repaired, losing the whole `errors/` tree would
+# not move the site-wide count either -- a tree that has nothing failing in it
+# is invisible to a ratchet that counts failures. Then the strict half would be
+# judging a set that is not there, which is the shape this file already carries
+# two scars from (#476, raised in review of #1885).
+MIN_PUBLISHED_ERROR_PROGRAMS = 10
+ERROR_TREE = "public/content/en/errors/"
+
 # The register must not become the answer. At 49 of 551 it sits below a tenth;
 # at a fifth this gate approves more than it checks, and then the honest move is
 # to repair the export (#247) rather than to add entries to it.
@@ -145,12 +230,18 @@ def digest_of(blocks: list[dict]) -> str:
 
     Computed the same way here and in the website repository
     (`scripts/verify-site-blocks-handover.mjs`), which is the whole point: the
-    two sides have to be able to disagree out loud. Only the three fields that
-    decide what gets compiled go in, sorted, so that reordering the export or
-    adding a field to it is not mistaken for a changed example.
+    two sides have to be able to disagree out loud. Only the fields that decide
+    what gets compiled, and how strictly, go in -- sorted, so that reordering
+    the export or adding a field to it is not mistaken for a changed example.
+
+    `status` is one of them since #499. It decides whether a failing program is
+    refused outright or counted as debt, so a page that is published after the
+    hand-over is a different promise from the page that was compiled -- and the
+    fingerprint has to say so.
     """
     core = sorted(
-        ({"bestand": b["bestand"], "pad": b["pad"], "code": b["code"]} for b in blocks),
+        ({"bestand": b["bestand"], "pad": b["pad"], "code": b["code"],
+          "status": b.get("status")} for b in blocks),
         key=lambda b: (b["bestand"], b["pad"]),
     )
     payload = json.dumps(core, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -403,6 +494,28 @@ def build(workdir: pathlib.Path, pieces: list[str]) -> tuple[int, str]:
     # recognise that, so no error could be attributed to a block -- and zero
     # errors on 551 blocks reads as perfect. The errors were there.
     env["CARGO_TERM_COLOR"] = "never"
+    # AND NO COMPILER WRAPPER, which is the third version of the same defect and
+    # the one that cost the most: this check has to count the same on every
+    # machine, and it did not.
+    #
+    # Measured 09-09-2026 on one commit: 87 non-compiling programs on the
+    # operator's Mac, 97 on a bare Linux instance, same rustc 1.94.0, same
+    # lockfile, same blocks. The Mac's ~/.cargo/config.toml sets sccache as
+    # RUSTC_WRAPPER; sccache invokes rustc with `-o`, and that run stops after
+    # name resolution -- so every E0599 "no method named ..." and every E0277
+    # trait error in the same crate was never emitted. Ten programs calling
+    # methods that exist nowhere in this workspace (`reorder_pages`,
+    # `delete_page`, `is_linearized`, `Page::images`, `Error::BrokenXref`) were
+    # counted as compiling. Clearing the wrapper made the Mac's output
+    # byte-identical to the instance's.
+    #
+    # A cache makes a build faster. It must not be able to change what a
+    # measurement says, and a number that depends on who is measuring is not a
+    # ratchet. This costs a cold compile of the throwaway crate and buys a
+    # number that is the same everywhere. (#474)
+    env.pop("RUSTC_WRAPPER", None)
+    env.pop("CARGO_BUILD_RUSTC_WRAPPER", None)
+    env["CARGO_BUILD_RUSTC_WRAPPER"] = ""
     r = subprocess.run(
         ["cargo", "build", "--quiet", "--offline", "--color", "never",
          "--message-format=short"],
@@ -469,6 +582,110 @@ def read_register(path: pathlib.Path) -> tuple[dict[tuple[str, str], dict], list
             continue
         out[k] = item
     return out, complaints
+
+
+def is_published_guide(block: dict) -> bool:
+    """Whether this program sits on a page a reader can actually reach and copy from.
+
+    Two questions, and both have to be answered from the export rather than
+    from a directory listing here: the site is in the other repository, and a
+    copy of a rule is a rule that drifts.
+
+    A page with `"status": "hidden"` is out of the sitemap and out of the
+    application's routes, so a broken example on it costs a reader nothing --
+    that is debt, and the ratchet is the right instrument. Everything else under
+    the three copy-from trees is served, and a served how-to or error page is
+    where a method that does not exist is not debt but a defect.
+    """
+    return block["bestand"].startswith(GUIDE_TREES) and block.get("status") != "hidden"
+
+
+def read_debt(path: pathlib.Path) -> tuple[dict[tuple[str, str], dict], list[str]]:
+    """The published-guide debt list, plus whatever is wrong with its form.
+
+    Deliberately a different file from `blocks_exceptions.toml`, because it
+    answers a different question. That register says "this cannot compile here,
+    and here is why"; this list says "this is wrong on a page a reader can
+    reach, and it has not been repaired yet". Merging them would let the second
+    borrow the first's kinds and call an invented API an excused block.
+
+    Form errors are collected rather than raised, like the register's: a list
+    that is half right has to show every complaint at once.
+    """
+    if not path.exists():
+        return {}, [f"{path.relative_to(REPO)} is missing."]
+    try:
+        raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as e:
+        return {}, [f"{path.relative_to(REPO)} is not valid TOML: {e}"]
+
+    out: dict[tuple[str, str], dict] = {}
+    complaints: list[str] = []
+    for i, item in enumerate(raw.get("program", []), 1):
+        missing = [v for v in ("file", "path", "error") if not str(item.get(v, "")).strip()]
+        if missing:
+            complaints.append(f"entry {i}: missing {', '.join(missing)}")
+            continue
+        k = (item["file"], item["path"])
+        if k in out:
+            complaints.append(f"entry {i}: {k[0]} {k[1]} is in there twice")
+            continue
+        out[k] = item
+    return out, complaints
+
+
+def judge_guides(
+    every: set[tuple[str, str]],
+    published: set[tuple[str, str]],
+    failing: set[tuple[str, str]],
+    debt: dict[tuple[str, str], dict],
+) -> list[str]:
+    """The four ways the published-guide rule can be broken.
+
+    Apart from the build for the same reason as `judge()`: compiling five
+    hundred programs takes three quarters of an hour and runs on one runner, so
+    a judgement that only exists inside that build is a judgement nobody has
+    ever tried to defeat. `test_site_blocks_register.py` exercises all four on
+    synthetic input, in milliseconds, on every pull request.
+
+    The first direction is the point of the whole thing. The other three are
+    what keeps the list from becoming the answer: a list only ever read when
+    something fails is a list that only grows.
+    """
+    complaints = []
+    for k in sorted(failing & published - set(debt)):
+        complaints.append(
+            f"{k[0]} {k[1]}: does not compile, on a page that is published. "
+            f"A page a reader is invited to copy from either builds against "
+            f"the facade or it is not on the site. Repair the example, or set "
+            f'the page to "status": "hidden" in the website repository.'
+        )
+    if len(debt) > MAX_DEBT_ENTRIES:
+        complaints.append(
+            f"the debt list holds {len(debt)} entries and the ceiling is "
+            f"{MAX_DEBT_ENTRIES}. A list that may only shrink cannot grow "
+            f"quietly: repair the program, or raise MAX_DEBT_ENTRIES in "
+            f"site_blocks_compile.py in this same commit and say why."
+        )
+    for k in sorted(debt):
+        if k not in every:
+            complaints.append(
+                f"{k[0]} {k[1]}: is in the debt list and no longer in the "
+                f"export. The program is gone or renamed; drop the entry."
+            )
+        elif k not in published:
+            complaints.append(
+                f"{k[0]} {k[1]}: is in the debt list and is not a published "
+                f"guide program any more -- the page was hidden or moved. That "
+                f"is the repair; drop the entry."
+            )
+        elif k not in failing:
+            complaints.append(
+                f"{k[0]} {k[1]}: is in the debt list and compiles. This list "
+                f"may only shrink, so drop the entry -- leave it and the next "
+                f"broken example on that page is waved through."
+            )
+    return complaints
 
 
 def judge(
@@ -599,6 +816,20 @@ def main() -> int:
 
     all_keys = {key(b) for b in blocks}
     register, form_errors = read_register(EXCEPTIONS)
+    debt, debt_errors = read_debt(GUIDES_DEBT)
+    form_errors += debt_errors
+    # The field the strict half is decided by. An export from before #499 has no
+    # `status` at all, and reading that as "nothing is hidden" would refuse the
+    # whole site while reading it as "everything is hidden" would check nothing.
+    # Neither is an answer, so say what is actually wrong.
+    without = [b for b in blocks if "status" not in b]
+    if without:
+        form_errors.append(
+            f"{len(without)} of {len(blocks)} programs in the export carry no "
+            f"`status`; the first is {without[0]['bestand']} {without[0]['pad']}. "
+            f"That export predates #499 -- run scripts/extract-rust-blocks.mjs in "
+            f"the website repository and hand the result over again."
+        )
     if len(register) > len(blocks) * MAX_EXCEPTION_SHARE:
         form_errors.append(
             f"{len(register)} of {len(blocks)} blocks are in the register. "
@@ -608,7 +839,7 @@ def main() -> int:
 
     with build_workdir(REPO) as workdir:
         return compile_the_blocks(workdir, blocks, source_blocks, all_keys,
-                                  register, form_errors, a.check)
+                                  register, debt, form_errors, a.check)
 
 
 def compile_the_blocks(
@@ -617,6 +848,7 @@ def compile_the_blocks(
     source_blocks: int,
     all_keys: set[tuple[str, str]],
     register: dict[tuple[str, str], dict],
+    debt: dict[tuple[str, str], dict],
     form_errors: list[str],
     check: bool,
 ) -> int:
@@ -762,12 +994,44 @@ def compile_the_blocks(
         )
         return 1
 
+    # The published guide pages, judged by name and not by number (#499).
+    #
+    # `failing` minus the register: a block excused there is excused here too --
+    # a cloud recipe on `aws_sdk_s3` is not a broken promise, it is a crate this
+    # harness will not link, and it says so by name one file over.
+    published = {key(b) for b in blocks if is_published_guide(b)}
+    if len(published) < MIN_PUBLISHED_GUIDE_PROGRAMS:
+        print(
+            f"FLOOR: {len(published)} programs on published copy-from pages, "
+            f"expected >= {MIN_PUBLISHED_GUIDE_PROGRAMS}. The status field or "
+            f"the copy-from directories moved, so the half of this gate that "
+            f"refuses a broken published example has nothing left to judge -- "
+            f"this is not a green.",
+            file=sys.stderr,
+        )
+        return 1
+
+    errors = {k for k in published if k[0].startswith(ERROR_TREE)}
+    if len(errors) < MIN_PUBLISHED_ERROR_PROGRAMS:
+        print(
+            f"FLOOR: {len(errors)} programs on published error pages, expected "
+            f">= {MIN_PUBLISHED_ERROR_PROGRAMS}. The export stopped carrying "
+            f"them, or the tree moved -- and the floor over the copy-from pages "
+            f"as a whole cannot see that, because the how-to trees alone clear "
+            f"it. This is not a green.",
+            file=sys.stderr,
+        )
+        return 1
+
     # The two directions of the register, and its form. Apart from the ratchet:
     # a lapsed exception is a fault in itself, even when the number falls.
     complaints = form_errors + judge(all_keys, failing, register)
+    complaints += judge_guides(all_keys, published, failing - set(register), debt)
     if complaints:
         print(
-            f"[site-blocks] {EXCEPTIONS.relative_to(REPO)} is not right:",
+            f"[site-blocks] {EXCEPTIONS.relative_to(REPO)} and "
+            f"{GUIDES_DEBT.relative_to(REPO)} have to agree with what just "
+            f"compiled, and they do not:",
             file=sys.stderr,
         )
         for r in complaints:
@@ -784,6 +1048,11 @@ def compile_the_blocks(
         f"{len(failing)} do not, of which {len(register)} with a reason in "
         f"{EXCEPTIONS.relative_to(REPO)} and {count} without "
         f"({debt_blocks} of {source_blocks} blocks on the site)."
+    )
+    print(
+        f"  {len(published)} programs sit on a published copy-from page; "
+        f"{len(debt)} of them are named in {GUIDES_DEBT.relative_to(REPO)} "
+        f"and the rest compile."
     )
     for s, n in sorted(per_kind.items(), key=lambda x: -x[1]):
         print(f"  {n:4}  {s}")
@@ -858,7 +1127,23 @@ def compile_the_blocks(
     ]
     for s, n in sorted(per_kind.items(), key=lambda x: -x[1]):
         lines.append(f"| {n} | {s} |")
-    lines += ["", "## Per file", "", "| file | blocks |", "|---|---:|"]
+    lines += [
+        "",
+        "## The published how-to and error pages are not part of that ceiling",
+        "",
+        f"{len(published)} of these programs sit on a page under "
+        "`how-to-guides/`, `how-to/` or `errors/` that is not hidden, which is where a reader",
+        "is invited to copy code. Those are judged by name, not by number: each one",
+        f"compiles, or it is named in `docs/site/guides_debt.toml` -- {len(debt)} are",
+        "today, and that list may only shrink. A program that starts failing there",
+        "fails this gate on the spot instead of being absorbed by the ceiling above,",
+        "which is how `fix_pdf_a_errors` stood on a served page for months (#499).",
+        "",
+        "## Per file",
+        "",
+        "| file | blocks |",
+        "|---|---:|",
+    ]
     for file, n in sorted(per_file.items(), key=lambda x: -x[1]):
         lines.append(f"| `{file}` | {n} |")
     lines += ["", "## The first fifty", "", "| file | field | error |", "|---|---|---|"]

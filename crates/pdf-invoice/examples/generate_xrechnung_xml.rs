@@ -11,9 +11,10 @@ use pdf_invoice::zugferd::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let output_path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "/tmp/xrechnung-sample.xml".to_string());
+    let Some(output_path) = std::env::args_os().nth(1).map(std::path::PathBuf::from) else {
+        eprintln!("usage: generate_xrechnung_xml <output.xml>");
+        std::process::exit(2);
+    };
 
     let invoice = ZugferdInvoice {
         profile: ZugferdProfile::EN16931,
@@ -88,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let xml = invoice.to_xml()?;
     std::fs::write(&output_path, xml)?;
-    println!("Written XRechnung XML to {}", output_path);
+    println!("Written XRechnung XML to {}", output_path.display());
 
     Ok(())
 }

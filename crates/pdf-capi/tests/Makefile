@@ -82,7 +82,7 @@ LDFLAGS  := -L$(TARGET_DIR)
 LIBS     := -lpdf_capi
 INCLUDE  := -I..
 
-TESTS := test_smoke test_text_blocks
+TESTS := test_smoke test_text_blocks test_structured_extraction test_journal test_form_write test_plain_images
 
 .PHONY: all clean run
 
@@ -94,9 +94,25 @@ test_smoke: test_smoke.c ../pdf_capi.h
 test_text_blocks: test_text_blocks.c ../pdf_capi.h
 	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $< $(LDFLAGS) $(LIBS)
 
+test_structured_extraction: test_structured_extraction.c ../pdf_capi.h
+	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $< $(LDFLAGS) $(LIBS)
+
+test_journal: test_journal.c ../pdf_capi.h
+	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $< $(LDFLAGS) $(LIBS)
+
+test_form_write: test_form_write.c ../pdf_capi.h
+	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $< $(LDFLAGS) $(LIBS)
+
+test_plain_images: test_plain_images.c ../pdf_capi.h
+	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $< $(LDFLAGS) $(LIBS)
+
 run: all
 	@cd ../../.. && $(DYLIB_VAR)=$(abspath $(TARGET_DIR)) crates/pdf-capi/tests/test_smoke
 	@cd ../../.. && $(DYLIB_VAR)=$(abspath $(TARGET_DIR)) crates/pdf-capi/tests/test_text_blocks
+	@cd ../../.. && $(DYLIB_VAR)=$(abspath $(TARGET_DIR)) crates/pdf-capi/tests/test_structured_extraction
+	@cd ../../.. && $(DYLIB_VAR)=$(abspath $(TARGET_DIR)) crates/pdf-capi/tests/test_journal
+	@cd ../../.. && $(DYLIB_VAR)=$(abspath $(TARGET_DIR)) crates/pdf-capi/tests/test_form_write
+	@cd ../../.. && $(DYLIB_VAR)=$(abspath $(TARGET_DIR)) crates/pdf-capi/tests/test_plain_images
 
 clean:
 	rm -f $(TESTS)

@@ -66,6 +66,15 @@ pub(crate) fn show_glyph<'a>(
         return;
     }
 
+    // Every glyph a device is handed is noted, before the device reads it:
+    // a combining mark from the AMS name rows is placed on its neighbour
+    // here, and the device reads the placement through `as_unicode`. A glyph
+    // that only clips reaches no device and is not noted.
+    if !matches!(ctx.get().text_state.render_mode, TextRenderingMode::Clip) {
+        let placed = ctx.get().ctm * glyph_transform;
+        ctx.marks.observe(glyph, placed);
+    }
+
     device.set_soft_mask(ctx.get().graphics_state.soft_mask.clone());
     device.set_blend_mode(ctx.get().graphics_state.blend_mode);
     let stroke_props = ctx.stroke_props();

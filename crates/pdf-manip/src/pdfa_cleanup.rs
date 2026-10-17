@@ -139,7 +139,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     ensure_xmp_dc_title(doc);
     truncate_long_names(doc);
     fix_soft_mask_colorspace(doc);
-    strip_forbidden_smask(doc);
+    strip_forbidden_smask(doc, is_pdfa1);
     ensure_page_transparency_group(doc);
     fix_markinfo_without_structtreeroot(doc);
     fix_unbalanced_emc(doc);
@@ -1234,11 +1234,62 @@ pub(crate) fn is_structure_element(dict: &lopdf::Dictionary) -> bool {
         || (dict.has(b"S") && dict.has(b"P") && !dict.has(b"Subtype"))
 }
 
+/// The objects that are resource dictionaries, or a category inside one.
+///
+/// `/A` is a name a document chooses. In an annotation, an outline item or a
+/// form field it introduces an action; in `/Resources/Font` it is the name of a
+/// font, and pdfTeX and dvips name their one-glyph Type 3 font exactly that.
+/// The sweep below cannot tell the two apart from the key, so it is told where
+/// not to look: nothing reached through a `/Resources` entry carries an action.
+///
+/// Both levels are collected -- the resource dictionary itself and the category
+/// dictionaries it names (`/Font`, `/XObject`, `/ExtGState`, ...) -- because the
+/// key `/A` can be a name in either. Only indirect objects need listing: the
+/// sweep walks `doc.objects`, so a resource dictionary written inline never
+/// comes past it.
+pub(crate) fn resource_dictionary_ids(doc: &Document) -> std::collections::HashSet<ObjectId> {
+    let mut ids = std::collections::HashSet::new();
+    let dict_of = |obj: &Object| -> Option<lopdf::Dictionary> {
+        match obj {
+            Object::Dictionary(d) => Some(d.clone()),
+            Object::Stream(s) => Some(s.dict.clone()),
+            _ => None,
+        }
+    };
+    for object in doc.objects.values() {
+        let Some(dict) = dict_of(object) else {
+            continue;
+        };
+        let resources = match dict.get(b"Resources") {
+            Ok(Object::Reference(id)) => {
+                ids.insert(*id);
+                match doc.objects.get(id) {
+                    Some(Object::Dictionary(d)) => d.clone(),
+                    _ => continue,
+                }
+            }
+            Ok(Object::Dictionary(d)) => d.clone(),
+            _ => continue,
+        };
+        for (_, value) in resources.iter() {
+            if let Object::Reference(id) = value {
+                ids.insert(*id);
+            }
+        }
+    }
+    ids
+}
+
 /// Remove forbidden action types for PDF/A (6.5.1).
 ///
 /// Handles both top-level action objects AND inline action dicts
 /// within /A keys of annotations, outlines, and other objects.
 fn remove_forbidden_actions(doc: &mut Document) {
+    // Where `/A` is a resource name rather than an action. See
+    // `resource_dictionary_ids`; without it a font named `/A` is deleted while
+    // the content stream keeps selecting it (#441).
+    let resource_dicts = resource_dictionary_ids(doc);
+
     // Phase 1: Remove /S from top-level action objects with forbidden types.
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
@@ -1260,6 +1311,9 @@ fn remove_forbidden_actions(doc: &mut Document) {
     // inline action dict (not a separate object).
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
+        if resource_dicts.contains(&id) {
+            continue;
+        }
         let remove_a = {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
                 if is_structure_element(dict) {
@@ -1299,6 +1353,9 @@ fn remove_forbidden_actions(doc: &mut Document) {
     // forbidden action (Phase 1 removed /S but the reference still exists).
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
+        if resource_dicts.contains(&id) {
+            continue;
+        }
         let remove_a = {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
                 if is_structure_element(dict) {
@@ -3100,21 +3157,17 @@ fn fix_markinfo_without_structtreeroot(doc: &mut Document) {
     }
 }
 
-/// §6.4.2: Remove forbidden /SMask from XObject dictionaries.
-///
-/// PDF/A forbids /SMask in XObject dictionaries — both Image and Form XObjects.
-/// This strips the /SMask reference from all XObject streams. (The soft mask
-/// image itself is left in place — it becomes an orphan that the serializer drops.)
-fn strip_forbidden_smask(doc: &mut Document) {
+/// PDF/A-1 forbids image soft masks; PDF/A-2 and later permit them.
+/// Keep image masks for those parts, including their opacity samples and Matte.
+/// A Form XObject has no SMask entry: its soft mask belongs in an ExtGState.
+fn strip_forbidden_smask(doc: &mut Document, is_pdfa1: bool) {
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
         let should_strip = {
             if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
-                let is_xobject = matches!(
-                    stream.dict.get(b"Subtype").ok(),
-                    Some(Object::Name(ref n)) if n == b"Image" || n == b"Form"
-                );
-                is_xobject && stream.dict.has(b"SMask")
+                let subtype = stream.dict.get(b"Subtype").and_then(Object::as_name).ok();
+                (subtype == Some(b"Form") || (is_pdfa1 && subtype == Some(b"Image")))
+                    && stream.dict.has(b"SMask")
             } else {
                 false
             }

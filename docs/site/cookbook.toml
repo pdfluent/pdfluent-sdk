@@ -72,6 +72,13 @@ intent = "Watermark, compress and archive an exported document; PDFluent does no
 block = "after-chrome"
 
 [[recipe]]
+slug = "extract-structure-for-rag"
+category = "pages"
+title = "Extract a document as markdown or as blocks"
+intent = "Write the document out as markdown for a RAG pipeline, or walk its blocks -- headings, list items, table cells -- to chunk and cite with."
+block = "structured-extraction"
+
+[[recipe]]
 slug = "read-an-xfa-form"
 category = "forms"
 title = "Read an XFA form and write one field"

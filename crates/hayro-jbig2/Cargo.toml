@@ -1,6 +1,6 @@
 [package]
 name = "pdfluent-jbig2"
-version = "0.2.3"
+version = "0.3.0"
 description = "A memory-safe, pure-Rust JBIG2 decoder."
 authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
 edition = "2024"

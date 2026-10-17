@@ -1,31 +1,60 @@
 name: Build wheels
 
-# Triggered by:
-#   - python/v* tags: Python-specific release (legacy).
-#   - v*.*.* tags:    SDK version release — build and publish wheels to PyPI.
-#   - workflow_dispatch: manual build (dry-run by default; set publish=true to upload).
+# NOT THE RELEASE ROUTE, and not reachable from a tag (#358).
+#
+# Every job below runs on a hosted runner. That was the whole lane until
+# 10-09-2026: a `v*.*.*` tag started five hosted jobs and a sixth uploaded the
+# result to PyPI from inside CI. Three standing rules say it may not.
+# Precondition 6 of pdfluent-internal#358 says the publish runs from
+# `docs/release/REGISTRY_1_0_0_RUNBOOK.md`, on our own machines, with zero
+# hosted GitHub minutes; #333 says no hosted job runs while this repository is
+# private; and the Actions budget has been EUR 1 since 05-09-2026. None of that
+# was checked on release day, because the tag would have started the jobs
+# before anyone looked.
+#
+# So the tag triggers are gone and the publish job with them. `git tag v1.0.0`
+# now starts nothing. The release builds its wheels the way it builds every
+# other artefact -- §3.2 of the runbook: macOS universal2 on the operator's
+# Mac, Linux on a bought gate instance, Windows over the existing SSH route to
+# the build host, each with its sha256 recorded, and one `twine upload` from
+# the runbook.
+#
+# What is left here is a manual fallback for a day when one of those machines
+# is unavailable and somebody knowingly decides to spend hosted minutes. It
+# builds and uploads artefacts to the run; it does not publish. The jobs
+# default to hosted runners; `runner_pool: self` sends them to the self-hosted
+# release runners instead, the same input release-natives.yml,
+# release-binaries.yml and node-bindings.yml carry. Those are throwaway VMs,
+# not the persistent desktop, which is why a ref-dispatchable workflow may use
+# them: the dispatcher still chooses the code, but no corpus, warm cache or
+# runner token sits on the machine (#636).
 on:
-  push:
-    tags:
-      - 'python/v*'
-      - 'v*.*.*'
   workflow_dispatch:
     inputs:
-      publish:
-        description: 'Publish wheels to PyPI'
-        default: 'false'
+      runner_pool:
+        description: 'Runner pool: github (hosted) or self (self-hosted GCP/Mac runners)'
+        required: false
+        default: 'github'
         type: choice
-        options: ['true', 'false']
+        options: ['github', 'self']
 
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner_pool == 'self' && matrix.os-self || matrix.os }}
     strategy:
       # One target failing should not cancel the others: a partial matrix
       # still tells us which platforms are healthy.
       fail-fast: false
       matrix:
-        target: [x86_64, aarch64]
+        include:
+          # Both legs run on x64: the aarch64 wheel is cross-built there
+          # (maturin --zig), the way it is on the github pool.
+          - target: x86_64
+            os: ubuntu-latest
+            os-self: [self-hosted, linux, x64, pdfluent-release]
+          - target: aarch64
+            os: ubuntu-latest
+            os-self: [self-hosted, linux, x64, pdfluent-release]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,6 +63,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.15.0
           working-directory: crates/pdf-python
           target: ${{ matrix.target }}
           args: --release --strip --out dist
@@ -45,87 +75,157 @@ jobs:
           # target failed. cc-rs appends CFLAGS_<target> to the compiler
           # invocation, so ask for gnu99 there and leave every other target
           # untouched.
+          #
+          # The remap block is computed INSIDE the container, from the
+          # container's own home, cargo home and sysroot: a block computed on
+          # the host would name paths the container build never sees. Sourced
+          # in the before-script because maturin runs in the same shell after
+          # it; found from the checkout root or the crate directory.
           before-script-linux: |
             export CFLAGS_aarch64_unknown_linux_gnu="${CFLAGS_aarch64_unknown_linux_gnu:-} -std=gnu99"
+            for _d in "${GITHUB_WORKSPACE:-.}" . ../..; do
+              if [ -f "$_d/scripts/release/release_rustflags.sh" ]; then
+                source "$_d/scripts/release/release_rustflags.sh"
+                break
+              fi
+            done
+            case "${RUSTFLAGS:-}" in *--remap-path-prefix*) ;; *) echo "release_rustflags.sh not sourced" >&2; exit 1 ;; esac
+            # The block that counts is the container's: print it from here.
+            bash "$_d/scripts/release/check_build_host_paths.sh" --remaps-only
+      # Minutes in: the fresh wheel's native names no build-host path.
+      - name: The fresh wheel embeds no build-host path
+        shell: bash
+        run: bash scripts/release/check_build_host_paths.sh crates/pdf-python/dist/*.whl
+      - name: No wheel carries the SVG rasteriser
+        run: python3 tests/compat/no_cairo_in_artifacts.py crates/pdf-python/dist
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-${{ matrix.target }}
           path: crates/pdf-python/dist
-          retention-days: 30
+          retention-days: 1
 
   macos:
-    runs-on: macos-latest
+    runs-on: ${{ inputs.runner_pool == 'self' && matrix.os-self || matrix.os }}
     strategy:
       matrix:
-        target: [x86_64, aarch64]
+        include:
+          - target: x86_64
+            os: macos-latest
+            os-self: [self-hosted, macos, arm64, pdfluent-release]
+          - target: aarch64
+            os: macos-latest
+            os-self: [self-hosted, macos, arm64, pdfluent-release]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      # Scrub THIS runner's paths: the remap block from release_rustflags.sh,
+      # exported for the maturin step below (env RUSTFLAGS replace the
+      # config's Mac-only block outright, so an unscrubbed leg ships the
+      # runner's checkout, cargo home and toolchain paths).
+      # The helper asks rustc for its sysroot; a runner we own reads no
+      # login profile, so cargo is put on PATH first.
+      - name: Cargo on PATH
+        shell: bash
+        run: bash scripts/ci/cargo_on_path.sh
+      - name: Export the remap block for this runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          source scripts/release/release_rustflags.sh
+          # The helper also maps C sources (-ffile-prefix-map in CFLAGS and
+          # its variants); those live only in this shell unless exported too.
+          for _v in RUSTFLAGS $(compgen -e | grep -E '^((TARGET_|HOST_)?C(XX)?FLAGS(_.+)?|CL)$' || true); do
+            echo "$_v=${!_v}" >> "$GITHUB_ENV"
+          done
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.15.0
           working-directory: crates/pdf-python
           target: ${{ matrix.target }}
           args: --release --strip --out dist
+      # Minutes in: the fresh wheel's native names no build-host path.
+      - name: The fresh wheel embeds no build-host path
+        shell: bash
+        run: bash scripts/release/check_build_host_paths.sh crates/pdf-python/dist/*.whl
+      - name: No wheel carries the SVG rasteriser
+        run: python3 tests/compat/no_cairo_in_artifacts.py crates/pdf-python/dist
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-macos-${{ matrix.target }}
           path: crates/pdf-python/dist
-          retention-days: 30
+          retention-days: 1
 
   windows:
-    runs-on: windows-latest
+    runs-on: ${{ inputs.runner_pool == 'self' && fromJSON('["self-hosted", "windows", "x64", "pdfluent-release"]') || 'windows-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      # Scrub THIS runner's paths: the remap block from release_rustflags.sh,
+      # exported for the maturin step below (env RUSTFLAGS replace the
+      # config's Mac-only block outright, so an unscrubbed leg ships the
+      # runner's checkout, cargo home and toolchain paths).
+      # The helper asks rustc for its sysroot; a runner we own reads no
+      # login profile, so cargo is put on PATH first.
+      - name: Cargo on PATH
+        shell: bash
+        run: bash scripts/ci/cargo_on_path.sh
+      - name: Export the remap block for this runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          source scripts/release/release_rustflags.sh
+          # The helper also maps C sources (-ffile-prefix-map in CFLAGS and
+          # its variants); those live only in this shell unless exported too.
+          for _v in RUSTFLAGS $(compgen -e | grep -E '^((TARGET_|HOST_)?C(XX)?FLAGS(_.+)?|CL)$' || true); do
+            echo "$_v=${!_v}" >> "$GITHUB_ENV"
+          done
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.15.0
           working-directory: crates/pdf-python
           target: x86_64
           args: --release --strip --out dist
+      # Minutes in: the fresh wheel's native names no build-host path.
+      - name: The fresh wheel embeds no build-host path
+        shell: bash
+        run: bash scripts/release/check_build_host_paths.sh crates/pdf-python/dist/*.whl
+      - name: No wheel carries the SVG rasteriser
+        shell: bash
+        run: |
+          PY="$(command -v python3 || command -v python)"
+          "$PY" tests/compat/no_cairo_in_artifacts.py crates/pdf-python/dist
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-windows-x86_64
           path: crates/pdf-python/dist
-          retention-days: 30
+          retention-days: 1
 
   sdist:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner_pool == 'self' && fromJSON('["self-hosted", "linux", "x64", "pdfluent-release"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.15.0
           working-directory: crates/pdf-python
           command: sdist
           args: --out dist
+      - name: No sdist carries the SVG rasteriser
+        run: python3 tests/compat/no_cairo_in_artifacts.py crates/pdf-python/dist
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-sdist
           path: crates/pdf-python/dist
-          retention-days: 30
+          retention-days: 1
 
-  release:
-    name: Publish to PyPI
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || inputs.publish == 'true'
-    needs: [linux, macos, windows, sdist]
-    environment:
-      name: pypi
-      url: https://pypi.org/project/pdfluent/
-    permissions:
-      id-token: write   # required for trusted publishing (OIDC)
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: wheels-*
-          merge-multiple: true
-          path: dist
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2, head of release/v1
-        with:
-          packages-dir: dist
+  # The publish job that used to live here uploaded to PyPI over OIDC whenever
+  # the ref was a tag. It is gone: the upload happens from the runbook, from a
+  # machine an operator is sitting at, against a wheel whose sha256 is written
+  # down. See docs/release/REGISTRY_1_0_0_RUNBOOK.md §3.2.

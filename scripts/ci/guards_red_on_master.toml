@@ -1,0 +1,63 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+#
+# Guards that are red on master today, each held advisory until a date it cannot
+# outlive.
+#
+# WHY THIS FILE EXISTS AT ALL
+#
+# Forty-three guards ran in exactly one place: the `guards` job of ci.yml, which
+# is hosted, and hosted Actions have been stopped since the Actions budget went
+# to EUR 1 on 05-09-2026 (#333). A guard whose only job cannot run has stopped
+# measuring, and six of the forty-three had -- unseen, on master, for days.
+#
+# Moving them into lanes that run means a landing meets six failures that are
+# nobody's branch. Two bad answers were available: leave them where nothing runs
+# them, or make six unrelated repairs a condition of every landing. This is the
+# third: they run, they are loud, and they do not block -- until the date below,
+# after which they do.
+#
+# THE EXPIRY IS THE POINT
+#
+# An exception list without a date only grows. `a_known_red_guard_expires.py`
+# refuses in three directions, and the second and third are what keep this file
+# honest:
+#
+#   1. past `expires`, the guard refuses again, exception or not;
+#   2. an entry whose guard is GREEN is itself a failure -- it has been fixed
+#      and the row has to go, or the list stops describing anything;
+#   3. an entry naming a guard that does not exist is a failure.
+#
+# `red_since` is the day it was measured, not the day it broke. Nobody knows the
+# day it broke, which is the point of the whole exercise.
+
+# THE LIST IS EMPTY, AND THAT IS WHAT IT IS FOR
+#
+# Six rows were written on 10-09-2026 and all six were gone by the end of the
+# day (#510). Each left the same way: its guard went green, and this check
+# refuses a row whose guard passes, so the row could not stay behind.
+#
+#   a_baseline_names_the_machine.py  cx43 registered in BASELINE_HARDWARE.toml,
+#                                    in the landing that opened this file.
+#   capability_register.py --check   the register regenerated.
+#   export_public_api.py --check     the export regenerated; and with it
+#   test_public_api_export.py        the test that reads the export.
+#   api_coverage.py                  the floor was measuring a licensing
+#                                    surface deleted in f9ae3a1d7: 21 methods
+#                                    whose tests went with them. Lowered to
+#                                    what we ship, method by method, in the
+#                                    guard's own text -- and three readings
+#                                    the matcher had wrong were fixed, which
+#                                    is where the "ten lost their test" came
+#                                    from. Not one had.
+#   test_skip_lint.py                the one silent skip now runs on every
+#                                    run instead of returning when nobody sets
+#                                    PDFA_FIXTURE_DIR; the helper it also
+#                                    reported was never a bail-out.
+#
+# All six now run on their own terms in the fast lane of local_ci_gate.sh. Add
+# a row here only when a guard is red on master through nobody's branch, and
+# only with a date it cannot outlive.

@@ -20,6 +20,11 @@
 # handful stopped short rather than found a clean tree.
 
 set -uo pipefail
+# GIT_DIR IS INHERITED FROM THE HOOK THAT RUNS THE GATE, and it outranks
+# `-C`: without this line a fixture's git calls land in the real repository.
+# See scripts/ci/_a_fixture_inherits_no_git_env.sh for the four ways that went
+# wrong on 09-09-2026 (#454).
+. "$(dirname "${BASH_SOURCE[0]}")/_a_fixture_inherits_no_git_env.sh"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HEALTH="${ROOT}/scripts/ci/cargo_target_health.sh"
 PROBE="${ROOT}/scripts/ci/bounded_probe.sh"

@@ -3,12 +3,30 @@ name: Security Audit
 # Runs `cargo audit` against the workspace's locked dependency graph and
 # fails if any RustSec advisory matches a transitive dependency.
 #
-# Triggers:
-# - Every push to master (path-filtered to dependency-affecting files).
-#   No `pull_request` trigger since 04-09-2026; see the note under `on:`.
-# - Weekly schedule (Mondays 04:00 UTC) — catches advisories that are
-#   published *after* a PR lands.
-# - `workflow_dispatch` for ad-hoc audits.
+# CALLED, NOT TRIGGERED (#350).
+#
+# It ran on a push to master under a path filter, on the desktop. Two things
+# make that the wrong place, and the second is why it is here rather than left
+# alone: it queued behind four other suites doing the same on a four-core
+# machine, and it has never passed there. Measured 06-09-2026 over the last
+# hundred runs on master: 28 failures, 1 pass. The last failure is
+# `Build EmbarkStudios/cargo-deny-action@v2` -- a container action on a runner
+# that cannot build one -- and `Run cargo-audit` beside it. Neither failure was
+# ever about an advisory.
+#
+# `ci-ephemeral.yml` calls it on a two-hourly wave, on the throwaway instance
+# that wave buys. `runner_label` has no default -- the only label to hand would
+# be the desktop's.
+#
+# The first wave to run it (34088643890, 07-09-2026) showed that the machine was
+# never the whole problem: the container action failed there too, in 7 seconds,
+# on `docker: command not found`. It is gone; cargo-deny is installed as a
+# pinned release binary by scripts/ci/install_cargo_deny.sh. (#361)
+#
+# WHAT IS GIVEN UP: the weekly cron. It caught advisories published after a
+# merge, which a per-landing audit cannot; a two-hourly wave against master
+# catches those sooner and on the same machine, so keeping a second trigger
+# would mean keeping a second place for this to fail differently.
 #
 # Failures here are **not blocking by policy** for low-severity advisories
 # of unmaintained crates that the workspace pins via fork (e.g. patched
@@ -17,27 +35,24 @@ name: Security Audit
 # decision is made at the milestone-review level, not here.
 
 on:
-  # No `pull_request` trigger since 04-09-2026 (#328). It ran 48 times between
-  # 01-09 and 04-09 at about seven minutes a run, on a hosted runner, while the
-  # account sat at 90% of its minutes -- and every one of those runs audited a
-  # dependency set that the push-to-master run below audits again a few minutes
-  # later. What is given up is the few minutes between opening a pull request
-  # and merging it; what is kept is the weekly schedule and every merge.
-  push:
-    branches: [master]
-    paths:
-      - '**/Cargo.toml'
-      - 'Cargo.lock'
-      - '.cargo/audit.toml'
-      - 'deny.toml'
-  schedule:
-    - cron: '0 4 * * 1'
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      runner_label:
+        description: The throwaway instance to run on, from the create-runner job of ci-ephemeral.
+        required: true
+        type: string
 
 permissions:
   contents: read
   issues: write
   pull-requests: write
+  # `rustsec/audit-check` posts its findings as a check-run, and creating one
+  # needs `checks: write`. Without it the action answers "Resource not
+  # accessible by integration" and the job goes red on the report rather than
+  # on an advisory -- the exact shape that hid this job's real state before
+  # (#294, #460). A clean audit failing to publish is still a red job, and a
+  # red job nobody can read is a job nobody reads.
+  checks: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -45,7 +60,7 @@ env:
 jobs:
   cargo-audit:
     name: cargo audit
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner_label }}
     # RUSTUP_TOOLCHAIN, because `rust-toolchain.toml` wins otherwise.
     #
     # `dtolnay/rust-toolchain@stable` installs stable, and then rustup reads the
@@ -69,14 +84,16 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: security-audit
-          save-if: ${{ github.ref == 'refs/heads/master' }}
+          cache-bin: false
 
       # The official action uses the rustsec/audit-check tool internally.
       # It posts a check-run with structured advisory data and exits
-      # non-zero on any error-severity finding.
+      # non-zero on any error-severity finding. That posting needs
+      # `checks: write` -- see the permissions block above.
       - name: Run cargo-audit
         uses: rustsec/audit-check@v2
         with:
@@ -84,7 +101,7 @@ jobs:
 
   cargo-deny-advisories:
     name: cargo-deny advisories
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner_label }}
     # Run in addition to cargo-audit because cargo-deny also enforces
     # license, source, and ban policies declared in deny.toml.
     # If deny.toml is absent the job is a no-op.
@@ -120,13 +137,34 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         if: steps.check.outputs.no_deny != 'true'
 
-      - uses: Swatinem/rust-cache@v2
+      # NOT `EmbarkStudios/cargo-deny-action@v2`, which stood here until
+      # 07-09-2026. It is a Docker container action, GitHub builds that
+      # container on the runner, and neither machine this repository owns has
+      # docker: not the desktop, and not the Hetzner snapshot the wave buys.
+      # Measured over the last hundred runs of this workflow on master: 28
+      # failures, 1 pass, the last of them `Build
+      # EmbarkStudios/cargo-deny-action@v2` answering `docker: command not
+      # found`. Moving the job onto the bought instance (#350) changed the
+      # machine, not the missing dependency, so it came back red in the first
+      # wave -- 7 seconds, before it had read a single crate. Four
+      # vulnerabilities sat behind this job for months (#287, #361).
+      #
+      # The installer takes the upstream release binary at a pinned version and
+      # a digest recorded in this repository. No cargo-cache step: nothing is
+      # compiled here any more.
+      - name: Install cargo-deny
         if: steps.check.outputs.no_deny != 'true'
-        with:
-          shared-key: security-audit
+        run: |
+          set -euo pipefail
+          SUDO=""
+          [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+          $SUDO bash scripts/ci/install_cargo_deny.sh /opt/cargo-deny
+          echo "/opt/cargo-deny" >> "$GITHUB_PATH"
 
+      # `cargo deny` and not `cargo-deny`: invoked through cargo, the binary is
+      # given `deny` as its first argument, which is the shape upstream
+      # documents and tests. Calling the executable directly works today and is
+      # not what it promises.
       - name: cargo-deny check advisories
         if: steps.check.outputs.no_deny != 'true'
-        uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check advisories
+        run: cargo deny check advisories

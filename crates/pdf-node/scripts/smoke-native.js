@@ -84,12 +84,9 @@ console.log(`[smoke] annotations(0): ${annots.length} items  ✓`)
 
 // ── Error class smoke ─────────────────────────────────────────────────────────
 
-const {
-  PdfluentError,
-  PdfluentIoError,
-  PdfluentParseError,
-  openPdf,
-} = require('../index.js')
+// One class, branched on `.code` (#587). The catalogue once named
+// PdfluentIoError and PdfluentParseError here; neither ever existed.
+const { PdfluentError, openPdf } = require('../index.js')
 
 let caught = false
 try {
@@ -100,7 +97,11 @@ try {
     console.error(`[smoke] FAIL — error is not PdfluentError: ${err.constructor.name}`)
     process.exit(1)
   }
-  console.log(`[smoke] openPdf error → ${err.constructor.name} ("${err.message.slice(0, 60)}")  ✓`)
+  if (err.code !== 'E-IO-FILE-NOT-FOUND') {
+    console.error(`[smoke] FAIL — openPdf(missing) code is ${err.code}, not E-IO-FILE-NOT-FOUND`)
+    process.exit(1)
+  }
+  console.log(`[smoke] openPdf error → ${err.code} ("${err.message.slice(0, 60)}")  ✓`)
 }
 if (!caught) {
   console.error('[smoke] FAIL — expected openPdf to throw on missing file')
@@ -112,7 +113,11 @@ try {
   PdfDocument.open(Buffer.from('not a pdf'))
 } catch (err) {
   caughtParse = true
-  console.log(`[smoke] PdfDocument.open(garbage) → ${err.constructor.name}  ✓`)
+  if (!(err instanceof PdfluentError) || err.code !== 'E-PARSE-INVALID-PDF') {
+    console.error(`[smoke] FAIL — open(garbage) threw ${err.constructor.name} ${err.code}`)
+    process.exit(1)
+  }
+  console.log(`[smoke] PdfDocument.open(garbage) → ${err.code}  ✓`)
 }
 if (!caughtParse) {
   console.error('[smoke] FAIL — expected open(garbage) to throw')

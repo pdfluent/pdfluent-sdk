@@ -32,16 +32,20 @@ pub trait PdfError: std::error::Error {
     /// Deep link to the canonical documentation page for this error.
     ///
     /// Derived from [`code`](Self::code) by lowercasing and substituting
-    /// `_` with `-`. Default implementation points at
-    /// `https://docs.pdfluent.dev/errors/<slug>`; override only if you
+    /// `_` with `-`. Default implementation points at the anchor
+    /// `https://pdfluent.com/errors/#<slug>`; override only if you
     /// host your own error documentation.
     fn docs_url(&self) -> String {
         format!(
-            "https://docs.pdfluent.dev/errors/{}",
+            "{ERROR_DOCS_BASE}{}",
             self.code().to_lowercase().replace('_', "-")
         )
     }
 }
+
+/// Where [`PdfError::docs_url`] points: the error reference page, followed by
+/// the anchor for one code. Every engine code has an anchor of that slug there.
+const ERROR_DOCS_BASE: &str = "https://pdfluent.com/errors/#";
 
 /// Top-level error type for `pdf-engine` operations.
 ///
@@ -420,7 +424,7 @@ mod tests {
         assert!(msg.contains("FileNotFound"));
         assert!(msg.contains("/tmp/nonexistent.pdf"));
         assert!(msg.contains("Help:"));
-        assert!(msg.contains("docs.pdfluent.dev"));
+        assert!(msg.contains("Docs: https://pdfluent.com/errors/#file-not-found"));
     }
 
     #[test]
@@ -432,6 +436,18 @@ mod tests {
         assert!(msg.contains("PasswordRequired"));
         assert!(msg.contains("invoice-2024.pdf"));
         assert!(msg.contains("Help: Pass a password when reading the file:"));
-        assert!(msg.contains("docs.pdfluent.dev"));
+        assert!(msg.contains("Docs: https://pdfluent.com/errors/#password-required"));
+    }
+
+    #[test]
+    fn docs_url_is_the_anchor_of_the_code_on_the_errors_page() {
+        let err = Error::PasswordRequired {
+            path: PathBuf::from("a.pdf"),
+        };
+        assert_eq!(err.code(), "PASSWORD_REQUIRED");
+        assert_eq!(
+            err.docs_url(),
+            "https://pdfluent.com/errors/#password-required"
+        );
     }
 }

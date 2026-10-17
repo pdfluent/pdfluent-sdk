@@ -21,11 +21,11 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 
-use pdfluent::unicode_font::UnicodeFont;
 use pdfluent::text_edit::FitPolicy;
 use pdfluent::text_edit::{
     CommitPolicy, FontFallback, MatchId, RegionRelation, ReplaceOptions, SignaturePolicy, TextQuery,
 };
+use pdfluent::unicode_font::UnicodeFont;
 
 fn runtime_err(e: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
@@ -143,9 +143,8 @@ fn build_options(
                     "font_fallback='embed_unicode' requires unicode_font=<TrueType font bytes>",
                 )
             })?;
-            let font = UnicodeFont::from_bytes(data.to_vec()).map_err(|e| {
-                PyValueError::new_err(format!("unicode_font is not usable: {e}"))
-            })?;
+            let font = UnicodeFont::from_bytes(data.to_vec())
+                .map_err(|e| PyValueError::new_err(format!("unicode_font is not usable: {e}")))?;
             options.font_fallback = FontFallback::EmbedUnicode(font);
         }
         Some(other) => {
@@ -240,6 +239,7 @@ impl PyTextEditor {
         limit = None,
         regex = false,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn find_text(
         &mut self,
         py: Python<'_>,
@@ -343,6 +343,7 @@ impl PyTextEditor {
         signature_policy = None,
         commit_policy = None,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn replace_matches(
         &mut self,
         py: Python<'_>,

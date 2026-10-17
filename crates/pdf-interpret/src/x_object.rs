@@ -33,6 +33,7 @@ pub(crate) enum XObject<'a> {
 impl<'a> XObject<'a> {
     pub(crate) fn new(
         stream: &Stream<'a>,
+        resolve_cs: impl FnOnce(&Name) -> Option<ColorSpace>,
         warning_sink: &WarningSinkFn,
         cache: &Cache,
         transfer_function: Option<ActiveTransferFunction>,
@@ -41,7 +42,7 @@ impl<'a> XObject<'a> {
         match dict.get::<Name>(SUBTYPE)?.deref() {
             IMAGE => Some(Self::ImageXObject(ImageXObject::new(
                 stream,
-                |_| None,
+                resolve_cs,
                 warning_sink,
                 cache,
                 false,
@@ -59,7 +60,7 @@ pub(crate) struct FormXObject<'a> {
     pub(crate) bbox: [f32; 4],
     is_transparency_group: bool,
     pub(crate) dict: Dict<'a>,
-    resources: Dict<'a>,
+    resources: Option<Resources<'a>>,
 }
 
 impl<'a> FormXObject<'a> {
@@ -67,7 +68,7 @@ impl<'a> FormXObject<'a> {
         let dict = stream.dict();
 
         let decoded = decode_or_warn(stream, warning_sink)?;
-        let resources = dict.get::<Dict<'_>>(RESOURCES).unwrap_or_default();
+        let resources = dict.get(RESOURCES).map(Resources::new);
 
         let matrix = Affine::new(
             dict.get::<[f64; 6]>(MATRIX)
@@ -175,7 +176,7 @@ pub(crate) fn draw_form_xobject<'a, 'b>(
 
     interpret(
         iter,
-        &Resources::from_parent(x_object.resources.clone(), resources.clone()),
+        x_object.resources.as_ref().unwrap_or(resources),
         context,
         device,
     );
@@ -317,6 +318,8 @@ impl<'a> ImageXObject<'a> {
                 .clone()
                 .and_then(|c| ColorSpace::new(c, cache, warning_sink))
                 // Inline images can also refer to color spaces by name.
+                // Apparently, some PDF producers also do this for normal images,
+                // though the PDF spec forbids it. See https://github.com/LaurenzV/hayro/pull/1311.
                 .or_else(|| {
                     cs_obj
                         .and_then(|c| c.into_name())

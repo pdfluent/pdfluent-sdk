@@ -56,7 +56,7 @@ FLOOR = 10
 # `runs-on: [xfa-fast]` routes to the same machine and contains neither word.
 # Codex caught this; matching the literal string alone would have let the next
 # job through.
-PERSISTENT_LABELS = ("self-hosted", "xfa-fast")
+PERSISTENT_LABELS = ("self-hosted", "xfa-fast", "xfa-local-checks")
 
 
 # The safe shape: pick the persistent runner only for a push, fall back to a
@@ -245,7 +245,15 @@ def per_gebeurtenis_veilig(runs_on: str, events: set[str] | None = None,
 # the warm cargo cache and the runner registration token. On 28-08-2026 two CI
 # systems were compiling on it at once -- load 5.6 on four cores, neither of them
 # orphaned. The saturation was the design, not a fault (#267).
-ZWAAR = re.compile(r"\bcargo\s+(build|test|check|clippy|bench|doc)\b")
+#
+# `publish` and `package` are on that list because they compile: `cargo publish`
+# builds the crate to verify the tarball before it uploads it. They were missing,
+# and it did not show while publish-crates.yml called a copy of the publish
+# script that also ran `cargo test`. When that copy was removed and the job
+# called the one release script -- which runs `cargo publish` and nothing else
+# -- the `publish` job stopped reading as heavy and its ZWARE_BASELINE row
+# stopped matching anything (#358).
+ZWAAR = re.compile(r"\bcargo\s+(build|test|check|clippy|bench|doc|publish|package)\b")
 
 # Jobs that compile on a persistent runner because they read the corpus, which
 # lives there. Moving them would mean shipping the corpus to a throwaway
@@ -257,26 +265,12 @@ ZWARE_BASELINE = {
     # from a pull request at all, so the rows described nothing. Third register
     # to shrink in this series rather than grow.
 
-    # ADDED 04-09-2026, and it is the first addition in a register whose own
-    # comment says the count is supposed to fall. The reason it is defensible,
-    # and the condition that removes it again:
-    #
-    # The JNI suite is a cargo build plus `mvn test`. It has to run somewhere,
-    # and the two other places are worse. On hosted minutes it would be the
-    # single most expensive job in the repository, on an account that stood at
-    # 90% of its allowance on 04-09. On a throwaway instance it would pay a
-    # Hetzner boot and a cold cargo cache for a one-crate build -- the corpus
-    # gates below earn that because they need the corpus; this does not.
-    #
-    # It is also the narrowest possible version of itself: push on master only,
-    # no pull_request trigger, so it runs once per landing rather than once per
-    # push to every branch.
-    #
-    # REMOVE THIS ROW when a compiling job on xfa-fast exists that this suite can
-    # be a step of. Measured 04-09: there is none -- ci.yml has eight jobs and
-    # none of them builds the workspace, which is why the "fold it into the
-    # existing build" route was checked and rejected rather than assumed.
-    ("java-bindings.yml", "jni-tests"),
+    # java-bindings.yml's `jni-tests` left on 06-09-2026. The row was added on
+    # 04-09 with a removal condition written into it -- "when a compiling job on
+    # xfa-fast exists that this suite can be a step of" -- and #350 answered it
+    # the other way round: the suite is a job of a wave of ci-ephemeral.yml now,
+    # on the instance that wave buys, so it is on no persistent runner at all.
+    # The Hetzner boot the row worried about is paid once for five jobs.
 
     # Seven entries left on 02-09-2026: #311 moved every ci.yml guard job and
     # both security-audit jobs onto the canonical per-event runs-on, so their
@@ -288,8 +282,11 @@ ZWARE_BASELINE = {
     ("crash-guard.yml", "crash-guard"),
     ("gate-ci.yml", "gate"),
     ("wasm-gate.yml", "wasm-gate"),
-    # Only the build job compiles; the other two consume its artefact.
-    ("enterprise-acceptance.yml", "build"),
+    # enterprise-acceptance.yml's `build` left on 06-09-2026 with the same
+    # change: the whole suite is called by ci-ephemeral.yml on the throwaway
+    # instance. It is also the row that had been describing a suite which had
+    # never once passed on this machine -- 56 failures and 0 successes over the
+    # last hundred runs on master, every one of them on `sudo apt-get install`.
     # Not corpus, but release. `preflight` runs a full workspace check and the
     # integration suites before a publish, so it belongs on a throwaway instance
     # like everything else here. It stays for now because it is on the release
@@ -302,30 +299,21 @@ ZWARE_BASELINE = {
     # as preflight -- release path, no way to rehearse a change to it without
     # publishing. (Codex, #1541)
     ("publish-crates.yml", "publish"),
-    # The visual suite (#326). Not the corpus: crates/visual-regression/README.md
-    # says the renderer uses no system font and no external command, so on paper
-    # it should run anywhere. On paper is the point -- the committed baselines
-    # were rendered on this machine, and nobody has yet compared a render from a
-    # hosted runner against them. Moving it blind risks a red master on a pixel
-    # difference that is not a regression, which is the failure that teaches
-    # people to ignore a visual gate.
-    #
-    # So it stays here for now, deliberately and not by omission, and the move is
-    # its own piece of work: render the baselines somewhere else once and compare.
-    # Same handling as publish-crates above.
-    ("visual-regression.yml", "visual-regression"),
+    # The visual suite (#326) left on 06-09-2026, and the caveat this row
+    # carried is now written in visual-regression.yml itself rather than lost
+    # with the row: the committed baselines were rendered on the desktop, and
+    # nobody has yet compared a render from another machine against them. What
+    # changed is where the risk sits. The suite runs on a scheduled wave that
+    # blocks no landing, so a pixel difference is something to look at rather
+    # than a red master -- which is the condition under which moving it is a
+    # measurement instead of a gamble (#350).
 
-    # ON LOAN (#169, from #343). Not this ticket's change: `workspace` arrived
-    # with the landing lane and no row, so this guard has stood red on master
-    # for everyone since -- and a guard that is red for a reason no branch can
-    # fix is a guard people learn to scroll past.
-    #
-    # The reason it belongs here rather than on an instance: the landing lane
-    # compiles only the crates a landing touches, and it can only do that
-    # against the warm target directory this machine keeps. A throwaway instance
-    # starts cold, so the job that exists to stop compiling the whole workspace
-    # would compile the whole workspace. Push on master only.
-    ("ci.yml", "workspace"),
+    # ci.yml's `workspace` left on 06-09-2026 with the job itself. The row said
+    # the landing lane compiles only the crates a landing touches and needs the
+    # warm target directory for that -- true of the LANDING LANE, and not of
+    # that job, which called the same scripts with no crate list and so built
+    # the whole workspace on the desktop on every landing, with a 180-minute
+    # timeout. The workspace build is a wave of ci-ephemeral.yml again (#350).
 
     # The benchmark programme (#169). It builds two examples and then measures
     # three axes over the gate corpus, and it wants exactly what makes this
@@ -373,6 +361,20 @@ def compileert(job, wortel: pathlib.Path) -> bool:
     return False
 
 
+# The self-hosted release runners (#636) are throwaway VMs -- the ephemeral
+# equivalent of ci-ephemeral's Hetzner instances -- not the persistent
+# desktop. A runs-on that names self-hosted ONLY inside those sets asks for
+# no persistent runner: compiling there saturates the job's own VM, and
+# unmerged code there reaches no corpus, no warm cache and no token.
+# The sets are matched exactly, spacing and quoting aside. A bare
+# `runs-on: self-hosted` still counts: it can land on the desktop.
+# CAVEAT, in writing: if the desktop ever answers one of these labels, this
+# carve-out is wrong and the heavy jobs below move onto it silently.
+_RELEASE_SET = re.compile(
+    r"self-hosted[\"',\s\[\]]+(linux|macos|windows)[\"',\s\[\]]+(x64|arm64)"
+)
+
+
 def noemt_blijvende_runner(runs_on) -> bool:
     """Does this job ask for the desktop at all, on any event?
 
@@ -382,7 +384,12 @@ def noemt_blijvende_runner(runs_on) -> bool:
     op_blijvende_runner() instead and so quietly stopped counting every job
     whose runner choice looked safe -- a different question's answer.
     """
-    return any(l in str(runs_on) for l in PERSISTENT_LABELS)
+    text = str(runs_on)
+    if not any(l in text for l in PERSISTENT_LABELS):
+        return False
+    if any(l in text for l in ("xfa-fast", "xfa-local-checks")):
+        return True
+    return "self-hosted" in _RELEASE_SET.sub("", text)
 
 
 def op_blijvende_runner(runs_on, events: set[str] | None = None,

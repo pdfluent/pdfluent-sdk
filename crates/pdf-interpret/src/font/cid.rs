@@ -2,8 +2,8 @@ use crate::font::blob::{CffFontBlob, OpenTypeFontBlob, Type1FontBlob};
 use crate::font::generated::glyph_names;
 use crate::font::standard_font::select_standard_font;
 use crate::font::{
-    FallbackFontQuery, FontFlags, FontQuery, glyph_name_to_string, read_to_unicode, stretch_glyph,
-    strip_subset_prefix,
+    FallbackFontQuery, FontFlags, FontQuery, glyph_name_to_string, glyph_name_to_unicode,
+    read_to_unicode, stretch_glyph, strip_subset_prefix,
 };
 use crate::util::decode_or_warn;
 use crate::{CMapResolverFn, CacheKey, FontResolverFn, InterpreterWarning, WarningSinkFn};
@@ -13,11 +13,14 @@ use pdf_font::cmap::{BfString, CMap, CidFamily, WritingMode};
 use pdf_syntax::object::Dict;
 use pdf_syntax::object::Name;
 use pdf_syntax::object::Stream;
+use pdf_syntax::object::String as PdfString;
 use pdf_syntax::object::dict::keys::*;
 use pdf_syntax::object::{Array, Object};
 use skrifa::attribute::Style;
+use skrifa::raw::TableProvider;
 use skrifa::raw::collections::int_set::Domain;
-use skrifa::{FontRef, GlyphId, MetadataProvider};
+use skrifa::raw::tables::post;
+use skrifa::{FontRef, GlyphId, GlyphId16, MetadataProvider};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -43,6 +46,11 @@ pub(crate) struct Type0Font {
     /// Whether the `to_unicode` map is a UCS2 `CMap` (CID-indexed) rather than
     /// a `ToUnicode` `CMap` (code-indexed).
     to_unicode_is_cid_indexed: bool,
+    /// Whether the CIDs are glyph indices in the standard Macintosh glyph
+    /// ordering, so that a CID names a glyph and the glyph name names a
+    /// character. See [`Type0Font::standard_order_unicode`] for when this is
+    /// set and what it is for.
+    standard_order_cids: bool,
 }
 
 impl Type0Font {
@@ -67,6 +75,15 @@ impl Type0Font {
         let font_descriptor = descendant_font
             .get::<Dict<'_>>(FONT_DESC)
             .unwrap_or_default();
+
+        // Whether the file carries the font program at all. `fallback` below is
+        // a wider condition -- it is also true when an embedded program failed
+        // to parse -- and the difference matters for the standard-order mapping
+        // further down: a font whose own program is present but broken still
+        // has glyph indices of its own, not of the face its name claims.
+        let embedded = font_descriptor.contains_key(FONT_FILE2)
+            || font_descriptor.contains_key(FONT_FILE3)
+            || font_descriptor.contains_key(FONT_FILE);
 
         let (font_type, fallback, _is_standard_fallback) = match FontType::new(&font_descriptor) {
             Some(ft) => (ft, false, false),
@@ -123,13 +140,29 @@ impl Type0Font {
         let mut to_unicode = read_to_unicode(dict, cmap_resolver, warning_sink);
         let mut to_unicode_is_cid_indexed = false;
 
+        // Which character collection the CIDs belong to. A predefined encoding
+        // CMap names it; `Identity-H` and `Identity-V` name nothing, and then
+        // the descendant's /CIDSystemInfo is the only place that says what the
+        // CIDs are. noembed-identity-2.pdf is drawn through `Identity-H` from a
+        // non-embedded `MS-PGothic` whose descendant declares Adobe-Japan1, so
+        // its CIDs are Japan1 CIDs; reading only the encoding we called them
+        // Adobe-Identity and emitted each one as a code point (#430).
+        let descendant_collection = descendant_character_collection(&descendant_font);
+        let character_collection = cmap
+            .metadata()
+            .character_collection
+            .as_ref()
+            .map(|cc| cc.family.clone())
+            .filter(|family| *family != CidFamily::AdobeIdentity)
+            .or_else(|| descendant_collection.clone());
+
         // If there is no explicit ToUnicode map, try the predefined UCS2
         // CMap for the descendant character collection. This works for both
         // embedded and fallback CID fonts.
         if to_unicode.is_none()
-            && let Some(cc) = cmap.metadata().character_collection.as_ref()
-            && cc.family != CidFamily::AdobeIdentity
-            && let Some(ucs2_name) = cc.family.ucs2_cmap()
+            && let Some(ucs2_name) = character_collection
+                .as_ref()
+                .and_then(|family| family.ucs2_cmap())
             && let Some(data) = (cmap_resolver)(ucs2_name)
         {
             let resolver = cmap_resolver.clone();
@@ -148,6 +181,35 @@ impl Type0Font {
             .get::<u32>(FLAGS)
             .and_then(FontFlags::from_bits);
 
+        // #430. A non-embedded `CIDFontType2` with an `Identity` encoding and
+        // no `ToUnicode` map hands us glyph indices into a font we do not have.
+        // Asking the substitute font what glyph N means -- what
+        // `unicode_from_font_program` does below -- reads the wrong font's
+        // glyph order and yields a plausible wrong letter: issue6127.pdf's
+        // non-embedded `TimesNewRoman` extracts as `eqpfkvkqpu` for
+        // `conditions`. The producer wrote indices of the face it names, and
+        // the Latin faces of that tradition begin with the 258 glyphs of the
+        // standard Macintosh ordering, so the index names a glyph and the
+        // glyph name names a character. MuPDF arrives at the same answer
+        // through its substitute font, pdf.js through
+        // `getGlyphMapForStandardFonts`, which was added for this very file.
+        let standard_order_cids = to_unicode.is_none()
+            && !embedded
+            && descendant_font
+                .get::<Name>(SUBTYPE)
+                .is_some_and(|subtype| subtype.as_str() == "CIDFontType2")
+            && descendant_collection
+                .as_ref()
+                .is_none_or(|family| *family == CidFamily::AdobeIdentity)
+            && cmap
+                .metadata()
+                .character_collection
+                .as_ref()
+                .is_some_and(|cc| cc.family == CidFamily::AdobeIdentity)
+            && postscript_name
+                .as_deref()
+                .is_some_and(face_uses_standard_glyph_order);
+
         Some(Self {
             cache_key,
             horizontal,
@@ -163,6 +225,7 @@ impl Type0Font {
             font_flags,
             fallback,
             to_unicode_is_cid_indexed,
+            standard_order_cids,
         })
     }
 
@@ -454,12 +517,8 @@ impl Type0Font {
     }
 
     fn unicode_from_font_program(&self, code: u32) -> Option<BfString> {
-        fn bf_string_from(s: String) -> BfString {
-            let mut chars = s.chars();
-            match (chars.next(), chars.next()) {
-                (Some(c), None) => BfString::Char(c),
-                _ => BfString::String(s),
-            }
+        if let Some(c) = self.standard_order_unicode(code) {
+            return Some(BfString::Char(c));
         }
 
         let glyph = self.map_code(code);
@@ -473,10 +532,21 @@ impl Type0Font {
             // has no entry for the resolved glyph, fall back to treating the
             // character code as a Unicode code point. Matches PDFBox/Poppler
             // behaviour for Identity-H fonts lacking a usable ToUnicode map.
+            //
+            // When that guess has nothing to say either, the embedded
+            // program's `post` table names the glyph, and the name is read
+            // through the Adobe Glyph List -- the last step that speaks
+            // about this glyph rather than about its code (#636).
             FontType::OpenType(t) => t
                 .glyph_id_to_unicode(glyph)
                 .or_else(|| self.identity_unicode_fallback(code))
-                .map(BfString::Char),
+                .map(BfString::Char)
+                .or_else(|| {
+                    if self.fallback {
+                        return None;
+                    }
+                    post_glyph_name_unicode(t, glyph).map(BfString::String)
+                }),
             FontType::Cff(c) => {
                 let table = c.table();
 
@@ -493,7 +563,7 @@ impl Type0Font {
                     table
                         .glyph_name(pdf_font::GlyphId(glyph.to_u32() as u16))
                         .and_then(glyph_name_to_string)
-                        .map(bf_string_from)
+                        .map(BfString::String)
                 }
             }
             FontType::Type1(t) => t
@@ -502,13 +572,43 @@ impl Type0Font {
                 .get(glyph.to_u32() as usize)
                 .map(|n| n.as_str())
                 .and_then(glyph_name_to_string)
-                .map(bf_string_from),
+                .map(BfString::String),
         }
+    }
+
+    /// The character a CID names when the CIDs are glyph indices of a Latin
+    /// face that follows the standard Macintosh glyph ordering (#430).
+    ///
+    /// Returns `None` unless the font qualified in [`Type0Font::new`], and
+    /// `None` for the three slots of that ordering that name no character
+    /// (`.notdef`, `.null`, `nonmarkingreturn`) and for any index past its 258.
+    /// The caller then falls through to the substitute font as before.
+    ///
+    /// What the ordering speaks about is a glyph index, and the CID is that
+    /// index only through /CIDToGIDMap. Every document of this class seen so
+    /// far leaves the map Identity, where the two are the same number; a file
+    /// that carries a map anyway is followed rather than read past, and a CID
+    /// its map does not name resolves to `.notdef` and so to nothing.
+    fn standard_order_unicode(&self, code: u32) -> Option<char> {
+        if !self.standard_order_cids {
+            return None;
+        }
+        let cid = u16::try_from(self.code_to_cid(code)?).ok()?;
+        let glyph = self.cid_to_gid_map.map(cid).to_u32();
+        let name = post::DEFAULT_GLYPH_NAMES.get(glyph as usize)?;
+        glyph_name_to_unicode(name)
     }
 
     /// For Identity-H/V encoded fonts (AdobeIdentity), the character code
     /// maps directly to CID, and the CID is typically the Unicode code point.
     /// This is extremely common for CJK fonts and modern PDF generators.
+    ///
+    /// A CID that reads as a control character is not text (#636): subset
+    /// fonts number their glyphs from 1, so such a CID reaching here means
+    /// the code says nothing and the embedded program's `post` name -- the
+    /// next step of the chain -- is what speaks about the glyph. Decline so
+    /// the caller falls through to it instead of emitting garbage that would
+    /// shadow the name.
     fn identity_unicode_fallback(&self, code: u32) -> Option<char> {
         let is_identity = self
             .encoding
@@ -521,11 +621,22 @@ impl Type0Font {
         }
         let cid = self.code_to_cid(code).unwrap_or(code);
         let c = char::from_u32(cid)?;
-        if c.is_control() && c != ' ' && c != '\t' {
-            return None;
-        }
-        Some(c)
+        (!c.is_control()).then_some(c)
     }
+}
+
+/// The name the embedded program's `post` table gives `glyph`, read through
+/// the Adobe Glyph List (#636).
+///
+/// The caller reaches here only when the reverse `cmap` and the Identity
+/// guess both missed, and only for an embedded program: a substitute font's
+/// names describe its own glyph order, not the page's, so consulting them
+/// would trade a missing character for a plausible wrong one (#430).
+fn post_glyph_name_unicode(blob: &OpenTypeFontBlob, glyph: GlyphId) -> Option<String> {
+    let id = u16::try_from(glyph.to_u32()).ok()?;
+    let post = blob.font_ref().post().ok()?;
+    let name = post.glyph_name(GlyphId16::new(id))?;
+    glyph_name_to_string(name)
 }
 
 impl CacheKey for Type0Font {
@@ -577,6 +688,105 @@ impl FontType {
 
         Some(parsed)
     }
+}
+
+/// The registry and ordering the descendant CIDFont declares, if it declares
+/// any. With a predefined encoding CMap this repeats what the CMap already
+/// says; with `Identity-H`/`Identity-V` it is the only statement about which
+/// character collection the CIDs are drawn from (#430).
+fn descendant_character_collection(descendant: &Dict<'_>) -> Option<CidFamily> {
+    let info = descendant.get::<Dict<'_>>(CIDSYSTEMINFO)?;
+    let registry = info.get::<PdfString>(REGISTRY)?;
+    let ordering = info.get::<PdfString>(ORDERING)?;
+    Some(CidFamily::from_registry_ordering(
+        registry.as_bytes(),
+        ordering.as_bytes(),
+    ))
+}
+
+/// The Latin faces whose glyph indices follow the standard Macintosh ordering,
+/// normalised by [`normalised_face_name`].
+///
+/// Measured rather than assumed: over the copies of these faces shipped with
+/// macOS 15, indices 3 to 142 are the standard ordering glyph for glyph in
+/// every one of them, and the first disagreement after that is a spelling of
+/// the same character (`mu1` for `mu`, `uni00B5` for `mu`). Indices 3 to 142
+/// carry ASCII and the Latin-1 letters, which is the text this exists to
+/// recover. Arial Unicode is deliberately absent: it diverges at index 98, and
+/// its name normalises to `arialunicodems`, which is not in this table.
+///
+/// A face this table does not name keeps the old behaviour. That is the point
+/// of a table rather than a heuristic: the ordering is a property of a known
+/// face, and a face we cannot name is as likely to be a symbol font, where a
+/// mapping would replace one wrong answer with another that reads like text.
+/// The /Flags symbolic bit cannot do this job -- Word marks exactly these
+/// fonts symbolic (issue6127.pdf's non-embedded `TimesNewRoman` has Flags 6),
+/// so gating on it would refuse the case this exists for.
+const STANDARD_GLYPH_ORDER_FACES: &[&str] = &[
+    "arial",
+    "arialblack",
+    "arialnarrow",
+    "comicsansms",
+    "courier",
+    "couriernew",
+    "georgia",
+    "helvetica",
+    "impact",
+    "tahoma",
+    "times",
+    "timesnewroman",
+    "timesroman",
+    "trebuchetms",
+    "verdana",
+];
+
+/// Whether `base_font` names a face from [`STANDARD_GLYPH_ORDER_FACES`].
+fn face_uses_standard_glyph_order(base_font: &str) -> bool {
+    STANDARD_GLYPH_ORDER_FACES.contains(&normalised_face_name(base_font).as_str())
+}
+
+/// A /BaseFont value reduced to its family: subset prefix, style suffix and
+/// foundry suffix removed, punctuation dropped, lowercased.
+///
+/// One face reaches us under many names -- `ABCDEF+TimesNewRoman,BoldItalic`,
+/// `TimesNewRomanPS-BoldItalicMT`, `TimesNewRomanPSMT` -- and the table above
+/// holds families, not the cross product of families and styles.
+fn normalised_face_name(base_font: &str) -> String {
+    /// Longest first, so that `psmt` is not left as `ps` by an earlier match.
+    ///
+    /// `ms` is deliberately not here, even though `Comic Sans MS` and
+    /// `Trebuchet MS` wear it: `Times` ends in those two letters as part of its
+    /// name, and stripping them would leave `time`, which is not a face
+    /// anybody has. The two faces that carry the foundry in their name are in
+    /// the table with it.
+    const SUFFIXES: &[&str] = &[
+        "psmt",
+        "bolditalic",
+        "boldoblique",
+        "italic",
+        "oblique",
+        "regular",
+        "bold",
+        "mt",
+        "ps",
+    ];
+
+    let family = strip_subset_prefix(base_font);
+    let family = family.split(',').next().unwrap_or(family);
+    let mut name: String = family
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+
+    while let Some(shorter) = SUFFIXES
+        .iter()
+        .find_map(|suffix| name.strip_suffix(suffix))
+        .filter(|shorter| !shorter.is_empty())
+    {
+        name = shorter.to_string();
+    }
+    name
 }
 
 #[derive(Debug, Default)]
@@ -778,6 +988,81 @@ mod tests {
         let map = parse_widths(b"[50 50 250]");
         assert_eq!(map.get(&50).copied(), Some(250.0));
         assert_eq!(map.len(), 1);
+    }
+
+    /// One face reaches us under many names; the table of faces that follow the
+    /// standard Macintosh glyph ordering holds families, so every name of a
+    /// family has to reduce to the same one (#430).
+    #[test]
+    fn face_names_reduce_to_their_family() {
+        for name in [
+            "TimesNewRoman",
+            "ABCDEF+TimesNewRoman",
+            "TimesNewRoman,Italic",
+            "TimesNewRoman,BoldItalic",
+            "TimesNewRomanPSMT",
+            "TimesNewRomanPS-BoldItalicMT",
+        ] {
+            assert_eq!(normalised_face_name(name), "timesnewroman", "{name}");
+        }
+        assert_eq!(normalised_face_name("ArialMT"), "arial");
+        assert_eq!(normalised_face_name("Arial-BoldMT"), "arial");
+        assert_eq!(normalised_face_name("ArialNarrow-Bold"), "arialnarrow");
+        assert_eq!(normalised_face_name("CourierNewPS-BoldMT"), "couriernew");
+        // The two the foundry suffix cannot simply be stripped from: `Times`
+        // ends in the letters of `MS`, and reducing it to `time` would drop it
+        // out of the table and out of the fix.
+        assert_eq!(normalised_face_name("Times"), "times");
+        assert_eq!(normalised_face_name("Times-Bold"), "times");
+        assert_eq!(normalised_face_name("Times-Roman"), "timesroman");
+        for name in ["Comic Sans MS", "ComicSansMS"] {
+            assert_eq!(normalised_face_name(name), "comicsansms", "{name}");
+        }
+        assert_eq!(normalised_face_name("TrebuchetMS-Italic"), "trebuchetms");
+    }
+
+    /// The guard on the standard-order mapping. A face outside the table keeps
+    /// the old behaviour, and Arial Unicode is the reason the table is a list
+    /// of faces rather than a prefix match on `Arial`: its glyph order leaves
+    /// the standard ordering at index 98.
+    #[test]
+    fn only_the_named_faces_use_the_standard_glyph_order() {
+        for name in [
+            "TimesNewRoman,Italic",
+            "ArialMT",
+            "CourierNewPS-BoldMT",
+            "Helvetica",
+            "Times",
+            "Times-Bold",
+            "Comic Sans MS",
+        ] {
+            assert!(face_uses_standard_glyph_order(name), "{name}");
+        }
+        for name in [
+            "ArialUnicodeMS",
+            "Wingdings",
+            "Symbol",
+            "MS-PGothic",
+            "NoSuchFaceAnywhere",
+        ] {
+            assert!(!face_uses_standard_glyph_order(name), "{name}");
+        }
+    }
+
+    /// What a CID means once the face is known: the standard Macintosh
+    /// ordering starts at `space` on index 3, so printable ASCII sits 29 above
+    /// its code point, and the three slots that name no character map to
+    /// nothing rather than to a plausible letter.
+    #[test]
+    fn the_standard_ordering_names_characters() {
+        for (index, expected) in [(3usize, ' '), (36, 'A'), (68, 'a'), (71, 'd'), (86, 's')] {
+            let name = post::DEFAULT_GLYPH_NAMES[index];
+            assert_eq!(glyph_name_to_unicode(name), Some(expected), "index {index}");
+        }
+        for index in [0usize, 1, 2] {
+            let name = post::DEFAULT_GLYPH_NAMES[index];
+            assert_eq!(glyph_name_to_unicode(name), None, "index {index}");
+        }
     }
 
     /// Empty /W array should produce an empty map (not an error).

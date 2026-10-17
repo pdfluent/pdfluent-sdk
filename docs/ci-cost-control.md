@@ -1,5 +1,8 @@
 # CI Cost Control
 
+Current development policy: [Development checks](development-checks.md). The
+sections below record earlier configurations and cost decisions.
+
 GitHub Actions runs only the cheap PR sanity gate, and since 2026-08-27
 that gate itself runs on a self-hosted runner rather than
 `ubuntu-latest`. Expensive validation (WASM build, C bindings, desktop
@@ -40,14 +43,14 @@ retrofitted later.
 | Tier | Where | Trigger | Purpose |
 |------|-------|---------|---------|
 | Cheap PR gate (PR) | GitHub Actions, `ubuntu-latest` (`.github/workflows/ci.yml`) | every PR push | fast sanity, isolated: untrusted code |
-| Cheap PR gate (post-merge) | GitHub Actions, self-hosted `xfa-fast` runner | master push | same checks, free, trusted code only |
+| Cheap PR gate (post-merge) | GitHub Actions, self-hosted `xfa-local-checks` runner | master push | same checks, free, trusted code only |
 | Expensive validation | Ephemeral Hetzner runners, or VPS / local (`scripts/validate-expensive.sh`) | manual, before merge / release | wasm, bindings, desktop, conversion, corpus |
 | Manual fallback | GitHub Actions (`.github/workflows/expensive-validation.yml`) | `workflow_dispatch` | noodknop when no VPS/Hetzner is available |
 
 ## Cheap PR gate (GitHub Actions, self-hosted)
 
 Jobs in `ci.yml`: `check`, `test`, `clippy`, `fmt`, all on
-`[self-hosted, xfa-fast]`. Combined GitHub Actions billable time: ~0
+`[self-hosted, xfa-local-checks]`. Combined GitHub Actions billable time: ~0
 (self-hosted minutes aren't metered). The only remaining metered cost
 in this gate is `artifact-guard` + `license-metadata-guard` on
 `ubuntu-latest`, each a few seconds.

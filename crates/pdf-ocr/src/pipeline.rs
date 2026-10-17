@@ -193,9 +193,23 @@ fn page_needs_ocr(doc: &Document, page_id: ObjectId, threshold: usize) -> bool {
     char_count < threshold
 }
 
+/// The invisible layer's font in the page resources: a distinctive name so it
+/// cannot collide with a font the page already declares.
+///
+/// Public because extraction reads it back: text set in this resource is the
+/// engine's own OCR layer, which the hidden-text drop keeps while author-hidden
+/// text goes.
+pub const OCR_FONT_NAME: &[u8] = b"PdfOcrFont";
+
 /// Insert an invisible text layer on a page using OCR results.
 ///
 /// Uses rendering mode 3 (invisible) so text is searchable but not visible.
+/// The layer declares the font it sets ([`OCR_FONT_NAME`], Helvetica under
+/// WinAnsiEncoding) in the page resources: a `Tf` naming no resource is
+/// malformed, and readers that fall back to a default font drop every byte
+/// outside ASCII. Words are transcoded to WinAnsi -- a recognizer returns
+/// UTF-8, and raw UTF-8 bytes under a WinAnsi font decode as mojibake --
+/// with `?` for what WinAnsi cannot spell.
 fn insert_invisible_text_layer(
     doc: &mut Document,
     page_id: ObjectId,
@@ -217,7 +231,7 @@ fn insert_invisible_text_layer(
         Operation::new("Tr", vec![Object::Integer(3)]),
         Operation::new(
             "Tf",
-            vec![Object::Name(b"Helvetica".to_vec()), Object::Real(10.0)],
+            vec![Object::Name(OCR_FONT_NAME.to_vec()), Object::Real(10.0)],
         ),
     ];
 
@@ -233,7 +247,7 @@ fn insert_invisible_text_layer(
         let word_width_pdf = word_width_px * scale_x;
 
         // Approximate the natural width of the text at 10pt.
-        let natural_width = word.text.len() as f64 * 10.0 * 0.5;
+        let natural_width = word.text.chars().count() as f64 * 10.0 * 0.5;
         let h_scale = if natural_width > 0.0 {
             (word_width_pdf / natural_width) * 100.0
         } else {
@@ -258,7 +272,7 @@ fn insert_invisible_text_layer(
         ops.push(Operation::new(
             "Tj",
             vec![Object::String(
-                word.text.as_bytes().to_vec(),
+                encode_layer_string(&word.text),
                 lopdf::StringFormat::Literal,
             )],
         ));
@@ -303,7 +317,173 @@ fn insert_invisible_text_layer(
         d.set("Contents", new_contents);
     }
 
+    ensure_ocr_font_resource(doc, page_id)?;
+
     Ok(())
+}
+
+/// A word as literal-string bytes: transcoded to WinAnsi. The writer escapes
+/// `\\`, `(` and `)` when the content encodes, so this must not escape them
+/// first -- pre-escaped bytes would be escaped again and decode with stray
+/// backslashes.
+fn encode_layer_string(text: &str) -> Vec<u8> {
+    text.chars().map(winansi_byte).collect()
+}
+
+/// One character in WinAnsiEncoding, or `?`.
+///
+/// WinAnsi is ASCII plus Latin-1 plus the punctuation in 0x80-0x9F; what it
+/// cannot spell -- Cyrillic, CJK, Arabic and the rest -- reads as `?` rather
+/// than as the mojibake raw UTF-8 bytes would decode to. A script outside
+/// WinAnsi wants a font with a `/ToUnicode` map, which this layer does not
+/// build yet.
+fn winansi_byte(c: char) -> u8 {
+    match c {
+        c if (c as u32) < 0x80 => c as u8,
+        '€' => 0x80,
+        '‚' => 0x82,
+        'ƒ' => 0x83,
+        '„' => 0x84,
+        '…' => 0x85,
+        '†' => 0x86,
+        '‡' => 0x87,
+        'ˆ' => 0x88,
+        '‰' => 0x89,
+        'Š' => 0x8A,
+        '‹' => 0x8B,
+        'Œ' => 0x8C,
+        'Ž' => 0x8E,
+        '‘' => 0x91,
+        '’' => 0x92,
+        '“' => 0x93,
+        '”' => 0x94,
+        '•' => 0x95,
+        '–' => 0x96,
+        '—' => 0x97,
+        '˜' => 0x98,
+        '™' => 0x99,
+        'š' => 0x9A,
+        '›' => 0x9B,
+        'œ' => 0x9C,
+        'ž' => 0x9E,
+        'Ÿ' => 0x9F,
+        c if (c as u32) < 0x100 => c as u8,
+        _ => b'?',
+    }
+}
+
+/// Declare [`OCR_FONT_NAME`] on the page: Helvetica under WinAnsiEncoding.
+///
+/// Merged into whatever resources the page already has -- a direct
+/// dictionary, a shared one behind a reference, or none at all -- chasing
+/// one reference at each level. Only what cannot be resolved is replaced;
+/// the page's own fonts are never orphaned. Anything unrecognized falls back
+/// to fresh resources on the page: the layer must name a font that exists,
+/// whatever shape the page came in.
+fn ensure_ocr_font_resource(doc: &mut Document, page_id: ObjectId) -> Result<()> {
+    let font_id = doc.add_object(Object::Dictionary(dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type1",
+        "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    }));
+    let font_ref = Object::Reference(font_id);
+
+    let resources = {
+        let page_obj = match doc.get_object(page_id) {
+            Ok(obj) => obj,
+            Err(_) => return Ok(()),
+        };
+        match page_obj {
+            Object::Dictionary(ref d) => d.get(b"Resources").ok().cloned(),
+            _ => return Ok(()),
+        }
+    };
+
+    match resources {
+        // Shared resources: extend the shared dictionary in place.
+        Some(Object::Reference(resources_id)) => {
+            let fonts = match doc.get_object(resources_id) {
+                Ok(Object::Dictionary(d)) => d.get(b"Font").ok().cloned(),
+                _ => {
+                    set_fresh_resources(doc, page_id, font_ref);
+                    return Ok(());
+                }
+            };
+            match fonts {
+                Some(Object::Reference(fonts_id)) => {
+                    if let Ok(Object::Dictionary(d)) = doc.get_object_mut(fonts_id) {
+                        d.set(OCR_FONT_NAME, font_ref);
+                    } else if let Ok(Object::Dictionary(d)) = doc.get_object_mut(resources_id) {
+                        d.set("Font", fresh_fonts(font_ref));
+                    }
+                }
+                Some(Object::Dictionary(_)) => {
+                    if let Ok(Object::Dictionary(d)) = doc.get_object_mut(resources_id) {
+                        if let Ok(Object::Dictionary(fonts)) = d.get_mut(b"Font") {
+                            fonts.set(OCR_FONT_NAME, font_ref);
+                        }
+                    }
+                }
+                _ => {
+                    if let Ok(Object::Dictionary(d)) = doc.get_object_mut(resources_id) {
+                        d.set("Font", fresh_fonts(font_ref));
+                    }
+                }
+            }
+        }
+        // Direct resources: merge and write back.
+        Some(Object::Dictionary(mut dict)) => {
+            let write_back = match dict.get(b"Font").ok().cloned() {
+                Some(Object::Reference(fonts_id)) => {
+                    if let Ok(Object::Dictionary(d)) = doc.get_object_mut(fonts_id) {
+                        d.set(OCR_FONT_NAME, font_ref);
+                        false
+                    } else {
+                        dict.set("Font", fresh_fonts(font_ref));
+                        true
+                    }
+                }
+                Some(Object::Dictionary(_)) => {
+                    if let Ok(Object::Dictionary(fonts)) = dict.get_mut(b"Font") {
+                        fonts.set(OCR_FONT_NAME, font_ref);
+                    }
+                    true
+                }
+                _ => {
+                    dict.set("Font", fresh_fonts(font_ref));
+                    true
+                }
+            };
+            if write_back {
+                if let Ok(Object::Dictionary(d)) = doc.get_object_mut(page_id) {
+                    d.set("Resources", Object::Dictionary(dict));
+                }
+            }
+        }
+        _ => set_fresh_resources(doc, page_id, font_ref),
+    }
+    Ok(())
+}
+
+/// A `/Font` dictionary holding only the layer's font.
+fn fresh_fonts(font_ref: Object) -> Object {
+    Object::Dictionary(dictionary! {
+        OCR_FONT_NAME => font_ref,
+    })
+}
+
+/// Fresh `/Resources` on the page, for a page whose resources cannot be
+/// merged into. The last resort; the merge above is always tried first.
+fn set_fresh_resources(doc: &mut Document, page_id: ObjectId, font_ref: Object) {
+    if let Ok(Object::Dictionary(d)) = doc.get_object_mut(page_id) {
+        d.set(
+            "Resources",
+            Object::Dictionary(dictionary! {
+                "Font" => fresh_fonts(font_ref),
+            }),
+        );
+    }
 }
 
 /// Get the MediaBox for a page.
@@ -633,5 +813,151 @@ mod tests {
 
         let result = make_searchable(&mut doc, &engine, &config, dummy_render);
         assert!(result.is_err());
+    }
+
+    /// The font the invisible layer sets, resolved from the page resources.
+    fn layer_font(doc: &Document, page_num: u32) -> lopdf::Dictionary {
+        let pages = doc.get_pages();
+        let page_id = *pages.get(&page_num).unwrap();
+        let page = doc.get_object(page_id).unwrap();
+        let resources = match page {
+            Object::Dictionary(d) => d.get(b"Resources").unwrap().clone(),
+            _ => panic!("page is no dictionary"),
+        };
+        let fonts = match &resources {
+            Object::Dictionary(d) => d.get(b"Font").unwrap().clone(),
+            Object::Reference(id) => match doc.get_object(*id).unwrap() {
+                Object::Dictionary(d) => d.get(b"Font").unwrap().clone(),
+                other => panic!("shared resources are no dictionary: {other:?}"),
+            },
+            other => panic!("resources are no dictionary: {other:?}"),
+        };
+        let font_ref = match &fonts {
+            Object::Dictionary(d) => d.get(OCR_FONT_NAME).unwrap().clone(),
+            other => panic!("/Font is no dictionary: {other:?}"),
+        };
+        match font_ref {
+            Object::Reference(id) => match doc.get_object(id).unwrap() {
+                Object::Dictionary(d) => d.clone(),
+                other => panic!("font is no dictionary: {other:?}"),
+            },
+            other => panic!("font is no reference: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_layer_declares_the_font_it_sets() {
+        let mut doc = make_scanned_doc();
+        let engine = MockEngine::new(vec![OcrWord {
+            text: "Hello".to_string(),
+            bbox_px: [10, 20, 100, 40],
+            confidence: 0.95,
+        }]);
+        make_searchable(&mut doc, &engine, &OcrConfig::default(), dummy_render).unwrap();
+
+        let font = layer_font(&doc, 1);
+        assert_eq!(font.get(b"BaseFont").unwrap(), &Object::from("Helvetica"));
+        assert_eq!(
+            font.get(b"Encoding").unwrap(),
+            &Object::from("WinAnsiEncoding")
+        );
+        // And the layer sets that name, not an undeclared one.
+        let pages = doc.get_pages();
+        let content = doc.get_page_content(*pages.get(&1).unwrap());
+        assert!(content.windows(11).any(|w| w == b"/PdfOcrFont"));
+    }
+
+    #[test]
+    fn the_layer_keeps_a_page_own_font() {
+        let mut doc = make_scanned_doc();
+        // A page font of the page's own, which the layer must not orphan.
+        let own_font = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Times-Roman",
+        }));
+        let pages = doc.get_pages();
+        let page_id = *pages.get(&1).unwrap();
+        if let Ok(Object::Dictionary(d)) = doc.get_object_mut(page_id) {
+            d.set(
+                "Resources",
+                Object::Dictionary(dictionary! {
+                    "Font" => Object::Dictionary(dictionary! {
+                        "F1" => Object::Reference(own_font),
+                    }),
+                }),
+            );
+        }
+        let engine = MockEngine::new(vec![OcrWord {
+            text: "Hello".to_string(),
+            bbox_px: [10, 20, 100, 40],
+            confidence: 0.95,
+        }]);
+        make_searchable(&mut doc, &engine, &OcrConfig::default(), dummy_render).unwrap();
+
+        let page = doc.get_object(page_id).unwrap().clone();
+        let fonts = match &page {
+            Object::Dictionary(d) => match d.get(b"Resources").unwrap() {
+                Object::Dictionary(r) => match r.get(b"Font").unwrap() {
+                    Object::Dictionary(f) => f.clone(),
+                    other => panic!("/Font is no dictionary: {other:?}"),
+                },
+                other => panic!("resources are no dictionary: {other:?}"),
+            },
+            _ => panic!("page is no dictionary"),
+        };
+        assert_eq!(
+            fonts.get(b"F1").unwrap(),
+            &Object::Reference(own_font),
+            "the page's own font survives the layer"
+        );
+        assert!(
+            fonts.get(OCR_FONT_NAME).is_ok(),
+            "the layer's font is declared beside it"
+        );
+    }
+
+    #[test]
+    fn parentheses_and_backslashes_in_words_do_not_break_the_layer() {
+        let mut doc = make_scanned_doc();
+        let engine = MockEngine::new(vec![OcrWord {
+            text: "a(b)\\c".to_string(),
+            bbox_px: [10, 20, 100, 40],
+            confidence: 0.95,
+        }]);
+        make_searchable(&mut doc, &engine, &OcrConfig::default(), dummy_render).unwrap();
+
+        let pages = doc.get_pages();
+        let content = doc.get_page_content(*pages.get(&1).unwrap());
+        // The writer escapes the backslash; the balanced parentheses stand.
+        // What matters is that the stream decodes and the word reads whole.
+        assert!(
+            content.windows(9).any(|w| w == b"(a(b)\\\\c)"),
+            "the word lands in the content: {content:?}"
+        );
+        let decoded = Content::decode(&content).unwrap();
+        let shown: Vec<Vec<u8>> = decoded
+            .operations
+            .iter()
+            .filter(|op| op.operator == "Tj")
+            .filter_map(|op| op.operands.first())
+            .filter_map(|o| match o {
+                Object::String(bytes, _) => Some(bytes.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            shown.iter().any(|s| s == b"a(b)\\c"),
+            "the word decodes whole: {shown:?}"
+        );
+    }
+
+    #[test]
+    fn winansi_spelling_and_question_marks() {
+        assert_eq!(winansi_byte('A'), b'A');
+        assert_eq!(winansi_byte('é'), 0xE9);
+        assert_eq!(winansi_byte('€'), 0x80);
+        assert_eq!(winansi_byte('中'), b'?');
+        assert_eq!(encode_layer_string("café"), b"caf\xE9".to_vec());
     }
 }

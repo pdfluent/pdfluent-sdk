@@ -71,7 +71,7 @@ impl From<Vec<u8>> for PdfData {
 pub(crate) struct Data {
     data: PdfData,
     // 32 segments are more than enough as we can't have more objects than this.
-    decoded: SegmentList<Option<Vec<u8>>, 32>,
+    decoded: SegmentList<Vec<u8>, 32>,
     map: Mutex<HashMap<ObjectIdentifier, usize>>,
     // QF2-B: cache of parsed `(obj_num, abs_offset)` index tables, keyed by the
     // object stream's own `ObjectIdentifier`. Lives for the lifetime of the
@@ -151,22 +151,23 @@ impl Data {
     /// Get access to the data of a decoded object stream.
     pub(crate) fn get_with(&self, id: ObjectIdentifier, ctx: &ReaderContext<'_>) -> Option<&[u8]> {
         if let Some(&idx) = self.map.get().get(&id) {
-            self.decoded.get(idx)?.as_deref()
-        } else {
-            // Block scope to keep the lock short-lived.
-            let idx = {
-                let mut locked = self.map.get();
-                let idx = locked.len();
-                locked.insert(id, idx);
-                idx
-            };
-            self.decoded
-                .get_or_init(idx, || {
-                    let stream = ctx.xref().get_with::<Stream<'_>>(id, ctx)?;
-                    stream.decoded().ok()
-                })
-                .as_deref()
+            return self.decoded.get(idx).map(Vec::as_slice);
         }
+
+        // Decoding may resolve other objects, so do it without holding the cache lock.
+        let stream = ctx.xref().get_with::<Stream<'_>>(id, ctx)?;
+        let decoded = stream.decoded().ok()?;
+
+        let mut locked = self.map.get();
+        if let Some(&idx) = locked.get(&id) {
+            return self.decoded.get(idx).map(Vec::as_slice);
+        }
+
+        let idx = locked.len();
+        let decoded = self.decoded.get_or_init(idx, || decoded);
+        locked.insert(id, idx);
+
+        Some(decoded.as_slice())
     }
 }
 

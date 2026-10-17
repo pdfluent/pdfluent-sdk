@@ -51,6 +51,7 @@ import subprocess
 import sys
 import tomllib
 import xml.etree.ElementTree as ET
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
@@ -168,12 +169,25 @@ def embedded_assets_are_attributed() -> list[str]:
     check than a hash, and deliberately: the profiles are upstream artefacts we
     do not modify, so drift here is a file appearing or disappearing, not one
     changing underneath us.
+
+    FONTS COUNT TOO, SINCE 08-09-2026 (#383)
+    This walked `*.icc` only, so it looked at six files and ignored forty-two --
+    fourteen Foxit Type1 programs, the same fourteen as bare CFF, and twelve
+    Liberation faces under SIL OFL 1.1, a licence whose whole content is a
+    condition on redistributing the bytes. A font carries rights in exactly the
+    way this function exists to notice, and it was the one asset class the glob
+    did not name. Attribution held by diligence for months; it holds by the
+    count now.
     """
     if not ATTRIBUTIE.is_file():
         return [f"{ATTRIBUTIE.name} is missing"]
     tekst = ATTRIBUTIE.read_text(encoding="utf-8", errors="ignore")
     uit = []
-    for pad in sorted(REPO.glob("crates/*/assets/*.icc")):
+    RECHTENDRAGEND = ("*.icc", "*.pfb", "*.cff", "*.ttf", "*.otf", "*.ttc",
+                      "*.woff", "*.woff2")
+    paden = sorted({p for patroon in RECHTENDRAGEND
+                    for p in REPO.glob(f"crates/*/assets/{patroon}")})
+    for pad in paden:
         if pad.name not in tekst:
             uit.append(f"{pad.relative_to(REPO)} is shipped but not named in "
                        f"{ATTRIBUTIE.name}")
@@ -342,6 +356,46 @@ def eigen_verklaring(rel: str, gedeclareerd: str | None, pol: dict) -> tuple[str
                          f"{verwacht!r}. One of the two is out of date")
     return oordeel, None
 
+# Our own npm scope. The platform sub-packages (@pdfluent/node-<tag>) are
+# artefacts of this repository: generate-npm-dirs.cjs writes them at packaging
+# time and copies the licence field from the main package.json
+# (`license: base.license` in platform-matrix.cjs), so they publish under the
+# same dual offer as the manifest that names them. Judging them as our own
+# dual licence is first-party identification -- the same thing scan_cargo does
+# when it skips a crate without a `source` -- not a verdict on a third party.
+# A scope is access-controlled on the registry, so nothing foreign can arrive
+# under it.
+EIGEN_SCOPE = "@pdfluent/"
+
+
+# First-party Python distributions: our own wheels, judged as our own dual
+# licence like EIGEN_SCOPE for npm, never from installed metadata or the
+# table. langchain-pdfluent and llama-index-readers-pdfluent are separate
+# PyPI distributions but published by us from integrations/, so they are ours.
+EIGEN_PYPI = frozenset({
+    "pdfluent", "pdfluent-extract", "langchain-pdfluent",
+    "llama-index-readers-pdfluent", "pdfluent-mcp",
+})
+
+# Cross-check warnings: installed metadata disagreeing with the reviewed
+# table. The scanners collect them, main() prints them, and they never
+# decide a verdict.
+WAARSCHUWINGEN: list[str] = []
+
+# Row labels the gate accepted on a scoped exception this run, with the
+# decision behind the acceptance. Cleared at the start of main(), next to
+# WAARSCHUWINGEN: the acceptance belongs to this run's table and manifests,
+# not to the module.
+SCOPED_WAT: dict[str, str] = {}
+
+
+def npm_licentie(naam: str, soort: str) -> str:
+    """The licence to judge an npm dependency by. First-party is ours."""
+    if naam.startswith(EIGEN_SCOPE):
+        return "LicenseRef-PDFluent-Dual"
+    return f"UNKNOWN ({soort} dependency, licence unread)"
+
+
 def scan_npm(pol: dict) -> list[tuple[str, str]]:
     """Declared runtime dependencies of the npm packages, from tracked sources.
 
@@ -353,8 +407,15 @@ def scan_npm(pol: dict) -> list[tuple[str, str]]:
     is what wasm-pack copies into the generated manifest.
     """
     uit = []
-    for pad in (REPO / "crates/pdf-node/package.json",):
+    for rel_pad in ("crates/pdf-node/package.json",
+                    "integrations/pdfluent-extract-js/package.json"):
+        pad = REPO / rel_pad
         if not pad.is_file():
+            # The front door is optional in fixtures, which predate it; the
+            # binding manifest is not. Production always has both, and the
+            # front-door test pins that they are scanned there.
+            if rel_pad.startswith("integrations/"):
+                continue
             raise Onleesbaar(f"{pad.relative_to(REPO)} is missing")
         try:
             d = json.loads(pad.read_text())
@@ -366,7 +427,34 @@ def scan_npm(pol: dict) -> list[tuple[str, str]]:
             uit.append((f"{rel} [policy drift]", "UNKNOWN (" + klacht + ")"))
         uit.append((rel, oordeel))
         for naam, _v in (d.get("dependencies") or {}).items():
-            uit.append((f"npm {naam}", "UNKNOWN (runtime dependency, licence unread)"))
+            uit.append((f"npm {naam}", npm_licentie(naam, "runtime")))
+        # Optional and peer dependencies resolve into the user's install --
+        # npm fetches optionalDependencies unless --no-optional, and warns
+        # rather than refuses on an unmet peer -- so they are inspected like
+        # runtime ones, with their class on the row. devDependencies stay out:
+        # they never leave the build machine, and the table name is what tells
+        # them apart. Reading no table at all would be the hole this closes.
+        # Third-party optionals and peers judge from the reviewed table.
+        for naam, _v in (d.get("optionalDependencies") or {}).items():
+            wat = f"npm {naam} [optional]"
+            res = extra_licentie(naam, "npm", oppervlak="npm-optional")
+            if res is None:
+                lic = npm_licentie(naam, "optional")
+            else:
+                lic, w = _extra_rij(wat, res)
+                if w:
+                    WAARSCHUWINGEN.append(w)
+            uit.append((wat, lic))
+        for naam, _v in (d.get("peerDependencies") or {}).items():
+            wat = f"npm {naam} [peer]"
+            res = extra_licentie(naam, "npm", oppervlak="npm-peer")
+            if res is None:
+                lic = npm_licentie(naam, "peer")
+            else:
+                lic, w = _extra_rij(wat, res)
+                if w:
+                    WAARSCHUWINGEN.append(w)
+            uit.append((wat, lic))
 
     # What the publish pipeline WRITES into the generated manifest. The docstring
     # above used to argue that pkg/package.json need not be read because wasm-pack
@@ -384,8 +472,27 @@ def scan_npm(pol: dict) -> list[tuple[str, str]]:
         ):
             if not bron.is_file():
                 raise Onleesbaar(f"{bron.relative_to(REPO)} is missing")
-            gevonden = re.findall(patroon, bron.read_text(encoding="utf-8"))
+            tekst = bron.read_text(encoding="utf-8")
+            gevonden = re.findall(patroon, tekst)
             if not gevonden:
+                # A FILE THAT DELEGATES IS NOT A FILE THAT FORGOT (#541). The
+                # publish workflow used to set the licence itself, doing again
+                # what transform-wasm-pkg.sh does; since it calls the transform
+                # there is one assignment and it is in the transform, which is
+                # the next entry in this loop. Anything else that stopped
+                # assigning is still UNKNOWN, which is what this branch is for.
+                # RUN, not mentioned: a comment naming the transform is not a
+                # job that calls it, and this is the only thing standing between
+                # "delegates" and "stopped saying what it publishes". (codex,
+                # #1896)
+                roept_aan = re.search(
+                    r"^\s*(?:-\s*)?(?:run:\s*\|?\s*)?.*\b(?:bash|sh)\s+"
+                    r"scripts/release/transform-wasm-pkg\.sh\b",
+                    tekst, re.M)
+                if bron.name == "wasm.yml" and roept_aan:
+                    # Nothing is appended, which is what a matching value does
+                    # below: this loop only reports a disagreement.
+                    continue
                 uit.append((f"{bron.relative_to(REPO)} [publish path]",
                             "UNKNOWN (no licence assignment found; the transform "
                             "changed shape and this check no longer reads it)"))
@@ -430,8 +537,39 @@ def scan_maven(pol: dict) -> list[tuple[str, str]]:
         scope = dep.findtext(f"{{{ns['m']}}}scope", "compile")
         if scope == "test":
             continue
+        # `<scope>test</scope>` is the only scope that stays out: it rides the
+        # test classpath and never the published artefact. `<optional>true`
+        # and `<scope>provided</scope>` both reach a consumer -- the first when
+        # the consumer opts in, the second from the container at runtime -- so
+        # they are rows like any other, with their class on the row.
+        klassen = []
+        optioneel = (dep.findtext(f"{{{ns['m']}}}optional", "false") or "")
+        if optioneel.strip().lower() == "true":
+            klassen.append("optional")
+        if (scope or "").strip() == "provided":
+            klassen.append("provided")
         coord = f"{g}:{a}"
-        keuze = keuzes.get(coord)
+        if klassen:
+            coord += " [" + ", ".join(klassen) + "]"
+        if klassen:
+            # Optional and provided rows judge from the reviewed table.
+            wat = f"maven {coord}"
+            res = extra_licentie(f"{g}:{a}", "maven",
+                                 oppervlak="maven-" + "+".join(klassen))
+            if res is None:
+                keuze = keuzes.get(f"{g}:{a}")
+                if keuze:
+                    uit.append((f"maven {coord} (election: {keuze['take']})",
+                                keuze["take"]))
+                else:
+                    uit.append((f"maven {coord}", "UNKNOWN (no election recorded)"))
+            else:
+                lic, w = _extra_rij(wat, res)
+                if w:
+                    WAARSCHUWINGEN.append(w)
+                uit.append((wat, lic))
+            continue
+        keuze = keuzes.get(f"{g}:{a}")
         if keuze:
             uit.append((f"maven {coord} (election: {keuze['take']})", keuze["take"]))
         else:
@@ -473,54 +611,402 @@ def scan_nuget(_: dict) -> list[tuple[str, str]]:
     # the top of this block described a repair that never reached the output.
     uit = []
     for p in projecten:
-        for m in re.finditer(r'<PackageReference\s+Include="([^"]+)"', p.read_text()):
-            uit.append((f"nuget {m.group(1)}", "UNKNOWN (licence unread)"))
+        tekst = p.read_text()
+        for m in re.finditer(r'<PackageReference\s+Include="([^"]+)"', tekst):
+            # A reference that carries PrivateAssets or IncludeAssets does not
+            # flow to consumers by default, but it still builds what ships --
+            # and the inspection set is every dependency, not every flowing
+            # one. So it is a row like any other, with its class on the row.
+            # Test projects stay out by the glob above, which reads src only:
+            # bindings/dotnet/test never reaches this loop.
+            element = _package_reference_element(tekst, m.start())
+            # An attribute (` PrivateAssets="all"`) or a child element
+            # (`<PrivateAssets>all</PrivateAssets>`), and nothing looser: the
+            # package's own name sits in this same text, so a bare substring
+            # would let `Include="PrivateAssets.Foo"` label itself.
+            privaat = re.search(
+                r"[<\s](?:PrivateAssets|IncludeAssets)\s*[=>]", element) is not None
+            naam = f"nuget {m.group(1)}" + (" [private]" if privaat else "")
+            if privaat:
+                res = extra_licentie(m.group(1), "nuget", oppervlak="nuget-private")
+                if res is None:
+                    lic = "UNKNOWN (licence unread)"
+                else:
+                    lic, w = _extra_rij(naam, res)
+                    if w:
+                        WAARSCHUWINGEN.append(w)
+            else:
+                lic = "UNKNOWN (licence unread)"
+            uit.append((naam, lic))
     return uit_eigen + uit
 
 
-def scan_python(_: dict) -> list[tuple[str, str]]:
-    pad = REPO / "crates/pdf-python/pyproject.toml"
+def _package_reference_element(tekst: str, begin: int) -> str:
+    """The full `<PackageReference ...>` element starting at `begin`.
+
+    The Include attribute is matched by regex, but PrivateAssets and
+    IncludeAssets may sit in the attribute list OR in child elements, so the
+    element's own text is what is searched -- never the whole file, where a
+    neighbouring reference would answer for this one.
+    """
+    rest = tekst[begin:]
+    einde = rest.find(">")
+    if einde == -1:
+        return rest
+    if rest[einde - 1] == "/":
+        return rest[:einde + 1]
+    sluit = rest.find("</PackageReference>")
+    if sluit == -1:
+        return rest[:einde + 1]
+    return rest[:sluit + len("</PackageReference>")]
+
+
+def distributie_naam(spec: str) -> str:
+    """The distribution a PEP 508 requirement names ("pytest>=7.0" -> "pytest").
+
+    Version constraints, extras (`requests[security]`) and markers (`; ...`)
+    are install instructions; the licence question is about the distribution.
+    """
+    return re.split(r"[<>=!~\s;\[]", spec.strip(), maxsplit=1)[0].strip()
+
+
+def pypi_licentie(naam: str) -> str:
+    """The licence an installed distribution declares for itself, or UNKNOWN.
+
+    The smallest honest resolver: the distribution's own metadata says what
+    its licence is, and where it is absent -- not installed here, no licence
+    field, or a field that carries the full text instead of an identifier --
+    the row is unknown. Nothing is guessed and no verdict is hardcoded: an
+    unclassified identifier still has to be looked up and added to the policy.
+    """
+    try:
+        meta = importlib_metadata.metadata(naam)
+    except importlib_metadata.PackageNotFoundError:
+        return f"UNKNOWN ({naam} is not installed here, so no metadata states its licence)"
+    except Exception as e:
+        return f"UNKNOWN (metadata for {naam} is unreadable: {e})"
+    verklaard = meta.get("License-Expression") or meta.get("License")
+    if not verklaard or not verklaard.strip():
+        return f"UNKNOWN ({naam} is installed but declares no licence)"
+    verklaard = verklaard.strip()
+    if "\n" in verklaard or len(verklaard) > 120:
+        # A field carrying the full licence text (numpy's BSD text) states no
+        # identifier. Feeding prose to the SPDX judge would split it on "and"
+        # and "or" and report the pieces, so the finding names the absence.
+        return f"UNKNOWN ({naam} declares no SPDX identifier)"
+    return verklaard
+
+
+def extra_tabel() -> dict[tuple[str, str], dict] | None:
+    """The reviewed extra-licence table, or None if its file is absent.
+
+    None is the fixture case: throwaway trees predate the table and carry
+    none, so their scanners fall back to the resolvers they always used.
+    Production always has the file; a present-but-unparsable file is a
+    misconfigured gate and fails.
+    """
+    pad = REPO / "scripts" / "ci" / "extra_licences.toml"
     if not pad.is_file():
-        raise Onleesbaar("crates/pdf-python/pyproject.toml is missing")
+        return None
     try:
         d = tomllib.loads(pad.read_text())
     except tomllib.TOMLDecodeError as e:
-        raise Onleesbaar(f"pyproject.toml: {e}") from e
-    # WAT HET BESTAND ZEGT, NIET WAT WIJ ERVAN VONDEN
-    #
-    # Tot 01-09-2026 stond hier onvoorwaardelijk
-    # `("python pdfluent (wheel)", "LicenseRef-PDFluent-Commercial")`. Het
-    # bestand werd wel geparset en de licentie nooit gelezen, dus de wheel werd
-    # als commercieel-only geoordeeld ongeacht wat er stond. Zet de declaratie
-    # op iets anders -- of draai hem terug -- en deze poort bleef groen (#1620).
-    #
-    # Dat is dezelfde vorm als #300, #301 en #304: een controle die een
-    # naastgelegen vraag beantwoordt en er compleet uitziet.
-    #
-    # PEP 621 kent twee vormen: `license = { text = "..." }` (oud) en
-    # `license = "..."` (PEP 639). Allebei lezen; ontbreekt hij, dan is dat een
-    # bevinding en geen aanname.
-    lic = d.get("project", {}).get("license")
-    if isinstance(lic, dict):
-        spdx = lic.get("text") or lic.get("file")
-    elif isinstance(lic, str):
-        spdx = lic
-    else:
-        spdx = None
+        raise Onleesbaar(f"extra_licences.toml: {e}") from e
+    uit: dict[tuple[str, str], dict] = {}
+    for r in d.get("extra", []) or []:
+        uit[(str(r.get("ecosystem", "")).lower(),
+             str(r.get("package", "")).lower())] = r
+    return uit
+
+
+_VERSIE = re.compile(r"^\d+(\.\d+)*$")
+
+
+def _versie(s: str) -> tuple[int, ...] | None:
+    s = s.strip()
+    if not _VERSIE.match(s):
+        return None
+    return tuple(int(x) for x in s.split("."))
+
+
+def _eisen(spec: str) -> list[tuple[str, tuple[int, ...]]] | None:
+    """The PEP 440 clauses of one requirement tail (">=11.2.1,<13").
+
+    None when unparsable -- the gate fails closed, so unparsable is red,
+    not guessed.
+    """
+    uit: list[tuple[str, tuple[int, ...]]] = []
+    for deel in spec.split(","):
+        deel = deel.strip()
+        for op in ("===", "~=", "==", "!=", ">=", "<=", ">", "<"):
+            if deel.startswith(op):
+                v = _versie(deel[len(op):])
+                if v is None:
+                    return None
+                uit.append((op, v))
+                break
+        else:
+            return None
+    return uit
+
+
+def _cmp(a: tuple[int, ...], b: tuple[int, ...]) -> int:
+    """Version order, zero-padded: (13,) counts as (13, 0, 0) next to
+    (11, 2, 1), because a bare tuple comparison reads 1.0 as smaller
+    than 1."""
+    n = max(len(a), len(b))
+    aa = a + (0,) * (n - len(a))
+    bb = b + (0,) * (n - len(b))
+    return (aa > bb) - (aa < bb)
+
+
+def _bereik(eisen: list[tuple[str, tuple[int, ...]]]) -> tuple | None:
+    """(lo, lo_incl, hi, hi_incl) of the clause set. None when the set is
+    open on either side, unsatisfiable, or uses an operator containment
+    cannot prove: all three fail closed. `!=` only removes versions, so it
+    cannot widen the set and is ignored for containment."""
+    lo: tuple[int, ...] | None = None
+    lo_incl = False
+    hi: tuple[int, ...] | None = None
+    hi_incl = False
+    for op, v in eisen:
+        if op == "==":
+            if lo is None or _cmp(v, lo) > 0:
+                lo, lo_incl = v, True
+            if hi is None or _cmp(v, hi) < 0:
+                hi, hi_incl = v, True
+        elif op == "~=":
+            if len(v) < 2:
+                return None
+            if lo is None or _cmp(v, lo) > 0:
+                lo, lo_incl = v, True
+            top = (v[0] + 1,)
+            if hi is None or _cmp(top, hi) < 0:
+                hi, hi_incl = top, False
+        elif op in (">=", ">"):
+            incl = op == ">="
+            if lo is None or _cmp(v, lo) > 0:
+                lo, lo_incl = v, incl
+            elif _cmp(v, lo) == 0:
+                lo_incl = lo_incl and incl
+        elif op in ("<=", "<"):
+            incl = op == "<="
+            if hi is None or _cmp(v, hi) < 0:
+                hi, hi_incl = v, incl
+            elif _cmp(v, hi) == 0:
+                hi_incl = hi_incl and incl
+        elif op == "!=":
+            continue
+        else:
+            return None
+    if lo is None or hi is None:
+        return None
+    c = _cmp(lo, hi)
+    if c > 0 or (c == 0 and not (lo_incl and hi_incl)):
+        return None
+    return (lo, lo_incl, hi, hi_incl)
+
+
+def binnen_bereik(declaratie: str, begrensd: str) -> bool:
+    """True when every version `declaratie` admits also satisfies `begrensd`.
+
+    Both are comma-separated PEP 440 clause sets. Either side unparsable, or
+    the declared set open on a side the reviewed range closes, is False. An
+    unbounded declaration (a bare package name with no pin) admits everything,
+    so it is never inside a reviewed range.
+    """
+    d = _eisen(declaratie)
+    a = _eisen(begrensd)
+    if not d or not a:
+        return False
+    if any(op == "!=" for op, _ in a):
+        return False
+    db = _bereik(d)
+    ab = _bereik(a)
+    if db is None or ab is None:
+        return False
+    (dlo, dlo_incl, dhi, dhi_incl) = db
+    (alo, alo_incl, ahi, ahi_incl) = ab
+    if _cmp(dlo, alo) < 0:
+        return False
+    if _cmp(dlo, alo) == 0 and dlo_incl and not alo_incl:
+        return False
+    if _cmp(dhi, ahi) > 0:
+        return False
+    if _cmp(dhi, ahi) == 0 and dhi_incl and not ahi_incl:
+        return False
+    return True
+
+
+def _eis_staart(eis: str, naam: str) -> str:
+    """The version tail of a requirement ("Pillow>=11.2.1,<13" -> ">=11.2.1,<13").
+
+    Extras ("Pillow[x]") and markers ("; python_version > '3.8'") are install
+    instructions, not versions, so they are stripped before the range check.
+    """
+    staart = eis[len(naam):] if eis.lower().startswith(naam.lower()) else eis
+    staart = staart.split(";")[0].strip()
+    if staart.startswith("["):
+        einde = staart.find("]")
+        staart = staart[einde + 1:] if einde != -1 else ""
+    return staart.strip()
+
+
+def extra_licentie(naam: str, ecosysteem: str, eis: str = "",
+                   oppervlak: str = "") -> tuple[str, str | None, str | None] | None:
+    """(SPDX from the table, cross-check warning, scoped note) for an
+    extra/optional row.
+
+    None if the table file is absent (fixture fallback; the caller uses its
+    old resolver). A miss IN the table is red with the add-hint, never a
+    fallback: an unreviewed package must not pass on machine metadata.
+    First-party distributions judge as our own dual licence without the table.
+
+    A row carrying `versions` and `surface` is a scoped exception (Pillow,
+    D34): its `spdx` is accepted ONLY when the manifest's declared
+    requirement lies inside `versions` AND the row arrives on `surface`. The
+    acceptance travels in the scoped note; the caller records it against the
+    row label in SCOPED_WAT for main() to honour. Anything else -- another
+    package, another range, another surface -- stays red, and `allowed` in
+    docs/LICENSE_POLICY.toml never widens for it.
+    """
+    if ecosysteem == "pypi" and naam.lower() in EIGEN_PYPI:
+        return ("LicenseRef-PDFluent-Dual", None, None)
+    if ecosysteem == "npm" and naam.startswith(EIGEN_SCOPE):
+        return ("LicenseRef-PDFluent-Dual", None, None)
+    tabel = extra_tabel()
+    if tabel is None:
+        return None
+    r = tabel.get((ecosysteem.lower(), naam.lower()))
+    if r is None:
+        return (f"UNKNOWN (add {naam} to scripts/ci/extra_licences.toml)", None, None)
+    spdx = str(r.get("spdx", "")).strip()
     if not spdx:
-        raise Onleesbaar(
-            "crates/pdf-python/pyproject.toml declares no [project] license. "
-            "A wheel without a licence is not a wheel we may publish."
-        )
-    # Judged like our other own packages: the allow-list answers "may this be in
-    # our dependency graph", which is a different question from "is this what we
-    # mean to publish". MIT is fine as a dependency and would be a disaster here.
-    oordeel, klacht = eigen_verklaring("crates/pdf-python/pyproject.toml", spdx, _)
-    if klacht:
-        raise Onleesbaar(klacht)
-    uit = [("python pdfluent (wheel)", oordeel)]
-    for spec in d.get("project", {}).get("dependencies", []):
-        uit.append((f"pypi {spec}", "UNKNOWN (runtime dependency, licence unread)"))
+        return (f"UNKNOWN ({naam} has no spdx in scripts/ci/extra_licences.toml)", None, None)
+    begrensd = str(r.get("versions", "") or "").strip()
+    vlak = str(r.get("surface", "") or "").strip()
+    if begrensd or vlak:
+        # A scoped exception is package AND range AND surface, or nothing.
+        # `decision` and `source` are the review trail; an exception without
+        # them is a row that forgot why it is there.
+        besluit = str(r.get("decision", "") or "").strip()
+        bron = str(r.get("source", "") or "").strip()
+        if not besluit or not bron:
+            return (f"UNKNOWN ({naam} is a scoped exception without its review "
+                    f"trail; record decision and source in "
+                    f"scripts/ci/extra_licences.toml)", None, None)
+        if vlak and vlak.lower() != (oppervlak or "").lower():
+            return (f"UNKNOWN ({naam} is accepted only as {vlak}, not as "
+                    f"{oppervlak or 'this surface'}; see decision {besluit})",
+                    None, None)
+        if begrensd:
+            staart = _eis_staart(eis, naam)
+            if not staart or not binnen_bereik(staart, begrensd):
+                return (f"UNKNOWN ({eis or naam} is outside the reviewed "
+                        f"{begrensd}; see decision {besluit})", None, None)
+        return (spdx, None, f"{besluit} {vlak} {begrensd}".strip())
+    waarschuwing = None
+    if ecosysteem == "pypi":
+        # Cross-check only: installed metadata never decides the verdict.
+        geinstalleerd = pypi_licentie(naam)
+        if not geinstalleerd.startswith("UNKNOWN") and geinstalleerd != spdx:
+            waarschuwing = (f"installed {naam} declares {geinstalleerd}, "
+                            f"the table says {spdx}; verdict from the table")
+    return (spdx, waarschuwing, None)
+
+
+def _extra_rij(wat: str, res: tuple[str, str | None, str | None]
+               ) -> tuple[str, str | None]:
+    """(licence, warning) for a scanned extra row, recording a scoped
+    acceptance against the row label for main() to honour."""
+    lic, w, scoped = res
+    if scoped:
+        SCOPED_WAT[wat] = scoped
+    return lic, w
+
+
+def scan_python(_: dict) -> list[tuple[str, str]]:
+    uit: list[tuple[str, str]] = []
+    for rel in ("crates/pdf-python/pyproject.toml",
+                "integrations/pdfluent-extract/pyproject.toml"):
+        pad = REPO / rel
+        if not pad.is_file():
+            # The front door is optional in fixtures, which predate it; the
+            # wheel manifest is not. Production always has both, and the
+            # front-door test pins that they are scanned there.
+            if rel.startswith("integrations/"):
+                continue
+            raise Onleesbaar(f"{rel} is missing")
+        try:
+            d = tomllib.loads(pad.read_text())
+        except tomllib.TOMLDecodeError as e:
+            raise Onleesbaar(f"{rel}: {e}") from e
+        # WAT HET BESTAND ZEGT, NIET WAT WIJ ERVAN VONDEN
+        #
+        # Tot 01-09-2026 stond hier onvoorwaardelijk
+        # `("python pdfluent (wheel)", "LicenseRef-PDFluent-Commercial")`. Het
+        # bestand werd wel geparset en de licentie nooit gelezen, dus de wheel werd
+        # als commercieel-only geoordeeld ongeacht wat er stond. Zet de declaratie
+        # op iets anders -- of draai hem terug -- en deze poort bleef groen (#1620).
+        #
+        # Dat is dezelfde vorm als #300, #301 en #304: een controle die een
+        # naastgelegen vraag beantwoordt en er compleet uitziet.
+        #
+        # PEP 621 kent twee vormen: `license = { text = "..." }` (oud) en
+        # `license = "..."` (PEP 639). Allebei lezen; ontbreekt hij, dan is dat een
+        # bevinding en geen aanname.
+        lic = d.get("project", {}).get("license")
+        if isinstance(lic, dict):
+            spdx = lic.get("text") or lic.get("file")
+        elif isinstance(lic, str):
+            spdx = lic
+        else:
+            spdx = None
+        if not spdx:
+            raise Onleesbaar(
+                f"{rel} declares no [project] license. "
+                "A wheel without a licence is not a wheel we may publish."
+            )
+        # Judged like our other own packages: the allow-list answers "may this be in
+        # our dependency graph", which is a different question from "is this what we
+        # mean to publish". MIT is fine as a dependency and would be a disaster here.
+        oordeel, klacht = eigen_verklaring(rel, spdx, _)
+        if klacht:
+            raise Onleesbaar(klacht)
+        wiel = d.get("project", {}).get("name", rel)
+        uit.append((f"python {wiel} (wheel)", oordeel))
+        project = d.get("project", {})
+        for spec in project.get("dependencies", []) or []:
+            naam = distributie_naam(spec)
+            if not naam:
+                lic = "UNKNOWN (unparsable requirement)"
+            elif naam.lower() in EIGEN_PYPI:
+                lic = "LicenseRef-PDFluent-Dual"
+            else:
+                lic = pypi_licentie(naam)
+            uit.append((f"pypi {spec}", lic))
+        # Every optional extra is published wheel metadata -- `pip install
+        # pdfluent[pillow]` resolves it -- so every entry is a row of class
+        # "extra", judged by the same policy as a runtime dependency. This table
+        # used to be unread entirely: an extra under any licence passed. The
+        # SPDX comes from the reviewed table, never from this machine.
+        extras = project.get("optional-dependencies", {}) or {}
+        for extra, specs in extras.items():
+            for spec in specs or []:
+                naam = distributie_naam(spec)
+                wat = f"pypi {spec} [extra {extra}]"
+                if not naam:
+                    lic = "UNKNOWN (unparsable requirement)"
+                else:
+                    res = extra_licentie(naam, "pypi", eis=spec,
+                                         oppervlak="python-extra")
+                    if res is None:
+                        lic = pypi_licentie(naam)
+                    else:
+                        lic, w = _extra_rij(wat, res)
+                        if w:
+                            WAARSCHUWINGEN.append(w)
+                uit.append((wat, lic))
     return uit
 
 
@@ -622,6 +1108,8 @@ def main() -> int:
           "representations resolve to the canonical expression")
 
     problemen: list[str] = []
+    WAARSCHUWINGEN.clear()
+    SCOPED_WAT.clear()
     for naam, (fn, vloer_sleutel) in SCANNERS.items():
         if only and naam != only:
             continue
@@ -637,15 +1125,28 @@ def main() -> int:
             print(f"  {naam:8} EMPTY       {len(gevonden)} < {vloer}")
             continue
         slecht = []
+        # Rows a scoped exception accepted during this run's scans. The
+        # acceptance is package AND range AND surface (SCOPED_WAT, recorded
+        # against the exact row label), never the expression alone: MIT-CMU
+        # anywhere else stays red.
+        vastgesteld = [(w, SCOPED_WAT[w]) for w, _ in gevonden if w in SCOPED_WAT]
         for wat, expr in gevonden:
+            if wat in SCOPED_WAT:
+                continue
             goed, reden = toegestaan(expr, ok, zwak, verboden, zwak_per_scanner[naam])
             if not goed:
                 slecht.append(f"{wat}: {expr}  ({reden})")
         print(f"  {naam:8} {'ok  ' if not slecht else 'FAIL'}        "
-              f"{len(gevonden)} item(s), {len(slecht)} problem(s)")
+              f"{len(gevonden)} item(s), {len(slecht)} problem(s), "
+              f"{len(vastgesteld)} scoped")
         for s in slecht[:10]:
             print(f"      {s}")
+        for w, grond in vastgesteld:
+            print(f"      {w}  (scoped accept: {grond})")
         problemen += [f"{naam}: {s}" for s in slecht]
+
+    for w in WAARSCHUWINGEN:
+        print(f"[license_gate] WARNING: {w}")
 
     for m in elections_are_attributed(pol) + embedded_assets_are_attributed():
         problemen.append(f"attribution: {m}")

@@ -121,4 +121,4 @@ jobs:
             /tmp/golden.json
             /tmp/ref/pkg/xfa_wasm_bg.wasm
             /tmp/cand/pkg/xfa_wasm_bg.wasm
-          retention-days: 14
+          retention-days: 1

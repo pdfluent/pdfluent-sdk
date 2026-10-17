@@ -219,7 +219,7 @@ Default features: `signing`, `pdfa`, `redaction`, `font-subset`.
 
 ## Community
 
-Ask questions in [GitHub Discussions](https://github.com/pdfluent/pdfluent-sdk/discussions/categories/q-a), in the Q&A category. Report bugs in [this repository's issue tracker](https://github.com/pdfluent/pdfluent-sdk/issues/new/choose). Report security problems by email to [security@pdfluent.com](mailto:security@pdfluent.com), never in a public issue.
+Ask questions in [GitHub Discussions](https://github.com/pdfluent/pdfluent-sdk/discussions/categories/q-a), in the Q&A category. Report bugs in [this repository's issue tracker](https://github.com/pdfluent/pdfluent-sdk/issues/new/choose). Report security problems by email to [hello@pdfluent.com](mailto:hello@pdfluent.com), never in a public issue.
 
 ## Contributing
 

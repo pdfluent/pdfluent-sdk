@@ -1,0 +1,51 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH PDFLUENT-PAGES 1  "pdfluent 1.1.0" PDFluent
+.SH NAME
+pdfluent\-pages \- Rotate, delete, reorder, or extract pages
+.SH SYNOPSIS
+\fBpdfluent pages\fR [\fB\-\-json\fR] [\fB\-\-rotate\fR] [\fB\-\-delete\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-reorder\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-\-extract\fR] [\fB\-\-pages\fR] <\fB\-o\fR|\fB\-\-out\fR> [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIINPUT\fR> 
+.SH DESCRIPTION
+Rotate, delete, reorder, or extract pages
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Machine\-readable JSON envelope on stdout
+.TP
+\fB\-\-rotate\fR \fI<DEG>\fR
+Rotate pages by degrees: 90, 180, 270 (negatives allowed). Applies to `\-\-pages`, or every page without it
+.TP
+\fB\-\-delete\fR \fI<SPEC>\fR
+Delete pages, e.g. `2,5\-7`
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Quiet: human mode prints data only (no warnings or progress notes)
+.TP
+\fB\-\-reorder\fR \fI<SPEC>\fR
+New page order, e.g. `3,1,2`: every page exactly once
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose stderr diagnostics (repeat for more)
+.TP
+\fB\-\-extract\fR \fI<SPEC>\fR
+Keep only these pages, e.g. `1\-3,5`
+.TP
+\fB\-\-pages\fR \fI<SPEC>\fR
+Pages `\-\-rotate` applies to. Default: every page
+.TP
+\fB\-o\fR, \fB\-\-out\fR \fI<OUT>\fR
+Output PDF, or `\-` for stdout
+.TP
+\fB\-\-force\fR
+Overwrite the existing output file
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+<\fIINPUT\fR>
+Input PDF, or `\-` for stdin
+.SH VERSION
+v1.1.0

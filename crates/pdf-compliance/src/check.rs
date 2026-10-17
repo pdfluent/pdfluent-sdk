@@ -15061,40 +15061,21 @@ pub fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
         // If page has content stream but no own Resources, check if it
         // would need to inherit them.
         //
-        // Note: page.resources() returns a Resources where the page's own dict
-        // entries are empty (since the page has no /Resources). Inherited entries
-        // live in res.parent(). We must check the parent chain for any resource
-        // that would be inherited. Fixes #467.
+        // Note: page.resources() resolves to the effective /Resources dict --
+        // the page's own, or the nearest inherited one. There is no parent
+        // chain to walk anymore (LaurenzV/hayro#1387): a page without own
+        // /Resources carries the inherited entries directly. Fixes #467.
         if !has_own_resources && page.page_stream().is_some() {
             let res = page.resources();
-            // Check own (page-level) resources first
-            let has_own_res = res.fonts.entries().next().is_some()
+            // The effective dict already holds the inherited entries.
+            let has_any_res = res.fonts.entries().next().is_some()
                 || res.x_objects.entries().next().is_some()
                 || res.ext_g_states.entries().next().is_some()
                 || res.color_spaces.entries().next().is_some()
                 || res.patterns.entries().next().is_some()
                 || res.shadings.entries().next().is_some();
-            // Check inherited resources from Pages parent nodes
-            let has_inherited_res = {
-                let mut p = res.parent();
-                let mut found = false;
-                while let Some(parent) = p {
-                    if parent.fonts.entries().next().is_some()
-                        || parent.x_objects.entries().next().is_some()
-                        || parent.ext_g_states.entries().next().is_some()
-                        || parent.color_spaces.entries().next().is_some()
-                        || parent.patterns.entries().next().is_some()
-                        || parent.shadings.entries().next().is_some()
-                    {
-                        found = true;
-                        break;
-                    }
-                    p = parent.parent();
-                }
-                found
-            };
 
-            if has_own_res || has_inherited_res {
+            if has_any_res {
                 error_at(
                     report,
                     "6.2.2",
@@ -15184,8 +15165,8 @@ pub fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
 /// in complex page trees, inline image keywords, Separation alternates, etc.)
 /// that lead to false positives.
 ///
-/// Uses the parent-chain-aware `get_x_object` / `get_font` accessors so that
-/// resources inherited from ancestor Pages nodes are not incorrectly flagged.
+/// Uses the effective page `Resources` (own or nearest inherited dict) so that
+/// inherited resources are not incorrectly flagged as missing.
 pub fn check_resource_names_exist(pdf: &Pdf, report: &mut ComplianceReport) {
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let Some(content) = page.page_stream() else {
@@ -15198,8 +15179,9 @@ pub fn check_resource_names_exist(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 /// Check only `Do` (XObject invocation) and `Tf` (font selection) operators in
-/// a content stream.  Uses parent-chain-aware lookups so inherited resources
-/// from ancestor Pages nodes are not incorrectly flagged as missing.
+/// a content stream. `res` is the effective dict (own or nearest inherited),
+/// so inherited resources from ancestor Pages nodes are not incorrectly
+/// flagged as missing.
 fn check_do_tf_refs_in_stream(
     content: &[u8],
     res: &Resources<'_>,
@@ -15236,12 +15218,8 @@ fn check_do_tf_refs_in_stream(
                 // can't parse as a Stream, even though the entry exists). Fixes FP=6.2.2
                 // on PDFs where a Form XObject has an external file reference (/F n 0 R).
                 if let Some(name) = tokens[i - 1].strip_prefix('/') {
-                    let in_own = res.x_objects.contains_key(name.as_bytes());
-                    let in_parent = !in_own
-                        && res
-                            .parent()
-                            .is_some_and(|p| p.x_objects.contains_key(name.as_bytes()));
-                    if !in_own && !in_parent {
+                    // `res` is the effective dict (own or nearest inherited).
+                    if !res.x_objects.contains_key(name.as_bytes()) {
                         error_at(
                             report,
                             "6.2.2",
@@ -15255,12 +15233,8 @@ fn check_do_tf_refs_in_stream(
                 // /Name size Tf — font selection; name is 2 tokens before.
                 // Use contains_key for the same reason as Do above.
                 if let Some(name) = tokens[i - 2].strip_prefix('/') {
-                    let in_own = res.fonts.contains_key(name.as_bytes());
-                    let in_parent = !in_own
-                        && res
-                            .parent()
-                            .is_some_and(|p| p.fonts.contains_key(name.as_bytes()));
-                    if !in_own && !in_parent {
+                    // `res` is the effective dict (own or nearest inherited).
+                    if !res.fonts.contains_key(name.as_bytes()) {
                         error_at(
                             report,
                             "6.2.2",

@@ -1,0 +1,69 @@
+{
+  "name": "@pdfluent/extract",
+  "version": "0.1.0",
+  "description": "PDF to Markdown, JSON and RAG chunks — fast, local, no system dependencies",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/cjs/index.d.ts",
+  "bin": {
+    "pdfluent-extract": "./dist/cjs/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist/",
+    "LICENSE",
+    "LICENSE-COMMERCIAL",
+    "LICENSE-OFFER",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.cjs.json && tsc -p tsconfig.esm.json && node scripts/fixup-package-types.cjs",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "pdf",
+    "markdown",
+    "rag",
+    "llm",
+    "chunking",
+    "docling",
+    "table-extraction",
+    "pdf-to-text",
+    "pdfluent"
+  ],
+  "license": "SEE LICENSE IN LICENSE-OFFER",
+  "homepage": "https://pdfluent.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pdfluent/pdfluent-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/pdfluent/pdfluent-sdk/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@pdfluent/node": "^1.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">= 18"
+  }
+}

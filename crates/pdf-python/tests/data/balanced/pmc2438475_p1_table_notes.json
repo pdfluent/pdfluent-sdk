@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "fixture": "crates/pdf-engine/tests/fixtures/pubtables/pmc2438475_p1_table_notes.pdf",
+  "quality": "balanced",
+  "argv": [
+    "extract",
+    "crates/pdf-engine/tests/fixtures/pubtables/pmc2438475_p1_table_notes.pdf",
+    "--format",
+    "md",
+    "--quality",
+    "balanced",
+    "--model-dir",
+    "<model-dir>",
+    "--table-model-dir",
+    "<table-model-dir>"
+  ],
+  "notes": "CLI reference recorded with --quality balanced plus --table-model-dir (TATR v1.1-all table structure over the balanced tier's kept table regions) and --model-dir (layout-heron-ep03): the tier's exact markdown plus the block kinds in order, the headings, and the table cell grids parsed from it with the test parser's rules.",
+  "markdown": "cytoplasm by exportin 5 [15,16], it is then recognized by Dicer, in complex with dsRBD-containing partner HIV-1 TAR RNAbinding protein (TRBP) [17], to remove the terminal loop, leaving a second 2-nt 39 overhang [18]. The resulting 21- to 23-nt miRNA products contain a 2-nt 39 overhang at each strand and act as the functional intermediates of RNAi that direct mRNA cleavage and translational attenuation. Although their biological functions remain largely unknown, recent studies suggest that miRNAs contribute to the development of various cancers [19] and might function as an important component of the cell’s natural defense against viral infection [20–22]. It has been proposed that an unique miRNA expression profile for a particular cancer would be a useful biomarker for cancer diagnosis [23] and prognosis [24]. In this study, we used various approaches to profile miRNA expression from cervical cancer tissues and cervical cancer–derived cell lines as well as from HPV-infected vaginal keratinocytes. We demonstrate that a subset of miRNAs is significantly dysregulated in cervical cancers and pre-neoplastic lesions.\n\nTable 1. miRNA expression profile in HPV16-positive CaSki C- 2 cells by cDNA cloning.\n\n## Results\n\n| miRNA names | Frequency of detection* | miRNA names | Frequency of detection* |\n| --- | --- | --- | --- |\n| miR-7 | 1 | miR-92 | 1 |\n| miR-15a | 2 | miR-93 | 2 |\n| miR-16 | 7 | miR-96 | 1 |\n| miR-17-5p | 8 | miR-106b | 1 |\n| miR-19a | 1 | miR-130a | 2 |\n| miR-19b | 1 | miR-130b | 1 |\n| miR-20 | 3 | miR-135b | 1 |\n| miR-21 | 31 | miR-141 | 3 |\n| miR-22 | 2 | miR-151 | 1 |\n| miR-23a | 5 | miR-186 | 2 |\n| miR-24 | 10 | miR-193b | 1 |\n| miR-25 | 1 | miR-193c | 3 |\n| miR-26b | 1 | miR-203 | 2 |\n| miR-27a | 29 | miR-205 | 12 |\n| miR-27b | 8 | miR-301 | 2 |\n| miR-29a | 3 | miR-424 | 2 |\n| miR-29b | 1 | let-7a | 6 |\n| miR-30a-3p | 1 | let-7b | 2 |\n| miR-30a-5p | 2 | let-7d | 2 |\n| miR-30d | 1 | let-7e | 1 |\n| miR-31 | 3 | let-7f | 1 |\n| miR-33 | 1 | let-7i | 1 |\n| miR-34a | 1 |  |  |\n| miR-34c | 1 | Total | 174 |\n\n\n* Isolation frequency from 363 cDNA clones. CaSki C-2 cells stably express a hairpin-derived HPV16 E7 siRNA with no interfering function on HPV16 E7 expression (72). This screening also isolated 3 copies of the E7 siRNA. doi:10.1371/journal.pone.0002557.t001\n\n## miRNA expression profile in cervical cancer cell lines\n\nTo investigate the expression profiles of miRNAs in cervical cancer cells, we isolated total cell RNA from cervical cancer– derived CaSki C-2 cells, which contain ,500 copies of the HPV16 genome per cell. The fractionated RNAs with sizes of 15–30 nts were cloned and sequenced based on a published protocol [25]. Overall, we cloned a total of 174 miRNAs from 363 cDNA clones which were categorized into 46 different miRNA species (Table 1), with miR-21, miR-24, miR-27a, and miR-205 being most abundant. No HPV16-derived miRNA was cloned in this screening, all the miRNAs were cellular. Interestingly, we found that some copies of the cloned miR-21 and miR-205 had heterogenous 39 ends, with an extra C nucleotide on the 39 end of 68% of the miR-21 copies and an extra U on the 39 end of 33% of the miR-205 copies, presumably derived from wobble digestion of the pre-miRNAs by Dicer (Fig. 1). In addition, a new subspecies of miR-193, miR-193c (GenBank accession number: EF100863), was identified three times from the screening and was verified by northern blotting. The miR-193c subspecies differs from miR- 193b by one nucleotide at position nt 21 and by the lack of three Us at the 39 end (miR-193b, 59-aacuggcccucaaagucccgcuuu-39; miR-193c, 59-aacuggcccucaaagucccga-39). The expression profile of the newly identified miR-193c which is 3-nt smaller than miR- 193b was similar to that of miR-21 in HeLa cells and 293 cells, but less abundant than miR-27a. HeLa and 293 cells produced no detectable miR-205 as a doublet as seen in CaSki cells (Fig. 2A).\n\nBased on these cloning results, we further screened several available cervical cancer cell lines with or without HPV infection by northern blotting for the expression of 8 miRNAs with relatively high cloning frequency and 2 miRNAs (miR-143 and miR-145) which were not isolated in our cloning (Table 1). Eight cervical cancer cell lines; two isolates of the W12 cell line (20861 with integrated HPV16 genomes and 20863 with episomal HPV16 genomes) originally isolated from a cervical intraepithelial neoplasia (CIN) biopsy tissues [26] and HaCaT cells (an immortalized HPV-negative skin keratinocyte line) [27] were examined for the expression of the 10 miRNAs. A paired total RNAs from cervical cancer and adjacent normal cervical tissues commercially obtained from Ambion were also compared. All cell lines and cervical cancer tissues showed a similar miRNA expression profile. This miRNA profile differed from normal cervical tissues with reduced expression of miR-27a, miR-143, and miR-145 (Fig. 2B). In contrast, the cervical cancer tissue and the\n\ncell lines, except SiHa (HPV16 <sup>+</sup>), HeLa (HPV18 <sup>+</sup>), and C33A cells (HPV <sup>2</sup>), had increased expression of miR-205 when compared with normal cervical tissue (Fig. 2B). SiHa, HeLa, and C33A cells have no expression of miR-205. In all of the cell lines, expression of the miR-143 and -145 was less than what was observed in the cervical cancer tissue. Despite the presence of some differences in the expression of individual miRNA from one cell line to another, we were unable to specify an expression profile of those detected miRNAs in correlation to the presence of integrated or episomal HPV genomes. The downregulation of miR-143, which is derived from the same miRNA precursor of miR-145 [28], was further confirmed to be cancer-specific by comparing its expression in cervical cancer tissues to normal cervix (Fig. 2C).\n\n## miRNA expression profile in normal and cancerous cervical tissues\n\nSince our cloning approach has a limitation in the isolation of low abundant miRNAs and northern blotting is limited by the probe chosen, the two methods may not be the best to distinguish a difference from one cell line to another in miRNA expression profile. To further investigate whether miRNAs are differentially expressed in cervical cancer tissues, we collected five pairs of agematched normal and cancerous cervical tissues and compared",
+  "kinds": [
+    "paragraph",
+    "paragraph",
+    "heading",
+    "paragraph",
+    "paragraph",
+    "heading",
+    "paragraph",
+    "paragraph",
+    "paragraph",
+    "heading",
+    "paragraph"
+  ],
+  "headings": [
+    {
+      "level": 2,
+      "text": "Results"
+    },
+    {
+      "level": 2,
+      "text": "miRNA expression profile in cervical cancer cell lines"
+    },
+    {
+      "level": 2,
+      "text": "miRNA expression profile in normal and cancerous cervical tissues"
+    }
+  ],
+  "tables": []
+}

@@ -1,0 +1,462 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for Pixmap, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: Pixmap
+rust_path: pdfluent::compat::Pixmap
+names: {python: Pixmap, node: Pixmap, java: Pixmap, dotnet: Pixmap}
+members:
+  - name: __eq__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __eq__, node: eq, java: eq, dotnet: Eq}
+    rust: "Pixmap::PartialEq"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-eq]
+  - name: __ge__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ge__, node: ge, java: ge, dotnet: Ge}
+    rust: "Pixmap::compare"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-ge]
+  - name: __gt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __gt__, node: gt, java: gt, dotnet: Gt}
+    rust: "Pixmap::compare"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-gt]
+  - name: __init__
+    kind: constructor
+    signature: "(*args)"
+    names: {python: __init__, node: Pixmap, java: Pixmap, dotnet: Pixmap}
+    rust: "Pixmap::new"
+    tier: T1
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-init-blank, l3-pixmap-init-bytes, l3-pixmap-init-convert, l3-pixmap-init-copy, l3-pixmap-init-file]
+  - name: __le__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __le__, node: le, java: le, dotnet: Le}
+    rust: "Pixmap::compare"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-le]
+  - name: __len__
+    kind: operator
+    signature: "()"
+    names: {python: __len__, node: len, java: len, dotnet: Len}
+    rust: "Pixmap::len"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-len]
+  - name: __lt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __lt__, node: lt, java: lt, dotnet: Lt}
+    rust: "Pixmap::compare"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-order]
+  - name: __ne__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ne__, node: ne, java: ne, dotnet: Ne}
+    rust: "Pixmap::PartialEq"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-ne]
+  - name: alpha
+    kind: property
+    signature: "()"
+    names: {python: alpha, node: alpha, java: getAlpha, dotnet: Alpha}
+    rust: "Pixmap::alpha"
+    tier: T2
+    lane: L3
+    status: missing
+    tests: [l3-doc-get-page-pixmap]
+  - name: clear_with
+    kind: method
+    signature: "(value=None, bbox=None)"
+    names: {python: clear_with, node: clearWith, java: clearWith, dotnet: ClearWith}
+    rust: "Pixmap::clear_with"
+    tier: T2
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-clear-with]
+  - name: color_count
+    kind: method
+    signature: "(colors=0, clip=None)"
+    names: {python: color_count, node: colorCount, java: colorCount, dotnet: ColorCount}
+    rust: "Pixmap::color_count"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-color-count]
+  - name: color_topusage
+    kind: method
+    signature: "(clip=None)"
+    names: {python: color_topusage, node: colorTopusage, java: colorTopusage, dotnet: ColorTopusage}
+    rust: "Pixmap::color_topusage"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-color-topusage]
+  - name: colorspace
+    kind: property
+    signature: "()"
+    names: {python: colorspace, node: colorspace, java: getColorspace, dotnet: Colorspace}
+    rust: "Pixmap::colorspace"
+    tier: T2
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-colorspace]
+  - name: copy
+    kind: method
+    signature: "(src, bbox)"
+    names: {python: copy, node: copy, java: copy, dotnet: Copy}
+    rust: "Pixmap::copy"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-copy]
+  - name: digest
+    kind: property
+    signature: "()"
+    names: {python: digest, node: digest, java: getDigest, dotnet: Digest}
+    rust: "Pixmap::digest"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-digest]
+  - name: gamma_with
+    kind: method
+    signature: "(gamma)"
+    names: {python: gamma_with, node: gammaWith, java: gammaWith, dotnet: GammaWith}
+    rust: "Pixmap::gamma_with"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-gamma-with]
+  - name: h
+    kind: property
+    signature: "()"
+    names: {python: h, node: h, java: getH, dotnet: H}
+    rust: "Pixmap::h"
+    tier: T2
+    lane: L3
+    status: partial
+    tests: [l3-pixmap-size]
+  - name: height
+    kind: property
+    signature: "()"
+    names: {python: height, node: height, java: getHeight, dotnet: Height}
+    rust: "Pixmap::height"
+    tier: T1
+    lane: L3
+    status: partial
+    tests: [l3-pixmap-size]
+  - name: invert_irect
+    kind: method
+    signature: "(bbox=None)"
+    names: {python: invert_irect, node: invertIrect, java: invertIrect, dotnet: InvertIrect}
+    rust: "Pixmap::invert_irect"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-invert-irect]
+  - name: irect
+    kind: property
+    signature: "()"
+    names: {python: irect, node: irect, java: getIrect, dotnet: Irect}
+    rust: "Pixmap::irect"
+    tier: T2
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-layout]
+  - name: is_monochrome
+    kind: property
+    signature: "()"
+    names: {python: is_monochrome, node: isMonochrome, java: isMonochrome, dotnet: IsMonochrome}
+    rust: "Pixmap::is_monochrome"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-is-monochrome]
+  - name: is_unicolor
+    kind: property
+    signature: "()"
+    names: {python: is_unicolor, node: isUnicolor, java: isUnicolor, dotnet: IsUnicolor}
+    rust: "Pixmap::is_unicolor"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-unicolor]
+  - name: n
+    kind: property
+    signature: "()"
+    names: {python: n, node: n, java: getN, dotnet: N}
+    rust: "Pixmap::n"
+    tier: T1
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-layout]
+  - name: pdfocr_save
+    kind: method
+    signature: "(filename, compress=1, language=None, tessdata=None)"
+    names: {python: pdfocr_save, node: pdfocrSave, java: pdfocrSave, dotnet: PdfocrSave}
+    rust: "Pixmap::pdfocr_save"
+    tier: T3
+    lane: L3
+    status: partial
+    tests: [l3-pixmap-pdfocr-save]
+  - name: pdfocr_tobytes
+    kind: method
+    signature: "(compress=True, language='eng', tessdata=None)"
+    names: {python: pdfocr_tobytes, node: pdfocrTobytes, java: pdfocrTobytes, dotnet: PdfocrTobytes}
+    rust: "Pixmap::pdfocr_tobytes"
+    tier: T3
+    lane: L3
+    status: partial
+    tests: [l3-pixmap-pdfocr-tobytes]
+  - name: pil_image
+    kind: method
+    signature: "()"
+    names: {python: pil_image, node: pilImage, java: pilImage, dotnet: PilImage}
+    rust: "Pixmap::pil_image"
+    tier: T3
+    lane: L3
+    status: partial
+    tests: [l3-pixmap-pil]
+  - name: pil_save
+    kind: method
+    signature: "(*args, **kwargs)"
+    names: {python: pil_save, node: pilSave, java: pilSave, dotnet: PilSave}
+    rust: "Pixmap::pil_save"
+    tier: T3
+    lane: L3
+    status: partial
+    tests: [l3-pixmap-pil-save]
+  - name: pil_tobytes
+    kind: method
+    signature: "(*args, **kwargs)"
+    names: {python: pil_tobytes, node: pilTobytes, java: pilTobytes, dotnet: PilTobytes}
+    rust: "Pixmap::pil_tobytes"
+    tier: T3
+    lane: L3
+    status: partial
+    tests: [l3-pixmap-pil-tobytes]
+  - name: pixel
+    kind: method
+    signature: "(x, y)"
+    names: {python: pixel, node: pixel, java: pixel, dotnet: Pixel}
+    rust: "Pixmap::pixel"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-pixel, l3-pixmap-pixel-oob]
+  - name: samples
+    kind: property
+    signature: "()"
+    names: {python: samples, node: samples, java: getSamples, dotnet: Samples}
+    rust: "Pixmap::samples"
+    tier: T1
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-samples]
+  - name: samples_mv
+    kind: property
+    signature: "()"
+    names: {python: samples_mv, node: samplesMv, java: getSamplesMv, dotnet: SamplesMv}
+    rust: "Pixmap::samples_mv"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-samples-mv]
+  - name: samples_ptr
+    kind: property
+    signature: "()"
+    names: {python: samples_ptr, node: samplesPtr, java: getSamplesPtr, dotnet: SamplesPtr}
+    rust: "Pixmap::samples_ptr"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-samples-ptr]
+  - name: save
+    kind: method
+    signature: "(filename, output=None, jpg_quality=95)"
+    names: {python: save, node: save, java: save, dotnet: Save}
+    rust: "Pixmap::save"
+    tier: T1
+    lane: L3
+    status: partial
+    tests: [l3-pixmap-save]
+  - name: set_alpha
+    kind: method
+    signature: "(alphavalues=None, premultiply=1, opaque=None, matte=None)"
+    names: {python: set_alpha, node: setAlpha, java: setAlpha, dotnet: SetAlpha}
+    rust: "Pixmap::set_alpha"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-set-alpha]
+  - name: set_dpi
+    kind: method
+    signature: "(xres, yres)"
+    names: {python: set_dpi, node: setDpi, java: setDpi, dotnet: SetDpi}
+    rust: "Pixmap::set_dpi"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-resolution, l3-pixmap-set-dpi]
+  - name: set_origin
+    kind: method
+    signature: "(x, y)"
+    names: {python: set_origin, node: setOrigin, java: setOrigin, dotnet: SetOrigin}
+    rust: "Pixmap::set_origin"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-set-origin]
+  - name: set_pixel
+    kind: method
+    signature: "(x, y, color)"
+    names: {python: set_pixel, node: setPixel, java: setPixel, dotnet: SetPixel}
+    rust: "Pixmap::set_pixel"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-set-pixel]
+  - name: set_rect
+    kind: method
+    signature: "(bbox, color)"
+    names: {python: set_rect, node: setRect, java: setRect, dotnet: SetRect}
+    rust: "Pixmap::set_rect"
+    tier: T2
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-set-rect]
+  - name: shrink
+    kind: method
+    signature: "(factor)"
+    names: {python: shrink, node: shrink, java: shrink, dotnet: Shrink}
+    rust: "Pixmap::shrink"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-shrink]
+  - name: size
+    kind: property
+    signature: "()"
+    names: {python: size, node: size, java: getSize, dotnet: Size}
+    rust: "Pixmap::size"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-size]
+  - name: stride
+    kind: property
+    signature: "()"
+    names: {python: stride, node: stride, java: getStride, dotnet: Stride}
+    rust: "Pixmap::stride"
+    tier: T2
+    lane: L3
+    status: missing
+    tests: [l3-doc-get-page-pixmap]
+  - name: tint_with
+    kind: method
+    signature: "(black, white)"
+    names: {python: tint_with, node: tintWith, java: tintWith, dotnet: TintWith}
+    rust: "Pixmap::tint_with"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-tint-with]
+  - name: tobytes
+    kind: method
+    signature: "(output='png', jpg_quality=95)"
+    names: {python: tobytes, node: tobytes, java: tobytes, dotnet: Tobytes}
+    rust: "Pixmap::tobytes"
+    tier: T1
+    lane: L3
+    status: partial
+    tests: [l3-pixmap-tobytes-bad, l3-pixmap-tobytes-jpeg, l3-pixmap-tobytes-pam-pgm, l3-pixmap-tobytes-png, l3-pixmap-tobytes-ppm]
+  - name: w
+    kind: property
+    signature: "()"
+    names: {python: w, node: w, java: getW, dotnet: W}
+    rust: "Pixmap::w"
+    tier: T2
+    lane: L3
+    status: partial
+    tests: [l3-pixmap-size]
+  - name: warp
+    kind: method
+    signature: "(quad, width, height)"
+    names: {python: warp, node: warp, java: warp, dotnet: Warp}
+    rust: "Pixmap::warp"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-warp]
+  - name: width
+    kind: property
+    signature: "()"
+    names: {python: width, node: width, java: getWidth, dotnet: Width}
+    rust: "Pixmap::width"
+    tier: T1
+    lane: L3
+    status: partial
+    tests: [l3-pixmap-72]
+  - name: x
+    kind: property
+    signature: "()"
+    names: {python: x, node: x, java: getX, dotnet: X}
+    rust: "Pixmap::x"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-x]
+  - name: xres
+    kind: property
+    signature: "()"
+    names: {python: xres, node: xres, java: getXres, dotnet: Xres}
+    rust: "Pixmap::xres"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-xres]
+  - name: y
+    kind: property
+    signature: "()"
+    names: {python: y, node: y, java: getY, dotnet: Y}
+    rust: "Pixmap::y"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-y]
+  - name: yres
+    kind: property
+    signature: "()"
+    names: {python: yres, node: yres, java: getYres, dotnet: Yres}
+    rust: "Pixmap::yres"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-pixmap-yres]

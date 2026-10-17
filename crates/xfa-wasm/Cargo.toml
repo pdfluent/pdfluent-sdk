@@ -6,7 +6,7 @@ name = "xfa-wasm"
 # unified, the crates.io graph stays heterogeneous). wasm-pack derives the
 # generated package.json version from this [package] version, and the
 # [package.metadata.npm] block below must say the same thing.
-version = "1.0.0"
+version = "1.1.0"
 edition.workspace = true
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
 license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
@@ -28,36 +28,38 @@ pdf-syntax.workspace = true
 pdf-engine = { workspace = true, features = ["xfa"] }
 pdf-sign.workspace = true
 pdf-compliance.workspace = true
-pdf-render = { path = "../pdf-render", optional = true, version = "=1.0.0" }
-pdf-annot = { path = "../pdf-annot", optional = true, version = "=1.0.0" }
+pdf-render = { path = "../pdf-render", optional = true, version = "=1.1.0" }
+pdf-annot = { path = "../pdf-annot", optional = true, version = "=1.1.0" }
 wasm-bindgen = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 indexmap.workspace = true
 js-sys = "0.3"
 kurbo = "0.13"
-pdf-manip = { path = "../pdf-manip", features = ["pdfa-convert"], version = "=1.0.0" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0" }
+pdf-manip = { path = "../pdf-manip", features = ["pdfa-convert"], version = "=1.1.0" }
+pdf-redact = { path = "../pdf-redact", version = "=1.1.0" }
 pdf-forms = { workspace = true }
-pdfluent = { path = "../pdfluent", version = "=1.0.0" }
-pdf-text-format = { path = "../pdf-text-format", version = "=1.0.0" }
+pdfluent = { path = "../pdfluent", version = "=1.1.0" }
+pdf-text-format = { path = "../pdf-text-format", version = "=1.1.0" }
+# Image extraction (#616). Already in the binary through office export.
+pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.1.0" }
 
 # Office export in the browser. These three build for wasm32 -- they touch no
 # filesystem and depend only on pdf-extract, quick-xml, zip and log. They were
 # excluded by a comment that applied to pdf-render (vello), which meant the
 # browser SDK could not export to Word, Excel or PowerPoint at all while the
 # feature page sold it.
-pdf-docx = { path = "../pdf-docx", version = "=1.0.0" }
-pdf-xlsx = { path = "../pdf-xlsx", version = "=1.0.0" }
-pdf-pptx = { path = "../pdf-pptx", version = "=1.0.0" }
+pdf-docx = { path = "../pdf-docx", version = "=1.1.0" }
+pdf-xlsx = { path = "../pdf-xlsx", version = "=1.1.0" }
+pdf-pptx = { path = "../pdf-pptx", version = "=1.1.0" }
 
 # lopdf: required for text extraction; annotate uses lopdf for mutation.
 # Direct path (not workspace = true) to allow per-target default-features override.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.5" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.6" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.5" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.6" }
 # getrandom v0.2 (transitively via p12/pdf-sign) needs "js" feature on wasm32.
 getrandom = { version = "0.2", features = ["js"] }
 web-sys = { version = "0.3", features = [
@@ -85,13 +87,13 @@ wasm-bindgen-test = "0.3"
 # Used by tests/edit_handle.rs to synthesise minimal PDFs with known
 # extractable text runs (avoids dependency on specific corpus encoding).
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.5" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.6" }
 
 # npm package identity — set by scripts/release/transform-wasm-pkg.sh at
 # publish time. Cargo workspace version and npm version are independent.
 [package.metadata.npm]
 name = "@pdfluent/sdk-wasm"
-version = "1.0.0"
+version = "1.1.0"
 
 [package.metadata.wasm-pack.profile.release]
 # B3 — wasm-opt -O3 enabled after evaluation. See

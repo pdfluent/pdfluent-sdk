@@ -122,6 +122,43 @@ PROMISES: dict[str, tuple[str, list[str], list[str]]] = {
         ["pdf-manip", "pdf-compliance", "pdfluent", "xfa-wasm"],
         ["convert_to_pdfa", "convert_bytes", "validate_pdfa"],
     ),
+    # Added with the API over the block model (#573, epic #574). The classifier
+    # work landed in #567-#572 with no way for a customer to call it: what is
+    # promised here is the pair of methods, on the facade and in all five
+    # bindings, which is what this row's symbols name.
+    "Structured extraction": (
+        "Extract a document as markdown or as blocks -- headings, lists, "
+        "tables and reading order -- for RAG and conversion",
+        ["pdf-engine", "pdfluent", "pdf-capi", "xfa-wasm", "pdf-node", "pdf-python"],
+        ["extract_markdown", "extract_blocks", "to_markdown", "to_json"],
+    ),
+}
+
+# Every advertised capability names the `pdfluent` command(s) that serve it.
+# A name is the subcommand plus the distinguishing flag where one command
+# serves several capabilities (`convert --to docx`).
+#
+# Read by `capability_register.py` (rendered as the CLI row of each
+# capability) and by the pdfluent-cli drift test (`tests/cli_drift.rs`),
+# which requires every name here to exist in `pdfluent --help` and to be
+# covered by a test. A capability with no entry renders as **none** and
+# fails the drift test by name, so a new promise cannot land without its
+# command wired and tested.
+CLI_COMMANDS: dict[str, list[str]] = {
+    "Merge PDF": ["merge"],
+    "Split PDF": ["split"],
+    "Organize PDF pages": ["pages"],
+    "Compress PDF": ["compress"],
+    "Password protect PDF": ["protect", "unprotect"],
+    "Add watermark to PDF": ["watermark"],
+    "PDF to Word": ["convert --to docx"],
+    "PDF to Excel": ["convert --to xlsx"],
+    "PDF to PowerPoint": ["convert --to pptx"],
+    "PDF to image": ["convert --to png", "convert --to jpeg"],
+    "Redact PDF": ["redact"],
+    "Digitally sign PDF": ["sign"],
+    "PDF to PDF/A": ["convert --to pdfa", "validate --pdfa"],
+    "Structured extraction": ["extract"],
 }
 
 

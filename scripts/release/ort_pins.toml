@@ -1,0 +1,82 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+
+# The ONNX Runtime 1.23.2 pin table: the single source for the five runtime
+# libraries `pdfluent models install` ships (one per platform).
+#
+# Every library comes from the OFFICIAL microsoft/onnxruntime v1.23.2 GitHub
+# release assets below -- never from a wheel, never from a CDN mirror. The
+# archive digests were cross-checked against the release API's own `digest`
+# fields (all five match); the library digests are over the extracted member
+# bytes that the release workflow stages. `fetch_ort_libs.py` reads this file,
+# verifies both digests, and refuses on any mismatch.
+#
+# Platform keys and `asset` names mirror `OrtLibrary` in
+# crates/pdfluent-cli/src/cmd_models.rs (`platform`, `remote`) exactly; the
+# test holds the two to the same five pairs.
+ort_version = "1.23.2"
+source = "https://github.com/microsoft/onnxruntime/releases/tag/v1.23.2"
+
+# Thin Mach-O arm64, Developer ID signed by Microsoft Corporation.
+[macos-arm64]
+archive_url = "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-osx-arm64-1.23.2.tgz"
+archive_sha256 = "b4d513ab2b26f088c66891dbbc1408166708773d7cc4163de7bdca0e9bbb7856"
+archive_size = 9999931
+member = "onnxruntime-osx-arm64-1.23.2/lib/libonnxruntime.1.23.2.dylib"
+asset = "onnxruntime-macos-arm64-1.23.2.dylib"
+lib_sha256 = "d306d2bc768540766c7ed8a1e0ff05d2870c77a934ebeee4a7bafa1b732ef299"
+lib_size = 35138784
+license_sha256 = "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c"
+notices_sha256 = "e9e90971a8e75a9a8ac0c6412e29c1202d079998389915aa485f46c816c3b4cc"
+
+# Thin Mach-O x86_64, Developer ID signed by Microsoft Corporation.
+[macos-x86_64]
+archive_url = "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-osx-x86_64-1.23.2.tgz"
+archive_sha256 = "d10359e16347b57d9959f7e80a225a5b4a66ed7d7e007274a15cae86836485a6"
+archive_size = 11676322
+member = "onnxruntime-osx-x86_64-1.23.2/lib/libonnxruntime.1.23.2.dylib"
+asset = "onnxruntime-macos-x86_64-1.23.2.dylib"
+lib_sha256 = "8c9c78de65ea3786f987c0d980e9c1b13a3a5fbc6b3e2965ba05b450e6e4c054"
+lib_size = 39742608
+license_sha256 = "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c"
+notices_sha256 = "e9e90971a8e75a9a8ac0c6412e29c1202d079998389915aa485f46c816c3b4cc"
+
+# ELF 64-bit x86-64.
+[linux-x86_64]
+archive_url = "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-x64-1.23.2.tgz"
+archive_sha256 = "1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b"
+archive_size = 8309231
+member = "onnxruntime-linux-x64-1.23.2/lib/libonnxruntime.so.1.23.2"
+asset = "onnxruntime-linux-x86_64-1.23.2.so"
+lib_sha256 = "13ab8084954fa4a47c777880180b90810d6020f021441395712b48a75b74c68b"
+lib_size = 22326072
+license_sha256 = "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c"
+notices_sha256 = "e9e90971a8e75a9a8ac0c6412e29c1202d079998389915aa485f46c816c3b4cc"
+
+# ELF 64-bit AArch64.
+[linux-aarch64]
+archive_url = "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-aarch64-1.23.2.tgz"
+archive_sha256 = "7c63c73560ed76b1fac6cff8204ffe34fe180e70d6582b5332ec094810241e5c"
+archive_size = 7254068
+member = "onnxruntime-linux-aarch64-1.23.2/lib/libonnxruntime.so.1.23.2"
+asset = "onnxruntime-linux-arm64-1.23.2.so"
+lib_sha256 = "648ffa64fbe027ae27139109410900cf776a030dec2dbbac51053318cc44c286"
+lib_size = 18693384
+license_sha256 = "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c"
+notices_sha256 = "e9e90971a8e75a9a8ac0c6412e29c1202d079998389915aa485f46c816c3b4cc"
+
+# PE32+ DLL, machine AMD64. The licence texts are byte-identical to the other
+# four archives modulo CRLF line endings, hence the distinct digests.
+[windows-x86_64]
+archive_url = "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip"
+archive_sha256 = "0b38df9af21834e41e73d602d90db5cb06dbd1ca618948b8f1d66d607ac9f3cd"
+archive_size = 78127794
+member = "onnxruntime-win-x64-1.23.2/lib/onnxruntime.dll"
+asset = "onnxruntime-windows-x86_64-1.23.2.dll"
+lib_sha256 = "dec964ab1ee36cc9b0ae247d13b376627992fc57dec0454354017ab8fd84f1ea"
+lib_size = 14186016
+license_sha256 = "c250d6278f0b47a6439fb7592b08b58a55eb9f535aa49a1db63211c3f982b674"
+notices_sha256 = "e00f828e0a33de591a355ae6606d2625f5758da7d2c844db7821c9dd3e3647b6"

@@ -1,0 +1,1121 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for Page, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: Page
+rust_path: pdfluent::compat::Page
+names: {python: Page, node: Page, java: Page, dotnet: Page}
+members:
+  - name: __eq__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __eq__, node: eq, java: eq, dotnet: Eq}
+    rust: "Page::PartialEq"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-eq]
+  - name: __ge__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ge__, node: ge, java: ge, dotnet: Ge}
+    rust: "Page::compare"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-ge]
+  - name: __gt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __gt__, node: gt, java: gt, dotnet: Gt}
+    rust: "Page::compare"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-gt]
+  - name: __init__
+    kind: constructor
+    signature: "(page, document)"
+    names: {python: __init__, node: Page, java: Page, dotnet: Page}
+    rust: "Page::new"
+    tier: T1
+    lane: L2
+    status: missing
+    tests: [l2-page-init]
+  - name: __le__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __le__, node: le, java: le, dotnet: Le}
+    rust: "Page::compare"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-le]
+  - name: __lt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __lt__, node: lt, java: lt, dotnet: Lt}
+    rust: "Page::compare"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-lt]
+  - name: __ne__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ne__, node: ne, java: ne, dotnet: Ne}
+    rust: "Page::PartialEq"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-ne]
+  - name: add_caret_annot
+    kind: method
+    signature: "(point: 'point_like') -> 'Annot'"
+    names: {python: add_caret_annot, node: addCaretAnnot, java: addCaretAnnot, dotnet: AddCaretAnnot}
+    rust: "Page::add_caret_annot"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.add_caret_annot.basic]
+  - name: add_circle_annot
+    kind: method
+    signature: "(rect: 'rect_like') -> 'Annot'"
+    names: {python: add_circle_annot, node: addCircleAnnot, java: addCircleAnnot, dotnet: AddCircleAnnot}
+    rust: "Page::add_circle_annot"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.add_circle_annot.basic]
+  - name: add_file_annot
+    kind: method
+    signature: "(point: 'point_like', buffer_: 'ByteString', filename: 'str', ufilename: 'OptStr'=None, desc: 'OptStr'=None, icon: 'OptStr'=None) -> 'Annot'"
+    names: {python: add_file_annot, node: addFileAnnot, java: addFileAnnot, dotnet: AddFileAnnot}
+    rust: "Page::add_file_annot"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.add_file_annot.basic]
+  - name: add_freetext_annot
+    kind: method
+    signature: "(rect: 'rect_like', text: 'str', *, fontsize: 'float'=11, fontname: 'OptStr'=None, text_color: 'OptSeq'=None, fill_color: 'OptSeq'=None, border_color: 'OptSeq'=None, border_width: 'float'=0, dashes: 'OptSeq'=None, callout: 'OptSeq'=None, line_end: 'int'=4, opacity: 'float'=1, align: 'int'=0, rotate: 'int'=0, richtext=False, style=None) -> 'Annot'"
+    names: {python: add_freetext_annot, node: addFreetextAnnot, java: addFreetextAnnot, dotnet: AddFreetextAnnot}
+    rust: "Page::add_freetext_annot"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.add_freetext_annot.basic, L4.add_freetext_annot.options]
+  - name: add_highlight_annot
+    kind: method
+    signature: "(quads=None, start=None, stop=None, clip=None) -> 'Annot'"
+    names: {python: add_highlight_annot, node: addHighlightAnnot, java: addHighlightAnnot, dotnet: AddHighlightAnnot}
+    rust: "Page::add_highlight_annot"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.add_highlight_annot.quads, L4.add_highlight_annot.selection]
+  - name: add_ink_annot
+    kind: method
+    signature: "(handwriting: 'list') -> 'Annot'"
+    names: {python: add_ink_annot, node: addInkAnnot, java: addInkAnnot, dotnet: AddInkAnnot}
+    rust: "Page::add_ink_annot"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.add_ink_annot.basic]
+  - name: add_line_annot
+    kind: method
+    signature: "(p1: 'point_like', p2: 'point_like') -> 'Annot'"
+    names: {python: add_line_annot, node: addLineAnnot, java: addLineAnnot, dotnet: AddLineAnnot}
+    rust: "Page::add_line_annot"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.add_line_annot.basic]
+  - name: add_polygon_annot
+    kind: method
+    signature: "(points: 'list') -> 'Annot'"
+    names: {python: add_polygon_annot, node: addPolygonAnnot, java: addPolygonAnnot, dotnet: AddPolygonAnnot}
+    rust: "Page::add_polygon_annot"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.add_polygon_annot.basic]
+  - name: add_polyline_annot
+    kind: method
+    signature: "(points: 'list') -> 'Annot'"
+    names: {python: add_polyline_annot, node: addPolylineAnnot, java: addPolylineAnnot, dotnet: AddPolylineAnnot}
+    rust: "Page::add_polyline_annot"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.add_polyline_annot.basic]
+  - name: add_rect_annot
+    kind: method
+    signature: "(rect: 'rect_like') -> 'Annot'"
+    names: {python: add_rect_annot, node: addRectAnnot, java: addRectAnnot, dotnet: AddRectAnnot}
+    rust: "Page::add_rect_annot"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.add_rect_annot.basic]
+  - name: add_redact_annot
+    kind: method
+    signature: "(quad, text: 'OptStr'=None, fontname: 'OptStr'=None, fontsize: 'float'=11, align: 'int'=0, fill: 'OptSeq'=None, text_color: 'OptSeq'=None, cross_out: 'bool'=True) -> 'Annot'"
+    names: {python: add_redact_annot, node: addRedactAnnot, java: addRedactAnnot, dotnet: AddRedactAnnot}
+    rust: "Page::add_redact_annot"
+    tier: T1
+    lane: L4
+    status: missing
+    tests: [L4.add_redact_annot.basic]
+  - name: add_squiggly_annot
+    kind: method
+    signature: "(quads=None, start=None, stop=None, clip=None) -> 'Annot'"
+    names: {python: add_squiggly_annot, node: addSquigglyAnnot, java: addSquigglyAnnot, dotnet: AddSquigglyAnnot}
+    rust: "Page::add_squiggly_annot"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.add_squiggly_annot.quads]
+  - name: add_stamp_annot
+    kind: method
+    signature: "(rect: 'rect_like', stamp=0) -> 'Annot'"
+    names: {python: add_stamp_annot, node: addStampAnnot, java: addStampAnnot, dotnet: AddStampAnnot}
+    rust: "Page::add_stamp_annot"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.add_stamp_annot.basic]
+  - name: add_strikeout_annot
+    kind: method
+    signature: "(quads=None, start=None, stop=None, clip=None) -> 'Annot'"
+    names: {python: add_strikeout_annot, node: addStrikeoutAnnot, java: addStrikeoutAnnot, dotnet: AddStrikeoutAnnot}
+    rust: "Page::add_strikeout_annot"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.add_strikeout_annot.quads]
+  - name: add_text_annot
+    kind: method
+    signature: "(point: 'point_like', text: 'str', icon: 'str'='Note') -> 'Annot'"
+    names: {python: add_text_annot, node: addTextAnnot, java: addTextAnnot, dotnet: AddTextAnnot}
+    rust: "Page::add_text_annot"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.add_text_annot.basic]
+  - name: add_underline_annot
+    kind: method
+    signature: "(quads=None, start=None, stop=None, clip=None) -> 'Annot'"
+    names: {python: add_underline_annot, node: addUnderlineAnnot, java: addUnderlineAnnot, dotnet: AddUnderlineAnnot}
+    rust: "Page::add_underline_annot"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.add_underline_annot.quads]
+  - name: add_widget
+    kind: method
+    signature: "(widget: 'Widget') -> 'Annot'"
+    names: {python: add_widget, node: addWidget, java: addWidget, dotnet: AddWidget}
+    rust: "Page::add_widget"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.widget.add]
+  - name: annot_names
+    kind: method
+    signature: "()"
+    names: {python: annot_names, node: annotNames, java: annotNames, dotnet: AnnotNames}
+    rust: "Page::annot_names"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.annot_names.list]
+  - name: annot_xrefs
+    kind: method
+    signature: "()"
+    names: {python: annot_xrefs, node: annotXrefs, java: annotXrefs, dotnet: AnnotXrefs}
+    rust: "Page::annot_xrefs"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-annot-xrefs]
+  - name: annots
+    kind: method
+    signature: "(types=None)"
+    names: {python: annots, node: annots, java: annots, dotnet: Annots}
+    rust: "Page::annots"
+    tier: T2
+    lane: L4
+    status: partial
+    tests: [L4.annots.list, L4.annots.types_filter]
+  - name: apply_redactions
+    kind: method
+    signature: "(images: 'int'=2, graphics: 'int'=1, text: 'int'=0) -> 'bool'"
+    names: {python: apply_redactions, node: applyRedactions, java: applyRedactions, dotnet: ApplyRedactions}
+    rust: "Page::apply_redactions"
+    tier: T1
+    lane: L4
+    status: partial
+    tests: [L4.apply_redactions.text]
+  - name: artbox
+    kind: property
+    signature: "()"
+    names: {python: artbox, node: artbox, java: getArtbox, dotnet: Artbox}
+    rust: "Page::artbox"
+    tier: T3
+    lane: L2
+    status: partial
+    tests: [l2.page.boxes]
+  - name: bleedbox
+    kind: property
+    signature: "()"
+    names: {python: bleedbox, node: bleedbox, java: getBleedbox, dotnet: Bleedbox}
+    rust: "Page::bleedbox"
+    tier: T3
+    lane: L2
+    status: partial
+    tests: [l2-page-bleedbox]
+  - name: bound
+    kind: method
+    signature: "()"
+    names: {python: bound, node: bound, java: bound, dotnet: Bound}
+    rust: "Page::bound"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-bound]
+  - name: clean_contents
+    kind: method
+    signature: "(sanitize=1)"
+    names: {python: clean_contents, node: cleanContents, java: cleanContents, dotnet: CleanContents}
+    rust: "Page::clean_contents"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.annot.appearance_state]
+  - name: clip_to_rect
+    kind: method
+    signature: "(rect)"
+    names: {python: clip_to_rect, node: clipToRect, java: clipToRect, dotnet: ClipToRect}
+    rust: "Page::clip_to_rect"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-clip-to-rect]
+  - name: cluster_drawings
+    kind: method
+    signature: "(clip=None, drawings=None, x_tolerance: 'float'=3, y_tolerance: 'float'=3, final_filter: 'bool'=True) -> 'list'"
+    names: {python: cluster_drawings, node: clusterDrawings, java: clusterDrawings, dotnet: ClusterDrawings}
+    rust: "Page::cluster_drawings"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-cluster-drawings]
+  - name: cropbox
+    kind: property
+    signature: "()"
+    names: {python: cropbox, node: cropbox, java: getCropbox, dotnet: Cropbox}
+    rust: "Page::cropbox"
+    tier: T3
+    lane: L2
+    status: partial
+    tests: [l2-page-cropbox]
+  - name: cropbox_position
+    kind: property
+    signature: "()"
+    names: {python: cropbox_position, node: cropboxPosition, java: getCropboxPosition, dotnet: CropboxPosition}
+    rust: "Page::cropbox_position"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-cropbox-position]
+  - name: delete_annot
+    kind: method
+    signature: "(annot)"
+    names: {python: delete_annot, node: deleteAnnot, java: deleteAnnot, dotnet: DeleteAnnot}
+    rust: "Page::delete_annot"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.delete_annot.basic]
+  - name: delete_image
+    kind: method
+    signature: "(xref: 'int')"
+    names: {python: delete_image, node: deleteImage, java: deleteImage, dotnet: DeleteImage}
+    rust: "Page::delete_image"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-delete-image]
+  - name: delete_link
+    kind: method
+    signature: "(linkdict)"
+    names: {python: delete_link, node: deleteLink, java: deleteLink, dotnet: DeleteLink}
+    rust: "Page::delete_link"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.links.delete, l2.links.delete_bad]
+  - name: delete_widget
+    kind: method
+    signature: "(widget: 'Widget') -> 'Widget'"
+    names: {python: delete_widget, node: deleteWidget, java: deleteWidget, dotnet: DeleteWidget}
+    rust: "Page::delete_widget"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-delete-widget]
+  - name: derotation_matrix
+    kind: property
+    signature: "()"
+    names: {python: derotation_matrix, node: derotationMatrix, java: getDerotationMatrix, dotnet: DerotationMatrix}
+    rust: "Page::derotation_matrix"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-derotation-matrix]
+  - name: draw_bezier
+    kind: method
+    signature: "(p1: 'point_like', p2: 'point_like', p3: 'point_like', p4: 'point_like', color: 'OptSeq'=(0,), fill: 'OptSeq'=None, dashes: 'OptStr'=None, width: 'float'=1, morph: 'OptStr'=None, closePath: 'bool'=False, lineCap: 'int'=0, lineJoin: 'int'=0, overlay: 'bool'=True, stroke_opacity: 'float'=1, fill_opacity: 'float'=1, oc: 'int'=0) -> 'Point'"
+    names: {python: draw_bezier, node: drawBezier, java: drawBezier, dotnet: DrawBezier}
+    rust: "Page::draw_bezier"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l4-page-draw-bezier]
+  - name: draw_circle
+    kind: method
+    signature: "(center: 'point_like', radius: 'float', color: 'OptSeq'=(0,), fill: 'OptSeq'=None, morph: 'OptSeq'=None, dashes: 'OptStr'=None, width: 'float'=1, lineCap: 'int'=0, lineJoin: 'int'=0, overlay: 'bool'=True, stroke_opacity: 'float'=1, fill_opacity: 'float'=1, oc: 'int'=0) -> 'Point'"
+    names: {python: draw_circle, node: drawCircle, java: drawCircle, dotnet: DrawCircle}
+    rust: "Page::draw_circle"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.page.draw_shapes]
+  - name: draw_curve
+    kind: method
+    signature: "(p1: 'point_like', p2: 'point_like', p3: 'point_like', color: 'OptSeq'=(0,), fill: 'OptSeq'=None, dashes: 'OptStr'=None, width: 'float'=1, morph: 'OptSeq'=None, closePath: 'bool'=False, lineCap: 'int'=0, lineJoin: 'int'=0, overlay: 'bool'=True, stroke_opacity: 'float'=1, fill_opacity: 'float'=1, oc: 'int'=0) -> 'Point'"
+    names: {python: draw_curve, node: drawCurve, java: drawCurve, dotnet: DrawCurve}
+    rust: "Page::draw_curve"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-draw-curve]
+  - name: draw_line
+    kind: method
+    signature: "(p1: 'point_like', p2: 'point_like', color: 'OptSeq'=(0,), dashes: 'OptStr'=None, width: 'float'=1, lineCap: 'int'=0, lineJoin: 'int'=0, overlay: 'bool'=True, morph: 'OptSeq'=None, stroke_opacity: 'float'=1, fill_opacity: 'float'=1, oc=0) -> 'Point'"
+    names: {python: draw_line, node: drawLine, java: drawLine, dotnet: DrawLine}
+    rust: "Page::draw_line"
+    tier: T1
+    lane: L4
+    status: missing
+    tests: [L4.page.draw_shapes]
+  - name: draw_oval
+    kind: method
+    signature: "(rect: 'typing.Union[rect_like, quad_like]', color: 'OptSeq'=(0,), fill: 'OptSeq'=None, dashes: 'OptStr'=None, morph: 'OptSeq'=None, width: 'float'=1, lineCap: 'int'=0, lineJoin: 'int'=0, overlay: 'bool'=True, stroke_opacity: 'float'=1, fill_opacity: 'float'=1, oc: 'int'=0) -> 'Point'"
+    names: {python: draw_oval, node: drawOval, java: drawOval, dotnet: DrawOval}
+    rust: "Page::draw_oval"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-draw-oval]
+  - name: draw_polyline
+    kind: method
+    signature: "(points: 'list', color: 'OptSeq'=(0,), fill: 'OptSeq'=None, dashes: 'OptStr'=None, width: 'float'=1, morph: 'OptSeq'=None, lineCap: 'int'=0, lineJoin: 'int'=0, overlay: 'bool'=True, closePath: 'bool'=False, stroke_opacity: 'float'=1, fill_opacity: 'float'=1, oc: 'int'=0) -> 'Point'"
+    names: {python: draw_polyline, node: drawPolyline, java: drawPolyline, dotnet: DrawPolyline}
+    rust: "Page::draw_polyline"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-draw-polyline]
+  - name: draw_quad
+    kind: method
+    signature: "(quad: 'quad_like', color: 'OptSeq'=(0,), fill: 'OptSeq'=None, dashes: 'OptStr'=None, width: 'float'=1, lineCap: 'int'=0, lineJoin: 'int'=0, morph: 'OptSeq'=None, overlay: 'bool'=True, stroke_opacity: 'float'=1, fill_opacity: 'float'=1, oc: 'int'=0) -> 'Point'"
+    names: {python: draw_quad, node: drawQuad, java: drawQuad, dotnet: DrawQuad}
+    rust: "Page::draw_quad"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-draw-quad]
+  - name: draw_rect
+    kind: method
+    signature: "(rect: 'rect_like', color: 'OptSeq'=(0,), fill: 'OptSeq'=None, dashes: 'OptStr'=None, width: 'float'=1, lineCap: 'int'=0, lineJoin: 'int'=0, morph: 'OptSeq'=None, overlay: 'bool'=True, stroke_opacity: 'float'=1, fill_opacity: 'float'=1, oc: 'int'=0, radius=None) -> 'Point'"
+    names: {python: draw_rect, node: drawRect, java: drawRect, dotnet: DrawRect}
+    rust: "Page::draw_rect"
+    tier: T1
+    lane: L4
+    status: missing
+    tests: [L4.page.draw_shapes]
+  - name: draw_sector
+    kind: method
+    signature: "(center: 'point_like', point: 'point_like', beta: 'float', color: 'OptSeq'=(0,), fill: 'OptSeq'=None, dashes: 'OptStr'=None, fullSector: 'bool'=True, morph: 'OptSeq'=None, width: 'float'=1, closePath: 'bool'=False, lineCap: 'int'=0, lineJoin: 'int'=0, overlay: 'bool'=True, stroke_opacity: 'float'=1, fill_opacity: 'float'=1, oc: 'int'=0) -> 'Point'"
+    names: {python: draw_sector, node: drawSector, java: drawSector, dotnet: DrawSector}
+    rust: "Page::draw_sector"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-draw-sector]
+  - name: draw_squiggle
+    kind: method
+    signature: "(p1: 'point_like', p2: 'point_like', breadth: 'float'=2, color: 'OptSeq'=(0,), dashes: 'OptStr'=None, width: 'float'=1, lineCap: 'int'=0, lineJoin: 'int'=0, overlay: 'bool'=True, morph: 'OptSeq'=None, stroke_opacity: 'float'=1, fill_opacity: 'float'=1, oc: 'int'=0) -> 'Point'"
+    names: {python: draw_squiggle, node: drawSquiggle, java: drawSquiggle, dotnet: DrawSquiggle}
+    rust: "Page::draw_squiggle"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-draw-squiggle]
+  - name: draw_zigzag
+    kind: method
+    signature: "(p1: 'point_like', p2: 'point_like', breadth: 'float'=2, color: 'OptSeq'=(0,), dashes: 'OptStr'=None, width: 'float'=1, lineCap: 'int'=0, lineJoin: 'int'=0, overlay: 'bool'=True, morph: 'OptSeq'=None, stroke_opacity: 'float'=1, fill_opacity: 'float'=1, oc: 'int'=0) -> 'Point'"
+    names: {python: draw_zigzag, node: drawZigzag, java: drawZigzag, dotnet: DrawZigzag}
+    rust: "Page::draw_zigzag"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-draw-zigzag]
+  - name: extend_textpage
+    kind: method
+    signature: "(tpage, flags=0, matrix=None)"
+    names: {python: extend_textpage, node: extendTextpage, java: extendTextpage, dotnet: ExtendTextpage}
+    rust: "Page::extend_textpage"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [L1.extend_textpage.default, L1.extend_textpage.flags]
+  - name: find_tables
+    kind: method
+    signature: "(**kwargs)"
+    names: {python: find_tables, node: findTables, java: findTables, dotnet: FindTables}
+    rust: "Page::find_tables"
+    tier: T1
+    lane: L1
+    status: partial
+    tests: [L4.find_tables.hit, L4.find_tables.miss]
+  - name: first_annot
+    kind: property
+    signature: "()"
+    names: {python: first_annot, node: firstAnnot, java: getFirstAnnot, dotnet: FirstAnnot}
+    rust: "Page::first_annot"
+    tier: T2
+    lane: L4
+    status: partial
+    tests: [L4.first_annot.chain, l4-first-annot]
+  - name: first_link
+    kind: property
+    signature: "()"
+    names: {python: first_link, node: firstLink, java: getFirstLink, dotnet: FirstLink}
+    rust: "Page::first_link"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.links.first_next]
+  - name: first_widget
+    kind: property
+    signature: "()"
+    names: {python: first_widget, node: firstWidget, java: getFirstWidget, dotnet: FirstWidget}
+    rust: "Page::first_widget"
+    tier: T3
+    lane: L4
+    status: partial
+    tests: [l4-page-first-widget]
+  - name: get_bboxlog
+    kind: method
+    signature: "(layers=None)"
+    names: {python: get_bboxlog, node: getBboxlog, java: getBboxlog, dotnet: GetBboxlog}
+    rust: "Page::get_bboxlog"
+    tier: T3
+    lane: L2
+    status: differs
+    tests: [l2-page-get-bboxlog]
+    contract: "line-metric boxes instead of glyph-ink boxes"
+  - name: get_cdrawings
+    kind: method
+    signature: "(extended=None, callback=None, method=None)"
+    names: {python: get_cdrawings, node: getCdrawings, java: getCdrawings, dotnet: GetCdrawings}
+    rust: "Page::get_cdrawings"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-get-cdrawings]
+  - name: get_contents
+    kind: method
+    signature: "()"
+    names: {python: get_contents, node: getContents, java: getContents, dotnet: GetContents}
+    rust: "Page::get_contents"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-page-get-contents]
+  - name: get_displaylist
+    kind: method
+    signature: "(annots=1)"
+    names: {python: get_displaylist, node: getDisplaylist, java: getDisplaylist, dotnet: GetDisplaylist}
+    rust: "Page::get_displaylist"
+    tier: T3
+    lane: L2
+    status: differs
+    tests: [l2-page-get-displaylist]
+  - name: get_drawings
+    kind: method
+    signature: "(extended: 'bool'=False) -> 'list'"
+    names: {python: get_drawings, node: getDrawings, java: getDrawings, dotnet: GetDrawings}
+    rust: "Page::get_drawings"
+    tier: T1
+    lane: L4
+    status: missing
+    tests: [L4.get_drawings.default, L4.get_drawings.extended]
+  - name: get_fonts
+    kind: method
+    signature: "(full=False)"
+    names: {python: get_fonts, node: getFonts, java: getFonts, dotnet: GetFonts}
+    rust: "Page::get_fonts"
+    tier: T2
+    lane: L1
+    status: missing
+    tests: [L4.insert_font.basic]
+  - name: get_image_bbox
+    kind: method
+    signature: "(name, transform=0)"
+    names: {python: get_image_bbox, node: getImageBbox, java: getImageBbox, dotnet: GetImageBbox}
+    rust: "Page::get_image_bbox"
+    tier: T3
+    lane: L3
+    status: missing
+    tests: [l3-page-get-image-bbox, l3-page-get-image-bbox-transform]
+  - name: get_image_info
+    kind: method
+    signature: "(hashes: 'bool'=False, xrefs: 'bool'=False) -> 'list'"
+    names: {python: get_image_info, node: getImageInfo, java: getImageInfo, dotnet: GetImageInfo}
+    rust: "Page::get_image_info"
+    tier: T2
+    lane: L3
+    status: missing
+    tests: [l3-page-get-image-info, l3-page-get-image-info-empty, l3-page-get-image-info-flags]
+  - name: get_image_rects
+    kind: method
+    signature: "(name, transform=False) -> 'list'"
+    names: {python: get_image_rects, node: getImageRects, java: getImageRects, dotnet: GetImageRects}
+    rust: "Page::get_image_rects"
+    tier: T2
+    lane: L3
+    status: missing
+    tests: [l3-page-get-image-rects, l3-page-get-image-rects-missing, l3-page-get-image-rects-transform]
+  - name: get_images
+    kind: method
+    signature: "(full=False)"
+    names: {python: get_images, node: getImages, java: getImages, dotnet: GetImages}
+    rust: "Page::get_images"
+    tier: T1
+    lane: L3
+    status: missing
+    tests: [l3-page-get-images, l3-page-get-images-empty, l3-page-get-images-full]
+  - name: get_label
+    kind: method
+    signature: "()"
+    names: {python: get_label, node: getLabel, java: getLabel, dotnet: GetLabel}
+    rust: "Page::get_label"
+    tier: T3
+    lane: L2
+    status: partial
+    tests: [l2-page-get-label]
+  - name: get_layout
+    kind: method
+    signature: "(**kwargs)"
+    names: {python: get_layout, node: getLayout, java: getLayout, dotnet: GetLayout}
+    rust: "Page::get_layout"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [L1.get_layout.default]
+  - name: get_links
+    kind: method
+    signature: "() -> 'list'"
+    names: {python: get_links, node: getLinks, java: getLinks, dotnet: GetLinks}
+    rust: "Page::get_links"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l2-page-links, l2.links.get]
+  - name: get_oc_items
+    kind: method
+    signature: "() -> 'list'"
+    names: {python: get_oc_items, node: getOcItems, java: getOcItems, dotnet: GetOcItems}
+    rust: "Page::get_oc_items"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-get-oc-items]
+  - name: get_pixmap
+    kind: method
+    signature: "(*, matrix: 'matrix_like'=IdentityMatrix(1.0, 0.0, 0.0, 1.0, 0.0, 0.0), dpi=None, colorspace: 'Colorspace'=None, clip: 'rect_like'=None, alpha: 'bool'=False, annots: 'bool'=True) -> \"'Pixmap'\""
+    names: {python: get_pixmap, node: getPixmap, java: getPixmap, dotnet: GetPixmap}
+    rust: "Page::get_pixmap"
+    tier: T1
+    lane: L3
+    status: partial
+    tests: [l3-page-get-pixmap-alpha, l3-page-get-pixmap-annots, l3-page-get-pixmap-args, l3-page-get-pixmap-clip, l3-page-get-pixmap-cmyk, l3-page-get-pixmap-default, l3-page-get-pixmap-dpi, l3-page-get-pixmap-gray, l3-page-get-pixmap-matrix, l3-page-get-pixmap-rotate]
+  - name: get_svg_image
+    kind: method
+    signature: "(matrix=None, text_as_path=1)"
+    names: {python: get_svg_image, node: getSvgImage, java: getSvgImage, dotnet: GetSvgImage}
+    rust: "Page::get_svg_image"
+    tier: T2
+    lane: L3
+    status: differs
+    tests: [l3-page-get-svg-image, l3-page-get-svg-image-matrix]
+    contract: "SVG without text runs (raster-based); vector SVG writer in 1.1.x"
+  - name: get_text
+    kind: method
+    signature: "(*args, **kwargs)"
+    names: {python: get_text, node: getText, java: getText, dotnet: GetText}
+    rust: "Page::get_text"
+    tier: T1
+    lane: L1
+    status: partial
+    tests: [L1.get_text.bogus_kw, L1.get_text.clip_empty, L1.get_text.clip_full, L1.get_text.clip_tuple, L1.get_text.default, L1.get_text.dict, L1.get_text.dict_sort, L1.get_text.empty_dict, L1.get_text.empty_text, L1.get_text.flags_default_set, L1.get_text.flags_dehyphenate, L1.get_text.flags_inhibit_spaces, L1.get_text.flags_zero, L1.get_text.html, L1.get_text.int_option, L1.get_text.invalid_option, L1.get_text.json, L1.get_text.option_kwarg, L1.get_text.rawdict, L1.get_text.rawjson, L1.get_text.sort_false, L1.get_text.sort_true, L1.get_text.text, L1.get_text.textpage, L1.get_text.uppercase, L1.get_text.xhtml, L1.get_text.xml, l1-page-text, l1-page-words]
+  - name: get_text_blocks
+    kind: method
+    signature: "(*args, **kwargs)"
+    names: {python: get_text_blocks, node: getTextBlocks, java: getTextBlocks, dotnet: GetTextBlocks}
+    rust: "Page::get_text_blocks"
+    tier: T3
+    lane: L1
+    status: partial
+    tests: [L1.get_text.blocks, L1.get_text.blocks_sort, L1.get_text_blocks.clip, L1.get_text_blocks.default, L1.get_text_blocks.flags, L1.get_text_blocks.sort, L1.get_text_blocks.textpage]
+  - name: get_text_selection
+    kind: method
+    signature: "(*args, **kwargs)"
+    names: {python: get_text_selection, node: getTextSelection, java: getTextSelection, dotnet: GetTextSelection}
+    rust: "Page::get_text_selection"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [L1.get_text_selection.clip, L1.get_text_selection.full, L1.get_text_selection.one_point, L1.get_text_selection.reversed]
+  - name: get_text_words
+    kind: method
+    signature: "(*args, **kwargs)"
+    names: {python: get_text_words, node: getTextWords, java: getTextWords, dotnet: GetTextWords}
+    rust: "Page::get_text_words"
+    tier: T3
+    lane: L1
+    status: partial
+    tests: [L1.get_page_text.words_clip, L1.get_text.clip_word, L1.get_text.empty_words, L1.get_text.words, L1.get_text.words_delimiters, L1.get_text_words.bogus_kw, L1.get_text_words.clip, L1.get_text_words.default, L1.get_text_words.delimiters, L1.get_text_words.flags, L1.get_text_words.textpage]
+  - name: get_textbox
+    kind: method
+    signature: "(rect: 'rect_like', textpage=None) -> 'str'"
+    names: {python: get_textbox, node: getTextbox, java: getTextbox, dotnet: GetTextbox}
+    rust: "Page::get_textbox"
+    tier: T2
+    lane: L1
+    status: missing
+    tests: [L1.get_textbox.empty, L1.get_textbox.full, L1.get_textbox.textpage]
+  - name: get_textpage
+    kind: method
+    signature: "(clip: 'rect_like'=None, flags: 'int'=0, matrix=None) -> \"'TextPage'\""
+    names: {python: get_textpage, node: getTextpage, java: getTextpage, dotnet: GetTextpage}
+    rust: "Page::get_textpage"
+    tier: T3
+    lane: L1
+    status: partial
+    tests: [L1.get_textpage.bogus_kw, L1.get_textpage.clip, L1.get_textpage.clip_empty, L1.get_textpage.default, L1.get_textpage.flags_default_set, L1.get_textpage.flags_zero, L1.get_textpage.matrix]
+  - name: get_textpage_ocr
+    kind: method
+    signature: "(*args, **kwargs)"
+    names: {python: get_textpage_ocr, node: getTextpageOcr, java: getTextpageOcr, dotnet: GetTextpageOcr}
+    rust: "Page::get_textpage_ocr"
+    tier: T3
+    lane: L1
+    status: missing
+    tests: [l1-page-get-textpage-ocr]
+  - name: get_texttrace
+    kind: method
+    signature: "()"
+    names: {python: get_texttrace, node: getTexttrace, java: getTexttrace, dotnet: GetTexttrace}
+    rust: "Page::get_texttrace"
+    tier: T2
+    lane: L1
+    status: missing
+    tests: [L1.get_texttrace.default]
+  - name: get_xobjects
+    kind: method
+    signature: "()"
+    names: {python: get_xobjects, node: getXobjects, java: getXobjects, dotnet: GetXobjects}
+    rust: "Page::get_xobjects"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-get-xobjects]
+  - name: insert_font
+    kind: method
+    signature: "(fontname='helv', fontfile=None, fontbuffer=None, set_simple=False, wmode=0, encoding=0)"
+    names: {python: insert_font, node: insertFont, java: insertFont, dotnet: InsertFont}
+    rust: "Page::insert_font"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.insert_font.basic]
+  - name: insert_htmlbox
+    kind: method
+    signature: "(rect, text, *, css=None, scale_low=0, archive=None, rotate=0, oc=0, opacity=1, overlay=True, _scale_word_width=True, _verbose=False) -> 'tuple'"
+    names: {python: insert_htmlbox, node: insertHtmlbox, java: insertHtmlbox, dotnet: InsertHtmlbox}
+    rust: "Page::insert_htmlbox"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-insert-htmlbox]
+  - name: insert_image
+    kind: method
+    signature: "(rect, *, alpha=-1, filename=None, height=0, keep_proportion=True, mask=None, oc=0, overlay=True, pixmap=None, rotate=0, stream=None, width=0, xref=0)"
+    names: {python: insert_image, node: insertImage, java: insertImage, dotnet: InsertImage}
+    rust: "Page::insert_image"
+    tier: T1
+    lane: L4
+    status: missing
+    tests: [L4.insert_image.pixmap, L4.insert_image.stream]
+  - name: insert_link
+    kind: method
+    signature: "(lnk: 'dict', mark: 'bool'=True) -> 'None'"
+    names: {python: insert_link, node: insertLink, java: insertLink, dotnet: InsertLink}
+    rust: "Page::insert_link"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l2.links.insert_bad, l2.links.insert_goto, l2.links.insert_uri]
+  - name: insert_text
+    kind: method
+    signature: "(point: 'point_like', text: 'typing.Union[str, list]', *, fontsize: 'float'=11, lineheight: 'OptFloat'=None, fontname: 'str'='helv', fontfile: 'OptStr'=None, set_simple: 'int'=0, encoding: 'int'=0, color: 'OptSeq'=None, fill: 'OptSeq'=None, border_width: 'float'=0.05, miter_limit: 'float'=1, render_mode: 'int'=0, rotate: 'int'=0, morph: 'OptSeq'=None, overlay: 'bool'=True, stroke_opacity: 'float'=1, fill_opacity: 'float'=1, oc: 'int'=0)"
+    names: {python: insert_text, node: insertText, java: insertText, dotnet: InsertText}
+    rust: "Page::insert_text"
+    tier: T1
+    lane: L4
+    status: missing
+    tests: [L4.insert_text.basic, L4.insert_text.options, l2.edit.insert_page_text]
+  - name: insert_textbox
+    kind: method
+    signature: "(rect: 'rect_like', buffer: 'typing.Union[str, list]', *, align: 'int'=0, border_width: 'float'=0.05, color: 'OptSeq'=None, encoding: 'int'=0, expandtabs: 'int'=1, fill_opacity: 'float'=1, fill: 'OptSeq'=None, fontfile: 'OptStr'=None, fontname: 'str'='helv', fontsize: 'float'=11, lineheight: 'OptFloat'=None, miter_limit: 'float'=1, morph: 'OptSeq'=None, oc: 'int'=0, overlay: 'bool'=True, render_mode: 'int'=0, rotate: 'int'=0, set_simple: 'int'=0, stroke_opacity: 'float'=1) -> 'float'"
+    names: {python: insert_textbox, node: insertTextbox, java: insertTextbox, dotnet: InsertTextbox}
+    rust: "Page::insert_textbox"
+    tier: T1
+    lane: L4
+    status: missing
+    tests: [L4.insert_textbox.align, L4.insert_textbox.basic]
+  - name: is_wrapped
+    kind: property
+    signature: "()"
+    names: {python: is_wrapped, node: isWrapped, java: isWrapped, dotnet: IsWrapped}
+    rust: "Page::is_wrapped"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-is-wrapped]
+  - name: language
+    kind: property
+    signature: "()"
+    names: {python: language, node: language, java: getLanguage, dotnet: Language}
+    rust: "Page::language"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-language]
+  - name: links
+    kind: method
+    signature: "(kinds=None)"
+    names: {python: links, node: links, java: links, dotnet: Links}
+    rust: "Page::links"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.links.iter, l2.links.kinds]
+  - name: load_annot
+    kind: method
+    signature: "(ident: 'typing.Union[str, int]') -> 'Annot'"
+    names: {python: load_annot, node: loadAnnot, java: loadAnnot, dotnet: LoadAnnot}
+    rust: "Page::load_annot"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.load_annot.basic]
+  - name: load_links
+    kind: method
+    signature: "()"
+    names: {python: load_links, node: loadLinks, java: loadLinks, dotnet: LoadLinks}
+    rust: "Page::load_links"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-load-links]
+  - name: load_widget
+    kind: method
+    signature: "(xref)"
+    names: {python: load_widget, node: loadWidget, java: loadWidget, dotnet: LoadWidget}
+    rust: "Page::load_widget"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [L4.load_widget.delete]
+  - name: mediabox
+    kind: property
+    signature: "()"
+    names: {python: mediabox, node: mediabox, java: getMediabox, dotnet: Mediabox}
+    rust: "Page::mediabox"
+    tier: T2
+    lane: L2
+    status: partial
+    tests: [l2.page.mediabox]
+  - name: mediabox_size
+    kind: property
+    signature: "()"
+    names: {python: mediabox_size, node: mediaboxSize, java: getMediaboxSize, dotnet: MediaboxSize}
+    rust: "Page::mediabox_size"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-mediabox-size]
+  - name: new_shape
+    kind: method
+    signature: "()"
+    names: {python: new_shape, node: newShape, java: newShape, dotnet: NewShape}
+    rust: "Page::new_shape"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [L4.new_shape.bezier, L4.new_shape.circle, L4.new_shape.line, L4.new_shape.other, L4.new_shape.oval, L4.new_shape.polyline, L4.new_shape.rect]
+  - name: read_contents
+    kind: method
+    signature: "()"
+    names: {python: read_contents, node: readContents, java: readContents, dotnet: ReadContents}
+    rust: "Page::read_contents"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-read-contents]
+  - name: recolor
+    kind: method
+    signature: "(components=1)"
+    names: {python: recolor, node: recolor, java: recolor, dotnet: Recolor}
+    rust: "Page::recolor"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-recolor]
+  - name: rect
+    kind: property
+    signature: "()"
+    names: {python: rect, node: rect, java: getRect, dotnet: Rect}
+    rust: "Page::rect"
+    tier: T1
+    lane: L2
+    status: partial
+    tests: [l2.page.rect]
+  - name: refresh
+    kind: method
+    signature: "()"
+    names: {python: refresh, node: refresh, java: refresh, dotnet: Refresh}
+    rust: "Page::refresh"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-refresh]
+  - name: remove_rotation
+    kind: method
+    signature: "()"
+    names: {python: remove_rotation, node: removeRotation, java: removeRotation, dotnet: RemoveRotation}
+    rust: "Page::remove_rotation"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.page.remove_rotation]
+  - name: replace_image
+    kind: method
+    signature: "(xref: 'int', *, filename=None, pixmap=None, stream=None)"
+    names: {python: replace_image, node: replaceImage, java: replaceImage, dotnet: ReplaceImage}
+    rust: "Page::replace_image"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-replace-image]
+  - name: rotation
+    kind: property
+    signature: "()"
+    names: {python: rotation, node: rotation, java: getRotation, dotnet: Rotation}
+    rust: "Page::rotation"
+    tier: T1
+    lane: L2
+    status: partial
+    tests: [l2-page-rotation, l2.page.rotation]
+  - name: rotation_matrix
+    kind: property
+    signature: "()"
+    names: {python: rotation_matrix, node: rotationMatrix, java: getRotationMatrix, dotnet: RotationMatrix}
+    rust: "Page::rotation_matrix"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-rotation-matrix]
+  - name: run
+    kind: method
+    signature: "(dw, m)"
+    names: {python: run, node: run, java: run, dotnet: Run}
+    rust: "Page::run"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-run]
+  - name: search_for
+    kind: method
+    signature: "(text, *, clip=None, quads=False, flags=None, textpage=None) -> 'list'"
+    names: {python: search_for, node: searchFor, java: searchFor, dotnet: SearchFor}
+    rust: "Page::search_for"
+    tier: T1
+    lane: L1
+    status: missing
+    tests: [L1.search_for.clip_miss, L1.search_for.flags_search, L1.search_for.flags_zero, L1.search_for.hit_max_kw, L1.search_for.missing, L1.search_for.quads, L1.search_for.rect, L1.search_for.textpage]
+  - name: set_artbox
+    kind: method
+    signature: "(rect)"
+    names: {python: set_artbox, node: setArtbox, java: setArtbox, dotnet: SetArtbox}
+    rust: "Page::set_artbox"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-set-artbox]
+  - name: set_bleedbox
+    kind: method
+    signature: "(rect)"
+    names: {python: set_bleedbox, node: setBleedbox, java: setBleedbox, dotnet: SetBleedbox}
+    rust: "Page::set_bleedbox"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-set-bleedbox]
+  - name: set_contents
+    kind: method
+    signature: "(xref)"
+    names: {python: set_contents, node: setContents, java: setContents, dotnet: SetContents}
+    rust: "Page::set_contents"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-set-contents]
+  - name: set_cropbox
+    kind: method
+    signature: "(rect)"
+    names: {python: set_cropbox, node: setCropbox, java: setCropbox, dotnet: SetCropbox}
+    rust: "Page::set_cropbox"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l2.page.set_cropbox_bad]
+  - name: set_language
+    kind: method
+    signature: "(language=None)"
+    names: {python: set_language, node: setLanguage, java: setLanguage, dotnet: SetLanguage}
+    rust: "Page::set_language"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-set-language]
+  - name: set_mediabox
+    kind: method
+    signature: "(rect)"
+    names: {python: set_mediabox, node: setMediabox, java: setMediabox, dotnet: SetMediabox}
+    rust: "Page::set_mediabox"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l2.page.set_mediabox]
+  - name: set_rotation
+    kind: method
+    signature: "(rotation)"
+    names: {python: set_rotation, node: setRotation, java: setRotation, dotnet: SetRotation}
+    rust: "Page::set_rotation"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l2.page.set_rotation_180, l2.page.set_rotation_360, l2.page.set_rotation_45, l2.page.set_rotation_90, l2.page.set_rotation_neg90]
+  - name: set_trimbox
+    kind: method
+    signature: "(rect)"
+    names: {python: set_trimbox, node: setTrimbox, java: setTrimbox, dotnet: SetTrimbox}
+    rust: "Page::set_trimbox"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-set-trimbox]
+  - name: show_pdf_page
+    kind: method
+    signature: "(rect, docsrc, pno=0, keep_proportion=True, overlay=True, oc=0, rotate=0, clip=None) -> 'int'"
+    names: {python: show_pdf_page, node: showPdfPage, java: showPdfPage, dotnet: ShowPdfPage}
+    rust: "Page::show_pdf_page"
+    tier: T1
+    lane: L4
+    status: missing
+    tests: [l4-page-show-pdf-page]
+  - name: transformation_matrix
+    kind: property
+    signature: "()"
+    names: {python: transformation_matrix, node: transformationMatrix, java: getTransformationMatrix, dotnet: TransformationMatrix}
+    rust: "Page::transformation_matrix"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-transformation-matrix]
+  - name: trimbox
+    kind: property
+    signature: "()"
+    names: {python: trimbox, node: trimbox, java: getTrimbox, dotnet: Trimbox}
+    rust: "Page::trimbox"
+    tier: T3
+    lane: L2
+    status: partial
+    tests: [l2-page-trimbox]
+  - name: update_link
+    kind: method
+    signature: "(lnk: 'dict') -> 'None'"
+    names: {python: update_link, node: updateLink, java: updateLink, dotnet: UpdateLink}
+    rust: "Page::update_link"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-page-update-link]
+  - name: widgets
+    kind: method
+    signature: "(types=None)"
+    names: {python: widgets, node: widgets, java: widgets, dotnet: Widgets}
+    rust: "Page::widgets"
+    tier: T2
+    lane: L4
+    status: partial
+    tests: [L4.widgets.list, L4.widgets.listbox, L4.widgets.types_filter]
+  - name: wrap_contents
+    kind: method
+    signature: "()"
+    names: {python: wrap_contents, node: wrapContents, java: wrapContents, dotnet: WrapContents}
+    rust: "Page::wrap_contents"
+    tier: T3
+    lane: L2
+    status: missing
+    tests: [l2-page-wrap-contents]
+  - name: write_text
+    kind: method
+    signature: "(rect=None, writers=None, overlay=True, color=None, opacity=None, keep_proportion=True, rotate=0, oc=0) -> 'None'"
+    names: {python: write_text, node: writeText, java: writeText, dotnet: WriteText}
+    rust: "Page::write_text"
+    tier: T3
+    lane: L4
+    status: differs
+    tests: [l4-page-write-text]
+  - name: xref
+    kind: property
+    signature: "()"
+    names: {python: xref, node: xref, java: getXref, dotnet: Xref}
+    rust: "Page::xref"
+    tier: T2
+    lane: L2
+    status: missing
+    tests: [l2-page-xref]

@@ -107,6 +107,12 @@ enum Command {
         #[arg(long, default_value = "full")]
         tier: String,
 
+        /// PDF/A flavour `pdfa_convert` converts to and is graded against:
+        /// 1b, 2b, 2u, 3b or 3u. Defaults to 2b, the flavour every number
+        /// published before #443 was measured at.
+        #[arg(long, default_value = "2b")]
+        pdfa_level: String,
+
         /// Maximum number of PDF files to process
         #[arg(long)]
         limit: Option<usize>,
@@ -541,6 +547,25 @@ fn release_lock(lock_path: &PathBuf) {
     let _ = std::fs::remove_file(lock_path);
 }
 
+/// The five PDF/A flavours `pdf-manip` can convert *to*, by their veraPDF
+/// spelling.
+///
+/// Not every flavour `pdf-compliance` can validate: the A levels need a
+/// structure tree the converter does not build, and PDF/A-4 is a validation
+/// target only. Naming a flavour here that the converter cannot produce would
+/// hand the gate a baseline of zeroes and call it a measurement.
+fn parse_pdfa_level(name: &str) -> Option<pdf_manip::pdfa_xmp::PdfAConformance> {
+    use pdf_manip::pdfa_xmp::PdfAConformance;
+    match name {
+        "1b" => Some(PdfAConformance::A1b),
+        "2b" => Some(PdfAConformance::A2b),
+        "2u" => Some(PdfAConformance::A2u),
+        "3b" => Some(PdfAConformance::A3b),
+        "3u" => Some(PdfAConformance::A3u),
+        _ => None,
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -580,6 +605,7 @@ fn main() {
             no_verapdf,
             verapdf_path,
             tier,
+            pdfa_level,
             limit,
         } => {
             // Lockfile: prevent concurrent runners
@@ -588,6 +614,20 @@ fn main() {
                 Err(e) => {
                     eprintln!("ERROR: {e}");
                     std::process::exit(1);
+                }
+            };
+
+            // An unknown flavour is a stop, not a default. A run that silently
+            // measured 2b because the caller typed `2B` would produce a number
+            // filed under the wrong flavour, which is worse than no number.
+            let pdfa_conformance = match parse_pdfa_level(&pdfa_level) {
+                Some(c) => c,
+                None => {
+                    eprintln!(
+                        "ERROR: --pdfa-level {pdfa_level:?} is not a flavour this converter \
+                         produces (1b, 2b, 2u, 3b, 3u)"
+                    );
+                    std::process::exit(2);
                 }
             };
 
@@ -641,7 +681,10 @@ fn main() {
                 )
             });
 
-            let test_config = tests::TestConfig { verapdf_oracle };
+            let test_config = tests::TestConfig {
+                verapdf_oracle,
+                pdfa_conformance,
+            };
             let mut available_tests = tests::all_tests(test_config);
 
             // Apply tier filter
@@ -949,7 +992,10 @@ fn main() {
                 }
             };
 
-            let test_config = tests::TestConfig { verapdf_oracle };
+            let test_config = tests::TestConfig {
+                verapdf_oracle,
+                ..Default::default()
+            };
             let mut available_tests = tests::all_tests(test_config);
 
             // Apply tier filter.
@@ -1022,6 +1068,7 @@ fn main() {
             // No veraPDF oracle in the orchestrator — the child handles that.
             let test_config = tests::TestConfig {
                 verapdf_oracle: None,
+                ..Default::default()
             };
             let mut available_tests = tests::all_tests(test_config);
             let tier_parsed: TestTier = tier.parse().unwrap_or(TestTier::Full);

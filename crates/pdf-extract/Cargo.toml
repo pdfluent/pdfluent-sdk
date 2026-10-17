@@ -1,6 +1,6 @@
 [package]
 name = "pdfluent-extract"
-version = "1.0.0"
+version = "1.1.0"
 edition.workspace = true
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
 license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
@@ -23,10 +23,10 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # lopdf: full-featured on native, wasm_js backend (no rayon) on wasm32.
 # Direct path used (not workspace = true) to allow default-features = false override.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.5" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.6" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.5" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.6" }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,5 +1,7 @@
 # PDFluent browser SDK (WASM)
 
+[Source on GitHub](https://github.com/pdfluent/pdfluent-sdk) · [Documentation](https://pdfluent.com/docs) · [Report an issue](https://github.com/pdfluent/pdfluent-sdk/issues)
+
 WebAssembly distribution of the PDFluent PDF engine. Read, edit, annotate,
 redact, sign, and validate PDFs (including XFA) entirely in the browser —
 zero bytes go to a server.
@@ -18,11 +20,11 @@ full SDK surface needed for an in-browser PDF editor. Previously known as
 - **Forms write-back**: set AcroForm field values, save modified PDF bytes
 - **Annotations** (feature `annotate`): highlight, sticky note, free text
 - **Text watermark**: diagonal text watermark with configurable opacity
-- **Redaction**: by region (rectangle) or by search query (GDPR-safe permanent removal)
+- **Redaction**: by region (rectangle) or by search query (permanent removal: the content is gone, not covered)
 - **Stream compression**: re-deflate content streams for smaller file size
-- **`PdfDocMut`** (Wave 3): stateful editing handle — open once, mutate in
-  place, save once. 2.7× faster than the stateless `PdfDoc` chain for
-  multi-step edits, identical output bytes.
+- **`PdfDocMut`**: stateful editing handle — open once, mutate in place,
+  save once. One parse and one serialise for a whole editing session instead
+  of one per operation, with identical output bytes.
 
 ## Building
 
@@ -168,13 +170,6 @@ wasm-pack build crates/xfa-wasm --target web -- --no-default-features
 | `nodeCount()` | Number of form nodes |
 | `version()` | Engine version string |
 
-### Licensing
-
-Nothing to activate. There is no licence key, no tier and no output mark
-(#226): the WASM build exposes the same capabilities to every caller. PDFluent
-is published under the AGPLv3 with a commercial licence as the alternative, and
-that alternative is a signed order form — see `docs/licensing.md`.
-
 ### PdfDoc
 
 | Method | Description |
@@ -198,7 +193,7 @@ that alternative is a signed order form — see `docs/licensing.md`.
 | `flattenXfa()` | Flatten XFA form fields into static PDF content |
 | `convertToPdfa(level)` | Convert to PDF/A 1b/2b/3b, returns bytes |
 
-### Page manipulation (Wave 2)
+### Page manipulation
 
 | Method | Description |
 |--------|-------------|
@@ -207,7 +202,7 @@ that alternative is a signed order form — see `docs/licensing.md`.
 | `reorderPages(newOrder: Uint32Array)` | Permute pages; returns new bytes |
 | `extractPages(pages: Uint32Array)` | Extract the listed pages into a new PDF (use for split) |
 
-### Edit, annotate, redact, optimise (Wave 2)
+### Edit, annotate, redact, optimise
 
 | Method | Description |
 |--------|-------------|
@@ -217,18 +212,18 @@ that alternative is a signed order form — see `docs/licensing.md`.
 | `addStickyNote(pageIndex, x, y, contents)` | Sticky note annotation (feature: annotate) |
 | `addFreeText(pageIndex, x, y, w, h, contents)` | Free-text annotation (feature: annotate) |
 | `addTextWatermark(text, opacity)` | Diagonal text watermark on all pages |
-| `redactRegion(pageIndex, x, y, w, h)` | Permanently remove content in a rectangle (GDPR-safe) |
+| `redactRegion(pageIndex, x, y, w, h)` | Permanently remove content in a rectangle |
 | `redactSearch(query)` | Find all literal matches of `query` and redact each |
 | `compress()` | Re-deflate content streams; returns optimised bytes |
 
-### PdfDocMut (Wave 3) — **recommended for editor workflows**
+### PdfDocMut — **recommended for editor workflows**
 
 `PdfDocMut` is a stateful editing handle. Open once, mutate in place,
 save once. The `PdfDoc` class above is great for inspection and
 single-shot transformations, but for an editor that applies multiple
-operations to the same document, **`PdfDocMut` is dramatically faster**:
-9-step sessions go from ~16 parse passes to **1 parse + 1 serialise**
-(measured 2.7× wall-clock speedup; bigger on larger documents).
+operations to the same document, `PdfDocMut` does the work once: a session
+of many steps is **one parse and one serialise** instead of a parse and a
+serialise per step.
 
 | Method | Description |
 |--------|-------------|
@@ -246,7 +241,7 @@ operations to the same document, **`PdfDocMut` is dramatically faster**:
 | `addStickyNote(pageIndex, x, y, contents)` | In place (feature: annotate) |
 | `addFreeText(pageIndex, x, y, w, h, contents)` | In place (feature: annotate) |
 | `addTextWatermark(text, opacity)` | In place |
-| `redactRegion(pageIndex, x, y, w, h)` | In place (GDPR-safe permanent removal) |
+| `redactRegion(pageIndex, x, y, w, h)` | In place (permanent removal: the content is gone, not covered) |
 | `redactSearch(query)` | In place |
 | `compress()` | In place |
 
@@ -285,19 +280,19 @@ const doc = PdfDoc.open(bytes);
 const merged = doc.merge(otherBytes);   // single op, one-shot
 ```
 
-## Bundle size
+## Licence
 
-| Build | Tarball | Unpacked |
-|-------|---------|----------|
-| 1.0.0-beta.8 (pre-Wave 2) | 3.6 MB | 10.2 MB |
-| **1.0.0-beta.9 (Wave 2)** | **3.8 MB** | **~11 MB** |
-
-Wave 2 added 13 new methods for ~0.2 MB of binary growth. Well under the
-15 MB hard limit and well under the 5 MB gzipped soft target.
+AGPL-3.0 or a commercial licence, at your option. The AGPL is the default and
+the complete product: there is no licence key, no activation call and no tier,
+and every feature works in every build. If you cannot accept the copyleft
+obligation, the commercial licence is sold yearly and self-service at
+[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing), in four options: Commercial (per
+organisation), OEM Startup and OEM (per product), and Priority support (an
+add-on). The two texts are `LICENSE` and `LICENSE-COMMERCIAL` in this package.
 
 ## Links
 
 - **Documentation:** <https://pdfluent.com/docs>
-- **Pricing:** <https://pdfluent.com/pricing>
+- **Pricing:** <https://pdfluent.com/sdk/pricing>
 - **PDFluent editor** (source-available): <https://github.com/pdfluent/pdfluent>. The free desktop app this SDK powers.
 - Built by [Innovation Trigger BV](https://pdfluent.com)

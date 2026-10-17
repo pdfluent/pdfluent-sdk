@@ -66,7 +66,7 @@ impl Device<'_> for McidDev {
             None => self.untagged_chars += t.chars().count(),
         }
     }
-    fn begin_marked_content(&mut self, _: &[u8], mcid: Option<i32>) {
+    fn begin_marked_content(&mut self, _: &[u8], mcid: Option<i32>, _: Option<&str>) {
         self.stack.push(mcid);
     }
     fn end_marked_content(&mut self) {

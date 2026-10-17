@@ -25,6 +25,9 @@ try {
   PdfDocument = null;
 }
 
+if (!PdfDocument) {
+  process.stderr.write('SKIPPED (not a pass): native addon not built — AcroForm API naming contract not checked\n');
+}
 const d = PdfDocument ? describe : describe.skip;
 
 d('AcroForm API naming contract', () => {

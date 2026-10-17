@@ -79,13 +79,31 @@ def case_every_pub_fn_shape_is_seen() -> tuple[bool, str]:
         fn private() {}
     """
     found = {m.group(1) for m in export.PUB_FN.finditer(src)}
-    want = {"plain", "constant", "asynchronous", "dangerous", "abi", "restricted"}
+    # `restricted` is crate-visible, not public: it must stay out (see
+    # case_restricted_visibility_stays_out).
+    want = {"plain", "constant", "asynchronous", "dangerous", "abi"}
     return (found == want, str(sorted(found)))
+
+
+def case_restricted_visibility_stays_out() -> tuple[bool, str]:
+    """`pub(crate)`, `pub(super)` and `pub(in path)` items are not reachable
+    from outside the crate, so the register must not list them. Plain `pub`
+    stays listed, including `#[doc(hidden)]` items, which is the convention."""
+    src = """
+        pub fn a() {}
+        pub(crate) fn b() {}
+        pub(super) fn c() {}
+        #[doc(hidden)] pub fn d() {}
+    """
+    found = {m.group(1) for m in export.PUB_FN.finditer(src)}
+    return (found == {"a", "d"}, str(sorted(found)))
 
 
 def case_private_items_stay_out() -> tuple[bool, str]:
     found = {m.group(1) for m in export.PUB_TYPE.finditer(
-        "pub struct Kept; struct Dropped; pub enum Also {} pub type Alias = u8;")}
+        "pub struct Kept; struct Dropped; pub enum Also {} pub type Alias = u8;"
+        " pub(crate) struct CrateOnly; pub(super) enum SuperOnly {}"
+        " pub(in crate::x) type Scoped = u8;")}
     return (found == {"Kept", "Also", "Alias"}, str(sorted(found)))
 
 
@@ -129,6 +147,7 @@ CASES = [
     case_an_unbraced_lowercase_path_is_a_module,
     case_a_type_reexport_is_not_a_module,
     case_every_pub_fn_shape_is_seen,
+    case_restricted_visibility_stays_out,
     case_private_items_stay_out,
     case_the_floors_are_real_numbers,
     case_the_committed_export_is_not_stale,

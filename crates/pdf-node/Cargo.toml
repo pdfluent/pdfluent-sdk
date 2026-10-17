@@ -1,6 +1,6 @@
 [package]
 name = "pdf-node"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
 license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
@@ -12,24 +12,33 @@ publish = false
 # canonical-DTO parity test) can be compiled and run with `cargo test`.
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# The balanced extraction tier (#661): `quality: 'balanced'` runs the layout
+# model, `tableModelDir` opts table regions into TATR structure. On in addon
+# builds, off elsewhere; without them the keywords fail with the product's
+# typed model error rather than running a silent fast pass.
+ort-layout = ["pdf-engine/ort-layout"]
+ort-tables = ["pdf-engine/ort-tables"]
+
 [dependencies]
 napi = { version = "2", features = ["async", "serde-json", "napi9"] }
 napi-derive = "2"
-pdfluent = { path = "../pdfluent", version = "=1.0.0" }
+pdfluent = { path = "../pdfluent", version = "=1.1.0" }
 # Office export. Same three crates the C ABI and wasm use; the node binding
 # holds a pdf_engine document, not a facade one, so it calls them directly and
 # takes the capability check from pdfluent::require_capability.
-pdf-docx = { path = "../pdf-docx", version = "=1.0.0" }
-pdf-xlsx = { path = "../pdf-xlsx", version = "=1.0.0" }
-pdf-pptx = { path = "../pdf-pptx", version = "=1.0.0" }
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0" }
-pdf-annot = { path = "../pdf-annot", version = "=1.0.0" }
-pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0" }
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.7" }
-pdf-manip = { path = "../pdf-manip", default-features = false, features = ["font-subset"], version = "=1.0.0" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0" }
+pdf-docx = { path = "../pdf-docx", version = "=1.1.0" }
+pdf-xlsx = { path = "../pdf-xlsx", version = "=1.1.0" }
+pdf-pptx = { path = "../pdf-pptx", version = "=1.1.0" }
+# `ocr-cli` is on in every build: OCR through the system `tesseract` binary
+pdf-engine = { path = "../pdf-engine", version = "=1.1.0", features = ["ocr-cli"] }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.1.0" }
+pdf-annot = { path = "../pdf-annot", version = "=1.1.0" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.1.0" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.1.0" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.6.0" }
+pdf-manip = { path = "../pdf-manip", default-features = false, features = ["font-subset"], version = "=1.1.0" }
+pdf-redact = { path = "../pdf-redact", version = "=1.1.0" }
 lopdf.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -37,3 +46,9 @@ tokio = { version = "1", features = ["rt"] }
 
 [build-dependencies]
 napi-build = "2"
+
+[dev-dependencies]
+# The error-mapping test below builds the typed OCR cause the engine carries
+# inside `EngineError::Io`; production code only reads it through
+# `EngineError::ocr_message` and needs no dependency.
+pdf-ocr = { path = "../pdf-ocr", version = "=1.1.0", features = ["tesseract-cli"] }

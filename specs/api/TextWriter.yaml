@@ -1,0 +1,120 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+# Compatibility surface for TextWriter, seeded from the pinned
+# black box (PyMuPDF 1.28.2, interface shapes only). Tiers arrive
+# from specs/api/usage.json via scripts/compat/apply_usage.py.
+class: TextWriter
+rust_path: pdfluent::compat::TextWriter
+names: {python: TextWriter, node: TextWriter, java: TextWriter, dotnet: TextWriter}
+members:
+  - name: __eq__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __eq__, node: eq, java: eq, dotnet: Eq}
+    rust: "TextWriter::PartialEq"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-textwriter-eq]
+  - name: __ge__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ge__, node: ge, java: ge, dotnet: Ge}
+    rust: "TextWriter::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-textwriter-ge]
+  - name: __gt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __gt__, node: gt, java: gt, dotnet: Gt}
+    rust: "TextWriter::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-textwriter-gt]
+  - name: __init__
+    kind: constructor
+    signature: "(page_rect, opacity=1, color=None)"
+    names: {python: __init__, node: TextWriter, java: TextWriter, dotnet: TextWriter}
+    rust: "TextWriter::new"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l4-textwriter-init]
+  - name: __le__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __le__, node: le, java: le, dotnet: Le}
+    rust: "TextWriter::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-textwriter-le]
+  - name: __lt__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __lt__, node: lt, java: lt, dotnet: Lt}
+    rust: "TextWriter::compare"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-textwriter-lt]
+  - name: __ne__
+    kind: operator
+    signature: "(value, /)"
+    names: {python: __ne__, node: ne, java: ne, dotnet: Ne}
+    rust: "TextWriter::PartialEq"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-textwriter-ne]
+  - name: append
+    kind: method
+    signature: "(pos, text, font=None, fontsize=11, language=None, right_to_left=0, small_caps=0)"
+    names: {python: append, node: append, java: append, dotnet: Append}
+    rust: "TextWriter::append"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l4-textwriter-append]
+  - name: appendv
+    kind: method
+    signature: "(pos, text, font=None, fontsize=11, language=None, small_caps=False)"
+    names: {python: appendv, node: appendv, java: appendv, dotnet: Appendv}
+    rust: "TextWriter::appendv"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-textwriter-appendv]
+  - name: clean_rtl
+    kind: method
+    signature: "(text)"
+    names: {python: clean_rtl, node: cleanRtl, java: cleanRtl, dotnet: CleanRtl}
+    rust: "TextWriter::clean_rtl"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-textwriter-clean-rtl]
+  - name: fill_textbox
+    kind: method
+    signature: "(rect: 'rect_like', text: 'typing.Union[str, list]', pos: 'point_like' = None, font: 'typing.Optional[Font]' = None, fontsize: 'float' = 11, lineheight: 'OptFloat' = None, align: 'int' = 0, warn: 'bool' = None, right_to_left: 'bool' = False, small_caps: 'bool' = False) -> 'tuple'"
+    names: {python: fill_textbox, node: fillTextbox, java: fillTextbox, dotnet: FillTextbox}
+    rust: "TextWriter::fill_textbox"
+    tier: T3
+    lane: L4
+    status: missing
+    tests: [l4-textwriter-fill-textbox]
+  - name: write_text
+    kind: method
+    signature: "(page, color=None, opacity=-1, overlay=1, morph=None, matrix=None, render_mode=0, oc=0)"
+    names: {python: write_text, node: writeText, java: writeText, dotnet: WriteText}
+    rust: "TextWriter::write_text"
+    tier: T2
+    lane: L4
+    status: missing
+    tests: [l4-textwriter-write-text]

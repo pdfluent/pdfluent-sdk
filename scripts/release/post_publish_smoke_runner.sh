@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # post_publish_smoke_runner.sh — orchestrator for the post-publish consumer
-# smoke tests defined under `docs/release/consumer_smokes/`.
+# smoke tests defined under `scripts/release/consumer_smokes/`.
 #
 # Governed by:
 #   - docs/release/PUBLISH_PROTOCOL.md §11 (post-publish verification)
@@ -11,7 +11,7 @@
 #      conventions: `cargo package` output, `npm pack` tarball, `cargo
 #      build --release` binary, etc.) or take the operator-supplied path.
 #   2. Invoke the channel's `smoke_<channel>.sh` from
-#      `docs/release/consumer_smokes/` with the appropriate flags.
+#      `scripts/release/consumer_smokes/` with the appropriate flags.
 #   3. Capture each smoke's stdout + exit code into a per-run report
 #      under `benchmarks/runs/post_publish_verify/<timestamp>/`.
 #   4. Aggregate exit codes — the runner exits non-zero if ANY smoke
@@ -20,13 +20,18 @@
 #
 # Usage:
 #   scripts/release/post_publish_smoke_runner.sh \
-#       [--channel <crates_io|npm|pypi|maven|nuget|wasm|binary|node|all>] \
+#       [--channel <crates_io|npm|pypi|maven|nuget|wasm|binary|node|cli|capi|all>] \
 #       [--artifact <path>]                # required for --channel != all
 #       [--version <semver>]               # default: read from artefact / Cargo
-#       [--out-dir <dir>]                  # default: benchmarks/runs/post_publish_verify/<ts>
+#       [--platform <key>]                 # e.g. linux-arm64, linux-x64-musl; recorded + passed on
+#       [--out-dir <dir>]                  # default: benchmarks/runs/post_publish_verify/<ts>[-<platform>]
 #
 # Defaults:
 #   --channel all    (runs every smoke whose channel artifact is locatable)
+#
+# This runner IS the release lane: children run with PDFLUENT_RELEASE_LANE=1,
+# so a smoke that would SKIP in a dev lane FAILS here. A failing smoke blocks
+# the manual publish job.
 #
 # Exit codes:
 #   0  all attempted smokes PASS
@@ -46,10 +51,11 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 cd "$REPO_ROOT"
 
-SMOKE_DIR="docs/release/consumer_smokes"
+SMOKE_DIR="scripts/release/consumer_smokes"
 CHANNEL="all"
 ARTIFACT=""
 VERSION=""
+PLATFORM=""
 OUT_DIR=""
 
 while [[ $# -gt 0 ]]; do
@@ -57,6 +63,7 @@ while [[ $# -gt 0 ]]; do
     --channel)  CHANNEL="$2"; shift 2 ;;
     --artifact) ARTIFACT="$2"; shift 2 ;;
     --version)  VERSION="$2"; shift 2 ;;
+    --platform) PLATFORM="$2"; shift 2 ;;
     --out-dir)  OUT_DIR="$2"; shift 2 ;;
     -h|--help)
       sed -n '/^# Usage:/,/^# This orchestrator/p' "$0"
@@ -65,7 +72,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-KNOWN_CHANNELS=(rust python wasm dotnet java node binary)
+KNOWN_CHANNELS=(rust python wasm dotnet java node binary cli capi)
 ALIAS_crates_io=rust
 ALIAS_npm=wasm        # default; node smoke is a separate channel via --channel node
 ALIAS_pypi=python
@@ -75,7 +82,7 @@ ALIAS_nuget=dotnet
 # Map registry-channel names → smoke-script names.
 resolve_smoke_name() {
   case "$1" in
-    rust|python|wasm|dotnet|java|node|binary) echo "$1" ;;
+    rust|python|wasm|dotnet|java|node|binary|cli|capi) echo "$1" ;;
     crates_io) echo "rust" ;;
     pypi)      echo "python" ;;
     maven)     echo "java" ;;
@@ -86,15 +93,25 @@ resolve_smoke_name() {
 }
 
 ts="$(date -u +'%Y%m%dT%H%M%SZ')"
-[[ -n "$OUT_DIR" ]] || OUT_DIR="benchmarks/runs/post_publish_verify/${ts}"
+if [[ -z "$OUT_DIR" ]]; then
+  if [[ -n "$PLATFORM" ]]; then
+    OUT_DIR="benchmarks/runs/post_publish_verify/${ts}-${PLATFORM}"
+  else
+    OUT_DIR="benchmarks/runs/post_publish_verify/${ts}"
+  fi
+fi
 mkdir -p "$OUT_DIR"
 echo "[smokes] out dir: $OUT_DIR"
+[[ -n "$PLATFORM" ]] && echo "[smokes] platform: $PLATFORM"
+
+# The release lane: a skip below this point is a failure, not a pass.
+export PDFLUENT_RELEASE_LANE=1
 
 run_one() {
   local name="$1"
   local script="$SMOKE_DIR/smoke_${name}.sh"
   if [[ ! -x "$script" ]]; then
-    echo "[smokes] SKIP $name (no $script or not executable)"
+    echo "[smokes] FAIL $name (no $script or not executable)"
     return 3
   fi
   echo "[smokes] === $name === ($script)"
@@ -109,6 +126,7 @@ run_one() {
   local args=()
   [[ -n "$ARTIFACT" ]] && args+=(--artifact "$ARTIFACT")
   [[ -n "$VERSION" ]] && args+=(--version "$VERSION")
+  [[ -n "$PLATFORM" ]] && args+=(--platform "$PLATFORM")
   if "$script" ${args[@]+"${args[@]}"} >"$log" 2>&1; then
     echo "[smokes]   $name: PASS  (log: $log)"
     rc=0
@@ -131,7 +149,10 @@ if [[ "$CHANNEL" = "all" ]]; then
     else
       rc=$?
       ran+=("$name")
-      [[ $rc -ne 3 ]] && { fails+=1; failed+=("$name"); }
+      # A missing smoke script is a failure, not a pass: the channel went
+      # untested and the summary must not read green over it.
+      fails+=1
+      [[ $rc -eq 3 ]] && failed+=("$name (missing script)") || failed+=("$name")
     fi
   done
 else
@@ -144,7 +165,11 @@ else
     ran+=("$smoke_name")
   else
     rc=$?
-    [[ $rc -ne 3 ]] && { fails+=1; failed+=("$smoke_name"); }
+    if [[ $rc -eq 3 ]]; then
+      echo "[smokes] ERROR: no smoke script for channel '$smoke_name'" >&2
+      exit 3
+    fi
+    fails+=1; failed+=("$smoke_name")
   fi
 fi
 
@@ -159,6 +184,7 @@ fi
   echo "**Channel arg:** \`${CHANNEL}\`"
   echo "**Artifact arg:** \`${ARTIFACT:-<none>}\`"
   echo "**Version arg:** \`${VERSION:-<none>}\`"
+  echo "**Platform arg:** \`${PLATFORM:-<none>}\`"
   echo
   echo "## Result"
   echo

@@ -11,15 +11,20 @@ use crate::interpret::state::{TextStateFont, handle_gs};
 use crate::interpret::text::TextRenderingMode;
 use crate::pattern::{Pattern, ShadingPattern};
 use crate::shading::Shading;
-use crate::util::{OptionLog, RectExt};
+use crate::util::{OptionLog, RectExt, decode_text_string};
 use crate::x_object::{
     FormXObject, ImageXObject, XObject, draw_form_xobject, draw_image_xobject, draw_xobject,
 };
 use kurbo::{Affine, Point, Shape};
 use log::warn;
 use pdf_syntax::content::ops::TypedInstruction;
-use pdf_syntax::object::dict::keys::{ANNOTS, AP, AS, F, FT, MCID, N, OC, PARENT, RECT, V};
-use pdf_syntax::object::{Array, Dict, Name, Object, Rect, Stream, dict_or_stream};
+use pdf_syntax::object::dict::keys::{
+    ACTUAL_TEXT, ANNOTS, AP, AS, BTN, CH, DV, F, FF, FT, KIDS, MCID, N, OC, OPT, PARENT, RECT,
+    SUBTYPE, TX, V, WIDGET,
+};
+use pdf_syntax::object::{
+    Array, Dict, Name, Object, Rect, Stream, String as PdfString, dict_or_stream,
+};
 use pdf_syntax::page::{Page, Resources};
 use smallvec::smallvec;
 use std::sync::{Arc, OnceLock};
@@ -227,6 +232,9 @@ pub enum InterpreterWarning {
         /// The limit that was hit.
         limit: u32,
     },
+    /// An annotation has an `AP` dictionary, but its normal appearance could not
+    /// be selected or loaded, so the annotation was not drawn.
+    UnresolvedAnnotationAppearance,
 }
 
 /// Resolve the normal (`/N`) appearance stream of an annotation.
@@ -280,6 +288,184 @@ fn normal_appearance_stream<'a>(annot: &Dict<'a>) -> Option<Stream<'a>> {
         .find_map(|state| states.get::<Stream<'_>>(state.as_ref()))
 }
 
+/// `/F` bit 2: the annotation is not shown at all.
+const ANNOT_FLAG_HIDDEN: u32 = 1 << 1;
+/// `/F` bit 6: the annotation prints but is not shown on screen.
+const ANNOT_FLAG_NOVIEW: u32 = 1 << 5;
+
+/// How many `/Parent` links a field-attribute lookup follows.
+///
+/// Field attributes are inherited up the field tree (ISO 32000-2 §12.7.4.2)
+/// and nothing in a file stops that chain from pointing back at itself. The
+/// bound is what makes the walk terminate on a file that does.
+const FIELD_INHERITANCE_DEPTH: usize = 32;
+
+/// `/Ff` bit 17: the field is a push button and holds no value.
+const FIELD_FLAG_PUSHBUTTON: u32 = 1 << 16;
+/// `/Ff` bit 14: the text field's value is a password and is not to be shown.
+const FIELD_FLAG_PASSWORD: u32 = 1 << 13;
+
+/// The nearest value of an inherited field attribute: the widget's own entry,
+/// else the first ancestor that has one.
+fn inherited_field_entry<'a, T>(
+    annot: &Dict<'a>,
+    entry: impl Fn(&Dict<'a>) -> Option<T>,
+) -> Option<T> {
+    let mut node = annot.clone();
+
+    for _ in 0..FIELD_INHERITANCE_DEPTH {
+        if let Some(value) = entry(&node) {
+            return Some(value);
+        }
+
+        node = node.get::<Dict<'a>>(PARENT)?;
+    }
+
+    None
+}
+
+/// A name read as the text it stands for, or nothing when its bytes are not
+/// UTF-8.
+///
+/// Export values (`/Yes`, `/On`, a generated `/1`) are ASCII in every file
+/// that has ever been measured here, and a name that is not valid UTF-8 is
+/// not a string a reader may invent characters for.
+fn name_as_text(name: &Name) -> Option<String> {
+    std::str::from_utf8(name.as_ref()).ok().map(str::to_string)
+}
+
+/// What a choice field's control shows for one of its values.
+///
+/// `/Opt` is either a list of strings, in which case the value is the text, or
+/// a list of `[export, display]` pairs, in which case `/V` holds the export
+/// value and the control shows the display one -- `NL` in the file and
+/// `Netherlands` on the page. Extraction wants what is on the page.
+///
+/// An editable combo box may hold a value that is in no `/Opt` entry, because
+/// the user typed it; that value is its own label. (codex, #549)
+fn choice_option_label(annot: &Dict<'_>, value: &str) -> String {
+    let Some(options) = inherited_field_entry(annot, |d| d.get::<Array<'_>>(OPT)) else {
+        return value.to_string();
+    };
+
+    for option in options.iter::<Array<'_>>() {
+        let mut pair = option.iter::<PdfString>();
+        let Some(export) = pair.next().and_then(|s| decode_text_string(s.as_bytes())) else {
+            continue;
+        };
+        let Some(display) = pair.next().and_then(|s| decode_text_string(s.as_bytes())) else {
+            continue;
+        };
+
+        if export == value {
+            return display;
+        }
+    }
+
+    value.to_string()
+}
+
+/// The value of a choice field, which is one string or several.
+fn choice_value_text<'a>(annot: &Dict<'a>, key: &'static [u8]) -> Option<String> {
+    if let Some(value) = inherited_field_entry(annot, |d| d.get::<PdfString>(key)) {
+        let value = decode_text_string(value.as_bytes())?;
+        return Some(choice_option_label(annot, &value));
+    }
+
+    // A multi-select list box holds its selected options in an array. They are
+    // separate lines: they are separate rows of the control, and running them
+    // together would invent a word that is on no page.
+    let options = inherited_field_entry(annot, |d| d.get::<Array<'a>>(key))?;
+    let lines: Vec<String> = options
+        .iter::<PdfString>()
+        .filter_map(|option| decode_text_string(option.as_bytes()))
+        .map(|value| choice_option_label(annot, &value))
+        .collect();
+
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+/// Whether this widget is the only one its field could be showing.
+///
+/// A radio group is one field with one `/V` and several widgets, and `/V`
+/// names the state of whichever of them is on. Reading it as every widget's
+/// own state prints the selected option once per option in the group. Only
+/// `/AS` is per widget, so the field's value answers for this widget when
+/// there is no other widget it could be answering for: a merged field and
+/// widget in one dictionary, or a field with a single kid. (codex, #549)
+fn is_the_only_widget_of_its_field(annot: &Dict<'_>) -> bool {
+    let Some(parent) = annot.get::<Dict<'_>>(PARENT) else {
+        return true;
+    };
+
+    match parent.get::<Array<'_>>(KIDS) {
+        Some(kids) => kids.raw_iter().take(2).count() < 2,
+        None => true,
+    }
+}
+
+/// The text a field widget stands for, for a widget that carries no appearance
+/// stream for a reader to take it from (#549).
+///
+/// `/V` first and `/DV` after it: the default value is what the field shows
+/// until somebody fills it, so it is the text on the page exactly when there
+/// is no `/V`.
+///
+/// Three field types answer, and the fourth deliberately does not. `/Sig` has
+/// no text value -- `/V` is a signature dictionary -- and a push button's
+/// caption lives in `/MK /CA`, which is a label printed on a control rather
+/// than content of the document.
+fn field_value_text(annot: &Dict<'_>) -> Option<String> {
+    let field_type = inherited_field_entry(annot, |d| d.get::<Name>(FT))?;
+    let flags = inherited_field_entry(annot, |d| d.get::<u32>(FF)).unwrap_or(0);
+
+    match field_type.as_ref() {
+        BTN => {
+            if flags & FIELD_FLAG_PUSHBUTTON != 0 {
+                return None;
+            }
+
+            // The state this widget is in, which for a radio group is the one
+            // thing that distinguishes the kids from each other: `/AS` is per
+            // widget while `/V` is on the field they share. `/AS` therefore
+            // wins, and `/V` answers only for a widget that has none.
+            let state = annot.get::<Name>(AS).or_else(|| {
+                is_the_only_widget_of_its_field(annot)
+                    .then(|| {
+                        inherited_field_entry(annot, |d| d.get::<Name>(V))
+                            .or_else(|| inherited_field_entry(annot, |d| d.get::<Name>(DV)))
+                    })
+                    .flatten()
+            })?;
+
+            // `/Off` is the one state name the specification fixes, and it is
+            // the empty box. A reader that wrote "Off" into the text would put
+            // a word on the page for every box nobody ticked.
+            if state.as_ref() == b"Off" {
+                return None;
+            }
+
+            name_as_text(&state)
+        }
+        TX => {
+            if flags & FIELD_FLAG_PASSWORD != 0 {
+                return None;
+            }
+
+            // A comb field (`/Ff` bit 25) draws its value one character per
+            // cell of `/MaxLen`. The cells are a layout and the value is the
+            // same string either way, so nothing here reads them.
+            let value = inherited_field_entry(annot, |d| d.get::<PdfString>(V))
+                .or_else(|| inherited_field_entry(annot, |d| d.get::<PdfString>(DV)))?;
+            let text = decode_text_string(value.as_bytes())?;
+
+            (!text.trim().is_empty()).then_some(text)
+        }
+        CH => choice_value_text(annot, V).or_else(|| choice_value_text(annot, DV)),
+        _ => None,
+    }
+}
+
 /// interpret the contents of the page and render them into the device.
 pub fn interpret_page<'a>(
     page: &Page<'a>,
@@ -296,7 +482,7 @@ pub fn interpret_page<'a>(
             let flags = annot.get::<u32>(F).unwrap_or(0);
 
             // Annotation should be hidden.
-            if flags & 2 != 0 {
+            if flags & ANNOT_FLAG_HIDDEN != 0 {
                 continue;
             }
 
@@ -373,9 +559,46 @@ pub fn interpret_page<'a>(
                 context.pre_concat_affine(affine);
                 context.push_root_transform();
 
+                // Bracket the appearance for the device: a replacement the
+                // stream carries without a glyph is the annotation's own
+                // statement about what it shows, not a reinterpretation of
+                // the page, so a text device reads it as the value even
+                // where replacements on the page stay off.
+                device
+                    .begin_annotation_appearance(context.get().ctm.transform_rect_bbox(annot_rect));
                 draw_form_xobject(resources, &apx, context, device);
+                device.end_annotation_appearance();
                 context.pop_root_transform();
                 context.restore_state(device);
+            } else if annot.get::<Name>(SUBTYPE).as_deref() == Some(WIDGET)
+                && flags & ANNOT_FLAG_NOVIEW == 0
+                && let Some(text) = field_value_text(&annot)
+                && let Some(rect) = annot.get::<Rect>(RECT)
+            {
+                // No appearance stream resolved, and the field has a value: the
+                // only place that value exists on this page is the field
+                // dictionary, and a reader of glyphs alone comes away with
+                // nothing (#549). `/NeedAppearances` is not consulted, and the
+                // condition is deliberately "no appearance" rather than "has a
+                // value": a stale appearance next to a newer `/V` is still an
+                // appearance, and taking both would print the value twice.
+                //
+                // `/NoView` is honoured here and not in the branch above,
+                // where an appearance stream is read whether or not the
+                // annotation is for the screen. That asymmetry is not an
+                // oversight -- it is the measured behaviour of the reader this
+                // extraction is graded against, and narrowing it is a change
+                // that removes text, which needs its own document and its own
+                // measurement.
+                device.draw_placed_text(
+                    &text,
+                    context.get().ctm.transform_rect_bbox(rect.to_kurbo()),
+                );
+            } else if annot.get::<Dict<'_>>(AP).is_some() {
+                // The annotation carries an appearance dictionary but no
+                // appearance resolved (and the widget-value fallback above did
+                // not apply), so nothing was drawn for it.
+                (context.settings.warning_sink)(InterpreterWarning::UnresolvedAnnotationAppearance);
             }
         }
     }
@@ -647,7 +870,7 @@ pub fn interpret<'a, 'b>(
                 context.get_mut().graphics_state.non_stroke_pattern = n.1.and_then(|name| {
                     resources
                         .get_pattern(name)
-                        .and_then(|d| Pattern::new(d, context, resources))
+                        .and_then(|d| Pattern::new(d, context))
                 });
             }
             TypedInstruction::StrokeColorNamed(n) => {
@@ -656,15 +879,13 @@ pub fn interpret<'a, 'b>(
                 context.get_mut().graphics_state.stroke_pattern = n.1.and_then(|name| {
                     resources
                         .get_pattern(name)
-                        .and_then(|d| Pattern::new(d, context, resources))
+                        .and_then(|d| Pattern::new(d, context))
                 });
             }
             TypedInstruction::BeginMarkedContentWithProperties(bdc) => {
                 // Properties can be either:
                 // 1. A Name that references an entry in the Resources/Properties dictionary
                 // 2. An inline dictionary with an OC key
-
-                let mcid = dict_or_stream(&bdc.1).and_then(|(props, _)| props.get::<i32>(MCID));
 
                 let oc = bdc
                     .1
@@ -690,8 +911,18 @@ pub fn interpret<'a, 'b>(
                 } else {
                     context.ocg_state.begin_marked_content();
                 }
-
-                device.begin_marked_content(&bdc.0, mcid);
+                let props = bdc
+                    .1
+                    .clone()
+                    .into_name()
+                    .and_then(|name| resources.properties.get::<Dict<'_>>(name))
+                    .or_else(|| dict_or_stream(&bdc.1).map(|(props, _)| props));
+                let mcid = props.as_ref().and_then(|p| p.get::<i32>(MCID));
+                let actual_text = props
+                    .as_ref()
+                    .and_then(|p| p.get::<PdfString>(ACTUAL_TEXT))
+                    .and_then(|s| decode_text_string(s.as_bytes()));
+                device.begin_marked_content(&bdc.0, mcid, actual_text.as_deref());
             }
             TypedInstruction::MarkedContentPointWithProperties(_) => {}
             TypedInstruction::EndMarkedContent(_) => {
@@ -701,7 +932,7 @@ pub fn interpret<'a, 'b>(
             TypedInstruction::MarkedContentPoint(_) => {}
             TypedInstruction::BeginMarkedContent(bmc) => {
                 context.ocg_state.begin_marked_content();
-                device.begin_marked_content(&bmc.0, None);
+                device.begin_marked_content(&bmc.0, None, None);
             }
             TypedInstruction::BeginText(_) => {
                 context.get_mut().text_state.text_matrix = Affine::IDENTITY;
@@ -745,12 +976,19 @@ pub fn interpret<'a, 'b>(
                 // 2) In case it's `None` because we were unable to resolve the font
                 // (for whatever reason), leave it as `None`. Better showing no
                 // text at all than garbage text.
-                let font = if let Some(font_dict) = resources.get_font(name.clone()) {
+                let mut font = if let Some(font_dict) = resources.get_font(name.clone()) {
                     context.resolve_font(&font_dict)
                 } else {
                     Font::new_standard(StandardFont::Helvetica, &context.settings.font_resolver)
                         .map(TextStateFont::Fallback)
                 };
+                // The resource name rides the resolved font (a clone out of
+                // the cache) down to the glyphs, so extraction can tell the
+                // engine's own OCR layer apart from author text. Fallbacks
+                // carry no resource and stay nameless.
+                if let Some(TextStateFont::Font(resolved)) = font.as_mut() {
+                    resolved.set_resource_name(name.as_str());
+                }
 
                 context.get_mut().text_state.font_size = t.1.as_f32();
                 context.get_mut().text_state.font = font;
@@ -848,11 +1086,13 @@ pub fn interpret<'a, 'b>(
             TypedInstruction::ShapeGlyph(_) => {}
             TypedInstruction::XObject(x) => {
                 let cache = context.object_cache.clone();
+                let warning_sink = context.settings.warning_sink.clone();
                 let transfer_function = context.get().graphics_state.transfer_function.clone();
                 if let Some(x_object) = resources.get_x_object(x.0).and_then(|s| {
                     XObject::new(
                         &s,
-                        &context.settings.warning_sink,
+                        |name| context.get_color_space(resources, name.clone()),
+                        &warning_sink,
                         &cache,
                         transfer_function.clone(),
                     )
@@ -959,8 +1199,8 @@ mod tests {
     use crate::soft_mask::SoftMask;
     use crate::util::PageExt;
     use crate::{
-        BlendMode, ClipPath, Context, GlyphDrawMode, Image, InterpreterSettings, Paint,
-        PathDrawMode, interpret_page,
+        BlendMode, ClipPath, Context, GlyphDrawMode, Image, InterpreterSettings,
+        InterpreterWarning, Paint, PathDrawMode, interpret_page,
     };
     use kurbo::{Affine, BezPath, Shape};
     use pdf_syntax::Pdf;
@@ -1060,18 +1300,34 @@ mod tests {
     /// Interpret the first page of `pdf_bytes` and return the recorded path
     /// widths.
     fn interpret_widths(pdf_bytes: Vec<u8>) -> Vec<f64> {
+        interpret_widths_and_warnings(pdf_bytes).1
+    }
+
+    /// Interpret the first page of `pdf_bytes`, capturing interpreter
+    /// warnings, and return both.
+    fn interpret_widths_and_warnings(pdf_bytes: Vec<u8>) -> (Vec<InterpreterWarning>, Vec<f64>) {
+        use std::sync::{Arc, Mutex};
+
         let pdf = Pdf::new(pdf_bytes).expect("test PDF must parse");
         let pages = pdf.pages();
         let page = pages.first().expect("test PDF must have one page");
 
-        let settings = InterpreterSettings::default();
+        let warnings = Arc::new(Mutex::new(Vec::new()));
+        let warnings_sink = warnings.clone();
+        let settings = InterpreterSettings {
+            warning_sink: Arc::new(move |w| warnings_sink.lock().expect("test lock").push(w)),
+            ..Default::default()
+        };
         let initial_transform = page.initial_transform(true);
         let bbox = kurbo::Rect::new(0.0, 0.0, 100.0, 100.0);
         let mut context = Context::new(initial_transform, bbox, page.xref(), settings);
         let mut device = CountingDevice::default();
 
         interpret_page(page, &mut context, &mut device);
-        device.path_widths
+        (
+            warnings.lock().expect("test lock").clone(),
+            device.path_widths,
+        )
     }
 
     fn assert_widths(widths: &[f64], expected: &[f64]) {
@@ -1190,5 +1446,271 @@ mod tests {
             &[],
         );
         assert_widths(&interpret_widths(pdf), &[7.0]);
+    }
+
+    /// Ported from LaurenzV/hayro 36be86c1 (#1359): an annotation whose
+    /// /AP exists but whose normal appearance cannot be selected warns
+    /// instead of silently drawing nothing. /AS /Off with no /Off entry
+    /// and no /V resolves to nothing and draws nothing.
+    #[test]
+    fn widget_unresolved_appearance_warns() {
+        let pdf = checkbox_pdf(
+            b"<< /Type /Annot /Subtype /Widget /FT /Btn /Rect [10 10 30 30] \
+              /AP << /N << /Yes 5 0 R >> >> /AS /Off >>",
+            "[0 0 20 20]",
+            &[],
+        );
+        let (warnings, widths) = interpret_widths_and_warnings(pdf);
+        assert_widths(&widths, &[]);
+        assert_eq!(warnings.len(), 1, "expected one warning, got {warnings:?}");
+        assert!(
+            matches!(
+                warnings[0],
+                InterpreterWarning::UnresolvedAnnotationAppearance
+            ),
+            "expected UnresolvedAnnotationAppearance, got {:?}",
+            warnings[0]
+        );
+    }
+
+    /// Control for the above: a resolved appearance draws and warns about
+    /// nothing.
+    #[test]
+    fn widget_resolved_appearance_warns_nothing() {
+        let pdf = checkbox_pdf(
+            b"<< /Type /Annot /Subtype /Widget /FT /Btn /Rect [10 10 30 30] \
+              /AP << /N << /Yes 5 0 R /Off 6 0 R >> >> /AS /Yes >>",
+            "[0 0 20 20]",
+            &[],
+        );
+        let (warnings, widths) = interpret_widths_and_warnings(pdf);
+        assert_widths(&widths, &[10.0, 4.0]);
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got {warnings:?}"
+        );
+    }
+
+    /// A device that records the first RGB pixel of every raster image it
+    /// is asked to draw.
+    #[derive(Default)]
+    struct FirstPixelDevice {
+        first_pixels: Vec<[u8; 3]>,
+    }
+
+    impl Device<'_> for FirstPixelDevice {
+        fn set_soft_mask(&mut self, _: Option<SoftMask<'_>>) {}
+        fn set_blend_mode(&mut self, _: BlendMode) {}
+        fn draw_path(&mut self, _: &BezPath, _: Affine, _: &Paint<'_>, _: &PathDrawMode) {}
+        fn push_clip_path(&mut self, _: &ClipPath) {}
+        fn push_transparency_group(&mut self, _: f32, _: Option<SoftMask<'_>>, _: BlendMode) {}
+        fn draw_glyph(
+            &mut self,
+            _: &Glyph<'_>,
+            _: Affine,
+            _: Affine,
+            _: &Paint<'_>,
+            _: &GlyphDrawMode,
+        ) {
+        }
+        fn draw_image(&mut self, image: Image<'_, '_>, _: Affine) {
+            if let Image::Raster(raster) = image {
+                raster.with_rgba(
+                    |rgb, _| {
+                        if rgb.data.len() >= 3 {
+                            self.first_pixels
+                                .push([rgb.data[0], rgb.data[1], rgb.data[2]]);
+                        }
+                    },
+                    None,
+                );
+            }
+        }
+        fn pop_clip_path(&mut self) {}
+        fn pop_transparency_group(&mut self) {}
+    }
+
+    /// Interpret the first page of `pdf_bytes` and return the first RGB
+    /// pixel of every raster image drawn.
+    fn interpret_first_pixels(pdf_bytes: Vec<u8>) -> Vec<[u8; 3]> {
+        let pdf = Pdf::new(pdf_bytes).expect("test PDF must parse");
+        let pages = pdf.pages();
+        let page = pages.first().expect("test PDF must have one page");
+
+        let settings = InterpreterSettings::default();
+        let initial_transform = page.initial_transform(true);
+        let bbox = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
+        let mut context = Context::new(initial_transform, bbox, page.xref(), settings);
+        let mut device = FirstPixelDevice::default();
+
+        interpret_page(page, &mut context, &mut device);
+        device.first_pixels
+    }
+
+    /// Ported from LaurenzV/hayro a05f51eb (#1311): an image XObject whose
+    /// /ColorSpace is a bare resource name (spec-forbidden, seen in the
+    /// wild) must resolve it against the page resources instead of being
+    /// dropped. Mirrors upstream's `image_named_colorspace.pdf`: an 8x8
+    /// /Indexed image whose first index maps to pure red.
+    #[test]
+    fn image_xobject_with_bare_name_colorspace_renders() {
+        let mut pixels = Vec::with_capacity(64);
+        for _ in 0..8 {
+            pixels.extend_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        }
+        let mut image = format!(
+            "<< /Type /XObject /Subtype /Image /Width 8 /Height 8 /BitsPerComponent 8 \
+             /ColorSpace /CS0 /Length {} >>\nstream\n",
+            pixels.len()
+        )
+        .into_bytes();
+        image.extend_from_slice(&pixels);
+        image.extend_from_slice(b"\nendstream");
+
+        let content = b"q\n200 0 0 200 0 0 cm\n/Im0 Do\nQ";
+        let mut content_stream = format!("<< /Length {} >>\nstream\n", content.len()).into_bytes();
+        content_stream.extend_from_slice(content);
+        content_stream.extend_from_slice(b"\nendstream");
+
+        let pdf = build_pdf(&[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] \
+              /Resources << /XObject << /Im0 4 0 R >> /ColorSpace << /CS0 6 0 R >> >> \
+              /Contents 5 0 R >>"
+                .to_vec(),
+            image,
+            content_stream,
+            b"[/Indexed /DeviceRGB 7 <ff0000ff8000ffff0000ff0000ffff0000ffff00ff000000>]".to_vec(),
+        ]);
+
+        // Index 0 of the palette is pure red; without the fix the image
+        // decodes against a gray fallback (first pixel black) instead.
+        assert_eq!(interpret_first_pixels(pdf), [[255, 0, 0]]);
+    }
+
+    /// A device that collects the Unicode text of every glyph it is asked
+    /// to draw.
+    #[derive(Default)]
+    struct TextDevice {
+        text: String,
+    }
+
+    impl Device<'_> for TextDevice {
+        fn set_soft_mask(&mut self, _: Option<SoftMask<'_>>) {}
+        fn set_blend_mode(&mut self, _: BlendMode) {}
+        fn draw_path(&mut self, _: &BezPath, _: Affine, _: &Paint<'_>, _: &PathDrawMode) {}
+        fn push_clip_path(&mut self, _: &ClipPath) {}
+        fn push_transparency_group(&mut self, _: f32, _: Option<SoftMask<'_>>, _: BlendMode) {}
+        fn draw_glyph(
+            &mut self,
+            glyph: &Glyph<'_>,
+            _: Affine,
+            _: Affine,
+            _: &Paint<'_>,
+            _: &GlyphDrawMode,
+        ) {
+            match glyph.as_unicode() {
+                Some(pdf_font::cmap::BfString::Char(c)) => self.text.push(c),
+                Some(pdf_font::cmap::BfString::String(s)) => self.text.push_str(&s),
+                None => {}
+            }
+        }
+        fn draw_image(&mut self, _: Image<'_, '_>, _: Affine) {}
+        fn pop_clip_path(&mut self) {}
+        fn pop_transparency_group(&mut self) {}
+    }
+
+    /// Interpret the first page of `pdf_bytes` and return the drawn text.
+    fn interpret_text(pdf_bytes: Vec<u8>) -> String {
+        let pdf = Pdf::new(pdf_bytes).expect("test PDF must parse");
+        let pages = pdf.pages();
+        let page = pages.first().expect("test PDF must have one page");
+
+        let settings = InterpreterSettings::default();
+        let initial_transform = page.initial_transform(true);
+        let bbox = kurbo::Rect::new(0.0, 0.0, 100.0, 100.0);
+        let mut context = Context::new(initial_transform, bbox, page.xref(), settings);
+        let mut device = TextDevice::default();
+
+        interpret_page(page, &mut context, &mut device);
+        device.text
+    }
+
+    /// A Type1 font whose /Differences remap S to X, so resolving it (as
+    /// opposed to falling back to Helvetica) is visible in the text.
+    fn differences_font() -> Vec<u8> {
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding << \
+          /Type /Encoding /BaseEncoding /WinAnsiEncoding /Differences [83 /X] >> >>"
+            .to_vec()
+    }
+
+    /// Ported from LaurenzV/hayro 42ceaf44 (#1387), page-tree half: the
+    /// page's own /Resources shadows the /Pages dict wholesale. /F1 lives
+    /// only on the /Pages node and maps S to X; the page carries its own
+    /// /Resources without /F1, so the text falls back to Helvetica
+    /// ("Shadowed"). Without the fix the ancestor font leaks in
+    /// ("Xhadowed").
+    #[test]
+    fn page_resources_shadow_pages_resources() {
+        let content = b"BT /F1 12 Tf 72 700 Td (Shadowed) Tj ET";
+        let content_stream = format!("<< /Length {} >>\nstream\n", content.len()).into_bytes();
+        let mut content_stream_body = content_stream;
+        content_stream_body.extend_from_slice(content);
+        content_stream_body.extend_from_slice(b"\nendstream");
+
+        let pdf = build_pdf(&[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 \
+              /Resources << /Font << /F1 5 0 R >> >> >>"
+                .to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] \
+              /Resources << /Font << /F2 6 0 R >> >> /Contents 4 0 R >>"
+                .to_vec(),
+            content_stream_body,
+            differences_font(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        ]);
+
+        assert_eq!(interpret_text(pdf), "Shadowed");
+    }
+
+    /// Ported from LaurenzV/hayro 42ceaf44 (#1387), form-XObject half: a
+    /// form with its own /Resources does not see the page's. The page
+    /// holds /F1 (S to X); the form holds only /F2 and shows text with
+    /// /F1, which falls back to Helvetica ("Shadowed"). Without the fix
+    /// the page font leaks into the form ("Xhadowed").
+    #[test]
+    fn form_resources_shadow_page_resources() {
+        let form_content = b"BT /F1 12 Tf 10 10 Td (Shadowed) Tj ET";
+        let mut form = format!(
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 100 100] \
+             /Resources << /Font << /F2 7 0 R >> >> /Length {} >>\nstream\n",
+            form_content.len()
+        )
+        .into_bytes();
+        form.extend_from_slice(form_content);
+        form.extend_from_slice(b"\nendstream");
+
+        let page_content = b"q 1 0 0 1 0 0 cm /Fm0 Do Q";
+        let mut page_stream =
+            format!("<< /Length {} >>\nstream\n", page_content.len()).into_bytes();
+        page_stream.extend_from_slice(page_content);
+        page_stream.extend_from_slice(b"\nendstream");
+
+        let pdf = build_pdf(&[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] \
+              /Resources << /Font << /F1 6 0 R >> /XObject << /Fm0 4 0 R >> >> \
+              /Contents 5 0 R >>"
+                .to_vec(),
+            form,
+            page_stream,
+            differences_font(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        ]);
+
+        assert_eq!(interpret_text(pdf), "Shadowed");
     }
 }

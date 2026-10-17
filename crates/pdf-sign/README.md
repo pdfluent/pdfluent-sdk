@@ -17,7 +17,9 @@ Signs and validates PDFs to PAdES baseline profiles, and validates signatures of
 | B-LT | yes | B-T plus a Document Security Store carrying the certificate chain |
 | B-LTA | **no** | Needs a document timestamp (`/Type /DocTimeStamp`, SubFilter `ETSI.RFC3161`) over the whole file. Not implemented; asking for it is an error |
 
-B-T and B-LT take the timestamp token as an argument (`sign_pdf_timestamped`, `sign_pdf_ltv_with_token`). Fetching one means an HTTP request to a timestamp authority, and the default build has no HTTP client anywhere in the signing path; enable the `tsa` feature for `sign_pdf_ltv`, which does the fetch for you.
+B-T and B-LT are signed in two phases, because an authority stamps a signature and the signature has to exist first: `sign_pdf_pending_timestamp` signs and hands back a `PendingTimestamp`, whose `signature_value()` is what the RFC 3161 request covers, and `timestamped()` / `long_term()` embed the token that comes back. A token whose message imprint is not the digest of that signature is refused rather than embedded — including one obtained before signing, which cannot be about a signature that did not exist yet.
+
+Fetching a token means an HTTP request to a timestamp authority, and the default build has no HTTP client anywhere in the signing path; enable the `tsa` feature for `sign_pdf_ltv`, which does the fetch for you. `sign_pdf_timestamped` and `sign_pdf_ltv_with_token` take a token you already hold, and apply the same imprint check.
 
 Also supports incremental update signing, signature appearances, and DocMDP enforcement.
 

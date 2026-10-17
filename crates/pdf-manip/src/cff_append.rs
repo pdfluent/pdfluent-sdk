@@ -549,6 +549,24 @@ fn decode_operands(d: &[u8]) -> Vec<i32> {
 }
 
 /// Encode an integer as a Type 2 charstring operand.
+/// A Type 2 advance, keeping a fraction when the width has one.
+///
+/// `/Widths` may be a real number, and `t2_int` rounds. A declared 500.4 became
+/// 500, the read-back's half-unit tolerance accepted it, and
+/// `update_metrics_from_cff` then wrote the rounded integer over the author's
+/// entry -- so the pass meant to preserve the advance moved it by four tenths
+/// of a unit, on every glyph of that code. Type 2 has a form for this: the 255
+/// prefix carries a 16.16 fixed-point number. Found by review on #1880.
+fn t2_number(v: f64) -> Vec<u8> {
+    if (v.fract() == 0.0) && (i32::MIN as f64..=i32::MAX as f64).contains(&v) {
+        return t2_int(v as i32);
+    }
+    let fixed = (v * 65536.0).round() as i32;
+    let mut out = vec![255u8];
+    out.extend_from_slice(&fixed.to_be_bytes());
+    out
+}
+
 fn t2_int(v: i32) -> Vec<u8> {
     if (-107..=107).contains(&v) {
         vec![(v + 139) as u8]
@@ -1209,6 +1227,123 @@ fn patch_operand_in_place(buf: &mut [u8], span: &OperandSpan, value: i32) -> Opt
     Some(())
 }
 
+/// Replace unused Type2 charstrings with compressible, valid blank programs.
+/// INDEX offsets, glyph IDs, charset, encoding, private dicts and subroutines
+/// stay byte-identical. Keeping the original extents avoids relocating CID
+/// private dictionaries; the saving is in the encoded PDF stream. Every kept
+/// outline is checked afterwards, so a dropped seac dependency rejects the
+/// candidate rather than silently changing an accented glyph.
+pub(crate) fn retain_charstrings(
+    data: &[u8],
+    keep: &std::collections::BTreeSet<u16>,
+) -> Result<Vec<u8>, &'static str> {
+    // THE TWO REFUSALS ARE NOT THE SAME NEWS, AND USED TO READ AS ONE.
+    // A program that had nothing to give back and a program whose outlines
+    // could not be shown to be unchanged both arrived at the caller as `None`,
+    // and the caller reported both as "outline equivalence not established" --
+    // 761 of them over the 300-document tuning set, with no way to tell how
+    // many were a verification that failed. They are separate reasons now
+    // (#379 round 3).
+    let names = parse_index(data, *data.get(2).ok_or("unparseable CFF")? as usize)
+        .ok_or("unparseable CFF")?;
+    let top = parse_index(data, names.end).ok_or("unparseable CFF")?;
+    if top.entries.len() != 1 {
+        return Err("more than one CFF top dictionary");
+    }
+    let entries =
+        parse_dict(top.entries.first().ok_or("unparseable CFF")?).ok_or("unparseable CFF")?;
+    let chars_pos = entries
+        .iter()
+        .find(|e| e.operator == [17])
+        .and_then(|e| decode_operands(&e.operands).first().copied())
+        .ok_or("CFF without a CharStrings offset")?;
+    let pos = usize::try_from(chars_pos).map_err(|_| "unparseable CFF")?;
+    let chars = parse_index(data, pos).ok_or("unparseable CFF")?;
+    let off_size = read_u8(data, pos + 2).ok_or("unparseable CFF")?;
+    let start = pos + 3 + (chars.entries.len() + 1) * off_size as usize - 1;
+    let mut out = data.to_vec();
+    let mut altered = false;
+    for (gid, cs) in chars.entries.iter().enumerate() {
+        if gid == 0 || keep.contains(&(gid as u16)) || cs.is_empty() {
+            continue;
+        }
+        let offset = start
+            + read_offset(data, pos + 3 + gid * off_size as usize, off_size)
+                .ok_or("unparseable CFF")?;
+        let bytes = out
+            .get_mut(offset..offset + cs.len())
+            .ok_or("CFF charstring offset outside the program")?;
+        // A sequence of zero hmoveto operations with a balanced push/drop for
+        // parity, then endchar. No operand-stack growth and no trailing bytes.
+        let mut pad = Vec::with_capacity(bytes.len());
+        let mut remaining = bytes.len() - 1;
+        if remaining == 1 {
+            pad.push(139);
+            remaining = 0;
+        } else if remaining % 2 != 0 {
+            pad.extend_from_slice(&[139, 12, 18]);
+            remaining -= 3;
+        }
+        for _ in 0..remaining / 2 {
+            pad.extend_from_slice(&[139, 22]);
+        }
+        pad.push(14);
+        bytes.copy_from_slice(&pad);
+        altered = true;
+    }
+    if !altered {
+        return Err("no unused outline payload");
+    }
+    let before = cff_parser::Table::parse(data).ok_or("unparseable CFF")?;
+    let after = cff_parser::Table::parse(&out).ok_or("unparseable CFF")?;
+    #[derive(Default, PartialEq)]
+    struct Outline(Vec<u32>);
+    impl cff_parser::OutlineBuilder for Outline {
+        fn move_to(&mut self, x: f32, y: f32) {
+            self.0.extend([0, x.to_bits(), y.to_bits()]);
+        }
+        fn line_to(&mut self, x: f32, y: f32) {
+            self.0.extend([1, x.to_bits(), y.to_bits()]);
+        }
+        fn quad_to(&mut self, a: f32, b: f32, c: f32, d: f32) {
+            self.0
+                .extend([2, a.to_bits(), b.to_bits(), c.to_bits(), d.to_bits()]);
+        }
+        fn curve_to(&mut self, a: f32, b: f32, c: f32, d: f32, e: f32, f: f32) {
+            self.0.extend([
+                3,
+                a.to_bits(),
+                b.to_bits(),
+                c.to_bits(),
+                d.to_bits(),
+                e.to_bits(),
+                f.to_bits(),
+            ]);
+        }
+        fn close(&mut self) {
+            self.0.push(4);
+        }
+    }
+    for gid in keep.iter().copied().chain(std::iter::once(0)) {
+        let g = cff_parser::GlyphId(gid);
+        let mut a = Outline::default();
+        let mut b = Outline::default();
+        let ar = before.outline(g, &mut a);
+        let br = after.outline(g, &mut b);
+        if ar.is_ok() != br.is_ok() || a != b || before.glyph_width(g) != after.glyph_width(g) {
+            return Err("CFF outline equivalence not established");
+        }
+        // An outline parsing failure is not evidence of equivalence. Empty
+        // glyphs report ZeroBBox in both programs; only those are accepted.
+        if let Err(e) = ar {
+            if !a.0.is_empty() || !matches!(e, cff_parser::CFFError::ZeroBBox) {
+                return Err("CFF outline equivalence not established");
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     pub(crate) fn synth_cid_cff() -> Vec<u8> {
@@ -1262,6 +1397,90 @@ pub(crate) mod tests {
             data.extend_from_slice(&[0; 1600]); // Forces narrow Top DICT offsets to widen.
         }
         data
+    }
+
+    #[test]
+    fn retained_seac_glyph_rejects_removing_its_base_or_accent() {
+        let base = synth_cff(&[34, 125, 171], 0); // A, acute, Aacute
+        let rectangle = vec![139, 139, 21, 239, 139, 5, 139, 239, 5, 39, 139, 5, 14];
+        let seac = vec![139, 139, 204, 247, 86, 14]; // adx ady StandardEncoding A acute
+        let data = rebuild_with_wide_offsets(
+            &base,
+            &[34, 125, 171],
+            &[vec![14], rectangle.clone(), rectangle, seac],
+        )
+        .unwrap();
+        let table = cff_parser::Table::parse(&data).unwrap();
+        struct Count(usize);
+        impl cff_parser::OutlineBuilder for Count {
+            fn move_to(&mut self, _: f32, _: f32) {
+                self.0 += 1;
+            }
+            fn line_to(&mut self, _: f32, _: f32) {
+                self.0 += 1;
+            }
+            fn quad_to(&mut self, _: f32, _: f32, _: f32, _: f32) {
+                self.0 += 1;
+            }
+            fn curve_to(&mut self, _: f32, _: f32, _: f32, _: f32, _: f32, _: f32) {
+                self.0 += 1;
+            }
+            fn close(&mut self) {
+                self.0 += 1;
+            }
+        }
+        let mut count = Count(0);
+        table.outline(cff_parser::GlyphId(3), &mut count).unwrap();
+        assert!(count.0 > 0);
+        // The reason, not just the refusal: "nothing to remove" and "the
+        // outlines no longer agree" arrive at the caller as separate news since
+        // #379 round 3, and this one is the second.
+        assert_eq!(
+            retain_charstrings(&data, &std::collections::BTreeSet::from([0, 3])),
+            Err("CFF outline equivalence not established")
+        );
+    }
+    #[test]
+    fn unused_cff_charstrings_compress_without_moving_private_data_or_kept_outlines() {
+        let base = synth_cff(&[1, 34, 35], 0);
+        let mut shape = vec![139, 139, 21];
+        for i in 0..120 {
+            shape.extend([139 + (i % 80) as u8, 139, 5]);
+        }
+        shape.push(14);
+        let data = rebuild_with_wide_offsets(
+            &base,
+            &[1, 34, 35],
+            &[vec![14], shape.clone(), shape.clone(), shape],
+        )
+        .unwrap();
+        let out = retain_charstrings(&data, &std::collections::BTreeSet::from([0, 1])).unwrap();
+        assert_eq!(data.len(), out.len());
+        let (_, _, _, pos) = top_dict_spans(&data).unwrap();
+        let a = parse_index(&data, pos).unwrap();
+        let b = parse_index(&out, pos).unwrap();
+        assert_eq!(a.entries[1], b.entries[1]);
+        assert_ne!(a.entries[2], b.entries[2]);
+        assert_eq!(private_widths(&data), private_widths(&out));
+        let mut original = lopdf::Stream::new(lopdf::Dictionary::new(), data);
+        let mut subset = lopdf::Stream::new(lopdf::Dictionary::new(), out);
+        original.compress().unwrap();
+        subset.compress().unwrap();
+        // Repeated original shapes can already compress well; the proof here
+        // is valid blank bytecode, unchanged kept glyphs and stable offsets.
+        assert!(cff_parser::Table::parse(&subset.decompressed_content().unwrap()).is_some());
+        let cid = synth_cid_cff();
+        let cid_subset = retain_charstrings(&cid, &std::collections::BTreeSet::from([0])).unwrap();
+        let before = cff_parser::Table::parse(&cid).unwrap();
+        let after = cff_parser::Table::parse(&cid_subset).unwrap();
+        assert_eq!(
+            before.glyph_cid(cff_parser::GlyphId(1)),
+            after.glyph_cid(cff_parser::GlyphId(1))
+        );
+        assert_eq!(
+            before.glyph_width(cff_parser::GlyphId(0)),
+            after.glyph_width(cff_parser::GlyphId(0))
+        );
     }
 
     #[test]
@@ -1569,5 +1788,510 @@ pub(crate) mod tests {
         assert!(append_blank_glyph(&[1, 0, 4, 2, 0, 0], 278.0).is_none());
         let noise: Vec<u8> = (0..512).map(|i| (i * 37 % 251) as u8).collect();
         assert!(append_blank_glyph(&noise, 278.0).is_none());
+    }
+}
+
+/// Re-metric a CFF program: give the named glyphs the advances asked for.
+///
+/// # Why this exists
+///
+/// PDF/A wants every font embedded and many documents only name one, so a
+/// converter supplies a face. §6.2.11.5 then asks that `/Widths` agree with
+/// the embedded program -- and there are two ways to satisfy it. Rewriting
+/// `/Widths` towards the substitute is one, and it is what happened: on govdocs
+/// `001_001672`, which draws five variants of AGaramond and embeds none, 67 of
+/// the 84 codes with a real width came back with a different one. `A` went from
+/// 623 to 722 -- the Times advance -- and every line of that typeface
+/// re-spaces. The document is conformant and the text has moved (#380).
+///
+/// This is the other way: keep the widths the author declared and fit the
+/// program to them. The glyphs are still the substitute's shapes, but they
+/// occupy the space the document was laid out for.
+///
+/// # What it does to a charstring
+///
+/// A Type 2 charstring may begin with an advance, encoded as `w - nominalWidthX`
+/// and omitted entirely when `w` equals `defaultWidthX`. Whether the leading
+/// number IS that advance depends on the operator that follows it -- an odd
+/// argument count to a stem operator, three to `rmoveto`, and so on. So the
+/// leading operands are decoded, the operator decides, and the old advance is
+/// replaced or a new one inserted. Everything after it is copied byte for byte.
+///
+/// Returns `None` rather than a half-rewritten font: a program this cannot read
+/// with certainty is left exactly as it was.
+pub(crate) fn set_charstring_widths(
+    data: &[u8],
+    widths: &std::collections::BTreeMap<u16, f64>,
+) -> Option<Vec<u8>> {
+    let (charset_span, charstrings_span, charset_off, charstrings_off) = top_dict_spans(data)?;
+    let charstrings = parse_index(data, charstrings_off)?;
+    let n_glyphs = charstrings.entries.len();
+    let sids = parse_charset(data, charset_off, n_glyphs)?;
+    let (nominal_width, default_width) = private_widths(data)?;
+
+    let gsubrs = global_subrs(data)?;
+    let lsubrs = local_subrs(data).unwrap_or(Index {
+        entries: Vec::new(),
+        end: 0,
+    });
+
+    let mut new_charstrings = charstrings.entries.clone();
+    let mut changed = false;
+    for (&gid, &width) in widths {
+        let entry = new_charstrings.get_mut(usize::from(gid))?;
+        // Inline leading calls until the charstring's own first operator is
+        // visible. Four is generous: a glyph nested deeper than that is not one
+        // this should be reasoning about.
+        let mut resolved = entry.clone();
+        for _ in 0..4 {
+            match inline_leading_subr_call(&resolved, &gsubrs, &lsubrs) {
+                Some(next) => resolved = next,
+                None => break,
+            }
+        }
+        let entry_ref: &mut Vec<u8> = entry;
+        *entry_ref = resolved;
+        let entry = entry_ref;
+        let body = charstring_without_width(entry)?;
+        let mut rewritten = Vec::with_capacity(entry.len() + 5);
+        if (width - f64::from(default_width)).abs() > f64::EPSILON {
+            rewritten.extend_from_slice(&t2_number(width - f64::from(nominal_width)));
+        }
+        rewritten.extend_from_slice(body);
+        if rewritten != *entry {
+            *entry = rewritten;
+            changed = true;
+        }
+    }
+    if !changed {
+        return Some(data.to_vec());
+    }
+
+    let mut out = data.to_vec();
+    let new_charstrings_off = out.len();
+    out.extend_from_slice(&write_index(&new_charstrings));
+    let out = match patch_operand_in_place(&mut out, &charstrings_span, new_charstrings_off as i32)
+    {
+        Some(()) => out,
+        // The operand is encoded too narrowly to hold an offset near the end of
+        // the file, which is the common case for a small subset. Same fallback
+        // the space-glyph append uses; the charset is unchanged and goes back in
+        // as it was.
+        None => {
+            let _ = charset_span;
+            rebuild_with_wide_offsets(data, &sids, &new_charstrings)?
+        }
+    };
+
+    // A font this could not rewrite exactly is not shipped. The check is the
+    // whole point: a program that no longer parses is worse than one whose
+    // advances are wrong, because the second still renders.
+    let (_, _, _, check_off) = top_dict_spans(&out)?;
+    let check = parse_index(&out, check_off)?;
+    if check.entries.len() != n_glyphs {
+        return None;
+    }
+    for (gid, entry) in check.entries.iter().enumerate() {
+        let gid = u16::try_from(gid).ok()?;
+        if widths.contains_key(&gid) {
+            continue;
+        }
+        if entry != &charstrings.entries[usize::from(gid)] {
+            return None;
+        }
+    }
+    Some(out)
+}
+
+/// The Global Subr INDEX, which follows the String INDEX in every CFF.
+fn global_subrs(data: &[u8]) -> Option<Index> {
+    let hdr_size = *data.get(2)? as usize;
+    let name = parse_index(data, hdr_size)?;
+    let top = parse_index(data, name.end)?;
+    let strings = parse_index(data, top.end)?;
+    parse_index(data, strings.end)
+}
+
+/// The Local Subr INDEX, which hangs off the Private DICT.
+fn local_subrs(data: &[u8]) -> Option<Index> {
+    let hdr_size = *data.get(2)? as usize;
+    let name = parse_index(data, hdr_size)?;
+    let top = parse_index(data, name.end)?;
+    for e in parse_dict(top.entries.first()?)? {
+        if e.operator.as_slice() == [18] {
+            let vals = decode_operands(&e.operands);
+            let (size, off) = (*vals.first()? as usize, *vals.get(1)? as usize);
+            let private = data.get(off..off.checked_add(size)?)?;
+            for pe in parse_dict(private)? {
+                if pe.operator.as_slice() == [19] {
+                    let rel = *decode_operands(&pe.operands).first()? as usize;
+                    return parse_index(data, off.checked_add(rel)?);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Replace a leading subroutine call with the subroutine's own bytes.
+///
+/// Half the glyphs in the Foxit Standard 14 we substitute with keep their hints
+/// AND their advance inside a shared subroutine, so the advance cannot be
+/// rewritten where it is: the subroutine belongs to other glyphs too. Inlining
+/// the call at this one call site changes nothing about what the glyph draws --
+/// a subroutine that ends in `return` is by definition its own body -- and puts
+/// the advance in the charstring, where it can be replaced for this glyph
+/// alone.
+///
+/// `None` when the charstring does not begin with a call, or the subroutine
+/// cannot be resolved.
+fn inline_leading_subr_call(entry: &[u8], gsubrs: &Index, lsubrs: &Index) -> Option<Vec<u8>> {
+    let mut pos = 0usize;
+    let mut operands: Vec<i32> = Vec::new();
+    let mut last_start = 0usize;
+    loop {
+        let b = *entry.get(pos)?;
+        let (len, value) = match b {
+            32..=246 => (1usize, i32::from(b) - 139),
+            247..=250 => (
+                2,
+                (i32::from(b) - 247) * 256 + i32::from(*entry.get(pos + 1)?) + 108,
+            ),
+            251..=254 => (
+                2,
+                -(i32::from(b) - 251) * 256 - i32::from(*entry.get(pos + 1)?) - 108,
+            ),
+            28 => (
+                3,
+                i32::from(i16::from_be_bytes([
+                    *entry.get(pos + 1)?,
+                    *entry.get(pos + 2)?,
+                ])),
+            ),
+            255 => (5, 0),
+            _ => break,
+        };
+        last_start = pos;
+        pos = pos.checked_add(len)?;
+        if entry.len() < pos {
+            return None;
+        }
+        operands.push(value);
+        if operands.len() > 48 {
+            return None;
+        }
+    }
+    let operator = *entry.get(pos)?;
+    let index = *operands.last()?;
+    let subrs = match operator {
+        29 => gsubrs,
+        10 => lsubrs,
+        _ => return None,
+    };
+    let bias = i32::from(cff_parser::calc_subroutine_bias(
+        u32::try_from(subrs.entries.len()).ok()?,
+    ));
+    let body = subrs
+        .entries
+        .get(usize::try_from(index.checked_add(bias)?).ok()?)?;
+    // A trailing `return` is the call boundary and disappears with the call.
+    let body = match body.last() {
+        Some(11) => &body[..body.len() - 1],
+        _ => &body[..],
+    };
+    let mut out = Vec::with_capacity(entry.len() + body.len());
+    out.extend_from_slice(&entry[..last_start]);
+    out.extend_from_slice(body);
+    out.extend_from_slice(&entry[pos + 1..]);
+    Some(out)
+}
+
+/// A charstring with its leading advance removed, if it carried one.
+///
+/// `None` when the leading tokens cannot be read with certainty -- an operator
+/// this does not know, or operands running past the end.
+fn charstring_without_width(entry: &[u8]) -> Option<&[u8]> {
+    let mut pos = 0usize;
+    let mut operands = 0usize;
+    let mut first_operand_end = None;
+    loop {
+        let b = *entry.get(pos)?;
+        let len = match b {
+            32..=246 => 1,
+            247..=254 => 2,
+            28 => 3,
+            255 => 5,
+            _ => break,
+        };
+        pos = pos.checked_add(len)?;
+        if entry.len() < pos {
+            return None;
+        }
+        operands += 1;
+        if operands == 1 {
+            first_operand_end = Some(pos);
+        }
+        // A charstring's advance is the FIRST operand; nothing past a handful
+        // of them can be one, and a long run means this is not a leading
+        // hint/move sequence we should be reasoning about.
+        if operands > 48 {
+            return None;
+        }
+    }
+    let operator = *entry.get(pos)?;
+    let carries_width = match operator {
+        // hstem, vstem, hstemhm, vstemhm, hintmask, cntrmask: pairs, so an odd
+        // count means the first number is the advance.
+        1 | 3 | 18 | 23 | 19 | 20 => operands % 2 == 1,
+        21 => operands > 2,                   // rmoveto takes dx dy
+        4 | 22 => operands > 1,               // vmoveto, hmoveto take one
+        14 => operands == 1 || operands == 5, // endchar, alone or with seac
+        // The glyph is subroutinised: its hints and its advance are inside the
+        // subroutine, and the operand here is the subroutine's index. Whether
+        // it already carries an advance cannot be read from these bytes -- so
+        // the caller prepends one and CHECKS. `callgsubr` pops only the index,
+        // so a number in front of it is still on the stack when the subroutine
+        // reaches its first stem or move, which is exactly where an advance
+        // belongs. If the glyph already had one, the read-back disagrees and
+        // that glyph is dropped. The Foxit Standard 14 we substitute with are
+        // subroutinised throughout, so without this nothing is fitted at all.
+        10 | 29 => false,
+        _ => return None,
+    };
+    if carries_width {
+        entry.get(first_operand_end?..)
+    } else {
+        Some(entry)
+    }
+}
+
+#[cfg(test)]
+mod remetric_tests {
+    use super::*;
+    /// The Type 2 encoding of a small integer, for building fixtures by hand.
+    fn n(v: i32) -> Vec<u8> {
+        t2_int(v)
+    }
+
+    #[test]
+    fn an_advance_is_recognised_by_the_operator_that_follows_it() {
+        // rmoveto takes two arguments, so three means the first is the advance.
+        let with = [n(100), n(10), n(20), vec![21u8]].concat();
+        assert_eq!(
+            charstring_without_width(&with).unwrap(),
+            [n(10), n(20), vec![21]].concat(),
+            "a three-argument rmoveto begins with an advance"
+        );
+        let without = [n(10), n(20), vec![21u8]].concat();
+        assert_eq!(
+            charstring_without_width(&without).unwrap(),
+            without,
+            "a two-argument rmoveto does not"
+        );
+
+        // Stems come in pairs.
+        let odd = [n(100), n(1), n(2), n(3), n(4), vec![1u8]].concat();
+        assert_eq!(
+            charstring_without_width(&odd).unwrap(),
+            [n(1), n(2), n(3), n(4), vec![1u8]].concat(),
+            "an odd argument count to hstem begins with an advance"
+        );
+        let even = [n(1), n(2), vec![1u8]].concat();
+        assert_eq!(charstring_without_width(&even).unwrap(), even);
+
+        // endchar alone, and endchar with an advance.
+        assert_eq!(charstring_without_width(&[14u8]).unwrap(), &[14u8]);
+        let blank = [n(250), vec![14u8]].concat();
+        assert_eq!(charstring_without_width(&blank).unwrap(), &[14u8]);
+
+        // hmoveto takes one.
+        let hmove = [n(300), n(5), vec![22u8]].concat();
+        assert_eq!(
+            charstring_without_width(&hmove).unwrap(),
+            [n(5), vec![22u8]].concat()
+        );
+    }
+
+    /// A declared width with a fraction keeps it.
+    ///
+    /// `/Widths` may be a real number. Rounding it to an integer and then
+    /// accepting the result within half a unit meant the pass built to preserve
+    /// an advance moved it by up to half a unit on every glyph of that code --
+    /// quietly, and past its own check. Type 2 has the 255 form for exactly
+    /// this. Found by review on #1880.
+    #[test]
+    fn a_fractional_advance_survives_the_encoding() {
+        assert_eq!(
+            t2_number(100.0),
+            t2_int(100),
+            "a whole number stays compact"
+        );
+
+        let face = pdf_standard_fonts::StandardFont::from_base_font("Times-Roman")
+            .expect("Times-Roman is compiled in");
+        let data = face.data();
+        let table = cff_parser::Table::parse(data).expect("the bundled face parses");
+        let gid = table.glyph_index_by_name("A").expect("A is present").0;
+
+        let mut want = std::collections::BTreeMap::new();
+        want.insert(gid, 500.4);
+        let out = set_charstring_widths(data, &want).expect("re-metrics");
+        let got = cff_parser::Table::parse(&out)
+            .expect("the rewritten face parses")
+            .glyph_width_f64(cff_parser::GlyphId(gid))
+            .expect("A has a width");
+        assert!(
+            (got - 500.4).abs() < 0.01,
+            "asked for 500.4 and the program says {got}: the fraction was rounded away"
+        );
+    }
+
+    /// Two codes wanting nearly the same advance from one glyph is still two.
+    ///
+    /// A charstring carries one advance. When two codes resolve to the same
+    /// glyph and declare different widths, neither may be guessed at -- and
+    /// "different" has to mean what the encoder can represent, not what a
+    /// rounded comparison used to tolerate. This is the encoder half of that;
+    /// the resolver half lives in `fit_cff_to_declared_widths`.
+    #[test]
+    fn nearby_advances_are_distinct_to_the_encoder() {
+        let a = t2_number(500.0);
+        let b = t2_number(500.4);
+        assert_ne!(
+            a, b,
+            "500.0 and 500.4 encode identically, so a glyph could take one for the other"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_charstring_is_refused_rather_than_guessed() {
+        // An operator this does not reason about.
+        assert!(charstring_without_width(&[n(10), vec![12u8, 35]].concat()).is_none());
+        // Operands running past the end.
+        assert!(charstring_without_width(&[28u8, 0]).is_none());
+        // Empty.
+        assert!(charstring_without_width(&[]).is_none());
+    }
+
+    /// Inlining a subroutine must change the advance and nothing else.
+    ///
+    /// Half the Foxit Standard 14's glyphs keep their advance inside a shared
+    /// subroutine, so re-metricking them means inlining the call first. That is
+    /// only safe if the glyph still draws exactly what it drew, so this compares
+    /// the outline itself, command for command and point for point.
+    #[test]
+    fn re_metricking_moves_the_advance_and_leaves_the_drawing_alone() {
+        #[derive(Default, PartialEq, Debug)]
+        struct Path(Vec<String>);
+        impl cff_parser::OutlineBuilder for Path {
+            fn move_to(&mut self, x: f32, y: f32) {
+                self.0.push(format!("M {x:.3} {y:.3}"));
+            }
+            fn line_to(&mut self, x: f32, y: f32) {
+                self.0.push(format!("L {x:.3} {y:.3}"));
+            }
+            fn curve_to(&mut self, a: f32, b: f32, c: f32, d: f32, x: f32, y: f32) {
+                self.0
+                    .push(format!("C {a:.3} {b:.3} {c:.3} {d:.3} {x:.3} {y:.3}"));
+            }
+            fn quad_to(&mut self, a: f32, b: f32, x: f32, y: f32) {
+                self.0.push(format!("Q {a:.3} {b:.3} {x:.3} {y:.3}"));
+            }
+            fn close(&mut self) {
+                self.0.push("Z".into());
+            }
+        }
+        fn outline_of(data: &[u8], gid: u16) -> Path {
+            let table = cff_parser::Table::parse(data).expect("parses");
+            let mut path = Path::default();
+            table
+                .outline(cff_parser::GlyphId(gid), &mut path)
+                .expect("outlines");
+            path
+        }
+
+        let face = pdf_standard_fonts::StandardFont::from_base_font("Times-Roman")
+            .expect("Times-Roman is compiled in");
+        let data = face.data();
+        let table = cff_parser::Table::parse(data).expect("the bundled face parses");
+
+        // Both kinds: glyphs whose advance is in the charstring, and glyphs
+        // whose advance is inside a subroutine (`A` and `e` are the second kind
+        // in this face, which is why they were the ones that used to refuse).
+        let names = ["A", "B", "D", "H", "e", "n"];
+        let gids: Vec<u16> = names
+            .iter()
+            .map(|n| table.glyph_index_by_name(n).expect("glyph present").0)
+            .collect();
+        let mut want = std::collections::BTreeMap::new();
+        for gid in &gids {
+            want.insert(*gid, 987.0);
+        }
+        let out = set_charstring_widths(data, &want).expect("re-metrics");
+        let after = cff_parser::Table::parse(&out).expect("the rewritten face parses");
+
+        for (name, gid) in names.iter().zip(&gids) {
+            assert_eq!(
+                outline_of(data, *gid),
+                outline_of(&out, *gid),
+                "{name}: the outline changed, so inlining did not preserve the drawing"
+            );
+            let got = after
+                .glyph_width_f64(cff_parser::GlyphId(*gid))
+                .unwrap_or_else(|| panic!("{name}: no width"));
+            assert!(
+                (got - 987.0).abs() < 0.5,
+                "{name}: asked for 987, the program says {got}"
+            );
+        }
+
+        // And every glyph nobody asked about is untouched.
+        for gid in 0..table.number_of_glyphs() {
+            if gids.contains(&gid) {
+                continue;
+            }
+            assert_eq!(
+                table.glyph_width_f64(cff_parser::GlyphId(gid)),
+                after.glyph_width_f64(cff_parser::GlyphId(gid)),
+                "gid {gid}: an advance moved that nobody asked to move"
+            );
+        }
+    }
+
+    /// The whole pass, on the font we actually substitute with.
+    #[test]
+    fn a_bundled_face_can_be_told_what_its_glyphs_measure() {
+        let Some(face) = pdf_standard_fonts::StandardFont::from_base_font("Times-Roman") else {
+            panic!("Times-Roman is not compiled in");
+        };
+        let data = face.data();
+        let before = parse_index(data, top_dict_spans(data).unwrap().3).unwrap();
+
+        // Two glyphs, given advances nothing would produce by accident.
+        let mut want = std::collections::BTreeMap::new();
+        want.insert(1u16, 623.0);
+        want.insert(2u16, 780.0);
+        let out = set_charstring_widths(data, &want).expect("the bundled face re-metrics");
+
+        let off = top_dict_spans(&out).unwrap().3;
+        let after = parse_index(&out, off).unwrap();
+        assert_eq!(
+            after.entries.len(),
+            before.entries.len(),
+            "re-metricking must not add or drop a glyph"
+        );
+
+        // The advances are read back through the parser that veraPDF's rule
+        // mirrors, not through the bytes this function just wrote.
+        let font = cff_parser::Table::parse(&out).expect("the rewritten program parses");
+        for (gid, expected) in [(1u16, 623.0f64), (2, 780.0)] {
+            let got = font
+                .glyph_width_f64(cff_parser::GlyphId(gid))
+                .unwrap_or_else(|| panic!("no width for gid {gid}"));
+            assert!(
+                (got - expected).abs() < 0.5,
+                "gid {gid}: asked for {expected}, the program says {got}"
+            );
+        }
     }
 }

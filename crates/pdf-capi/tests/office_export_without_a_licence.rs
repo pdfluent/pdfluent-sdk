@@ -34,8 +34,15 @@ fn open_sample() -> *mut PdfDocument {
     doc
 }
 
-/// Export all three formats and return their byte lengths.
-fn export_all(doc: *mut PdfDocument) -> Vec<(&'static str, usize)> {
+/// Export all three formats and return their bytes.
+///
+/// Full bytes, not lengths or digests. A length is nearly blind here: the thing
+/// that varied between two exports was a timestamp inside `docProps/core.xml`,
+/// and one timestamp is as long as another, so the deflated package was usually
+/// the same size while its contents differed. Wave 34410536849 caught it only
+/// because one pair of seconds happened to compress to 4936 against 4935.
+/// Bytes see what a length cannot.
+fn export_all(doc: *mut PdfDocument) -> Vec<(&'static str, Vec<u8>)> {
     let mut out = Vec::new();
     for (name, f) in [
         ("docx", pdf_document_to_docx as Export),
@@ -53,10 +60,29 @@ fn export_all(doc: *mut PdfDocument) -> Vec<(&'static str, usize)> {
         );
         assert!(!data.is_null(), "{name}: no buffer on a successful export");
         assert!(len > 0, "{name}: empty package");
+        let bytes = unsafe { std::slice::from_raw_parts(data, len) }.to_vec();
         unsafe { pdf_bytes_free(data, len) };
-        out.push((name, len));
+        out.push((name, bytes));
     }
     out
+}
+
+/// Two export runs must agree byte for byte, naming only the format on failure.
+///
+/// An `assert_eq!` on the byte vectors would print kilobytes of numbers; the
+/// lengths locate the break just as well, since a mismatch here is never a
+/// length coincidence.
+fn assert_same_export(left: &[(&str, Vec<u8>)], right: &[(&str, Vec<u8>)], why: &str) {
+    assert_eq!(left.len(), right.len(), "export count changed: {why}");
+    for ((left_name, left_bytes), (right_name, right_bytes)) in left.iter().zip(right.iter()) {
+        assert_eq!(left_name, right_name);
+        assert!(
+            left_bytes == right_bytes,
+            "{left_name}: {why} ({} bytes against {})",
+            left_bytes.len(),
+            right_bytes.len()
+        );
+    }
 }
 
 #[test]
@@ -64,6 +90,7 @@ fn office_export_needs_no_licence_and_ignores_the_environment() {
     // This test binary holds one test, so nothing else in the process reads
     // the environment while it is being changed.
     std::env::remove_var("PDFLUENT_LICENSE_KEY");
+    std::env::remove_var("SOURCE_DATE_EPOCH");
     let doc = open_sample();
     let without = export_all(doc);
 
@@ -71,9 +98,45 @@ fn office_export_needs_no_licence_and_ignores_the_environment() {
     let with_a_key = export_all(doc);
     std::env::remove_var("PDFLUENT_LICENSE_KEY");
 
-    assert_eq!(
-        without, with_a_key,
-        "a key in the environment changed what the exports produced"
+    assert_same_export(
+        &without,
+        &with_a_key,
+        "a key in the environment changed what the exports produced",
     );
+
+    // `SOURCE_DATE_EPOCH` used to pin the xlsx clock; the stamp now comes from
+    // the document's `/CreationDate`, or a fixed epoch when there is none, so
+    // the variable must be inert like the licence key.
+    std::env::set_var("SOURCE_DATE_EPOCH", "1000000000");
+    let with_epoch = export_all(doc);
+    std::env::remove_var("SOURCE_DATE_EPOCH");
+    assert_same_export(
+        &without,
+        &with_epoch,
+        "SOURCE_DATE_EPOCH changed what the exports produced",
+    );
+
+    // And the determinism the comparisons above lean on has to hold on its own:
+    // two exports deliberately taken apart in time, with no key either time.
+    // `pdf_to_xlsx` used to stamp the wall clock into the workbook, so two
+    // exports a moment apart differed by one byte after deflate. On this Mac
+    // the two calls below land inside the same second and a length comparison
+    // passes; on the wave's Linux runner they crossed a boundary and it failed,
+    // reporting "a key in the environment changed what the exports produced"
+    // about a clock (wave 34410536849, #477). Measured here before believing
+    // it: with no key involved at all, twelve consecutive xlsx exports gave two
+    // distinct lengths and eleven of eleven differed from the first byte for
+    // byte, while docx and pptx were identical every time. A sleep past a
+    // second boundary must now not move a byte.
+    let early = export_all(doc);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let late = export_all(doc);
+    assert_same_export(
+        &early,
+        &late,
+        "two exports a second apart differ, so the clock is back in the export \
+         and the comparisons above prove nothing",
+    );
+
     unsafe { pdf_document_free(doc) };
 }

@@ -18,6 +18,872 @@ export interface AnnotationInfo {
   /** Whether the annotation should print. */
   printable: boolean
 }
+export const EPSILON: number
+export const FLT_EPSILON: number
+export const FZ_MAX_INF_RECT: number
+export const FZ_MIN_INF_RECT: number
+export const TEXT_ACCURATE_ASCENDERS: number
+export const TEXT_ACCURATE_BBOXES: number
+export const TEXT_ACCURATE_SIDE_BEARINGS: number
+export const TEXT_ALIGN_CENTER: number
+export const TEXT_ALIGN_JUSTIFY: number
+export const TEXT_ALIGN_LEFT: number
+export const TEXT_ALIGN_RIGHT: number
+export const TEXT_CID_FOR_UNKNOWN_UNICODE: number
+export const TEXT_CLIP: number
+export const TEXT_CLIP_RECT: number
+export const TEXT_COLLECT_STRUCTURE: number
+export const TEXT_COLLECT_STYLES: number
+export const TEXT_COLLECT_VECTORS: number
+export const TEXT_DEHYPHENATE: number
+export const TEXT_ENCODING_CYRILLIC: number
+export const TEXT_ENCODING_GREEK: number
+export const TEXT_ENCODING_LATIN: number
+export const TEXT_FONT_BOLD: number
+export const TEXT_FONT_ITALIC: number
+export const TEXT_FONT_MONOSPACED: number
+export const TEXT_FONT_SERIFED: number
+export const TEXT_FONT_SUPERSCRIPT: number
+export const TEXT_FUZZY_VECTORS: number
+export const TEXT_IGNORE_ACTUALTEXT: number
+export const TEXT_INHIBIT_SPACES: number
+export const TEXT_LAZY_VECTORS: number
+export const TEXT_MEDIABOX_CLIP: number
+export const TEXT_OUTPUT_HTML: number
+export const TEXT_OUTPUT_JSON: number
+export const TEXT_OUTPUT_TEXT: number
+export const TEXT_OUTPUT_XHTML: number
+export const TEXT_OUTPUT_XML: number
+export const TEXT_PARAGRAPH_BREAK: number
+export const TEXT_PRESERVE_IMAGES: number
+export const TEXT_PRESERVE_LIGATURES: number
+export const TEXT_PRESERVE_SPANS: number
+export const TEXT_PRESERVE_WHITESPACE: number
+export const TEXT_SEGMENT: number
+export const TEXT_STEXT_SEGMENT: number
+export const TEXT_TABLE_HUNT: number
+export const TEXT_USE_CID_FOR_UNKNOWN_UNICODE: number
+export const TEXT_USE_GID_FOR_UNKNOWN_UNICODE: number
+export const TEXTFLAGS_BLOCKS: number
+export const TEXTFLAGS_DICT: number
+export const TEXTFLAGS_HTML: number
+export const TEXTFLAGS_RAWDICT: number
+export const TEXTFLAGS_SEARCH: number
+export const TEXTFLAGS_TEXT: number
+export const TEXTFLAGS_WORDS: number
+export const TEXTFLAGS_XHTML: number
+export const TEXTFLAGS_XML: number
+export const dictkey_align: string
+export const dictkey_asc: string
+export const dictkey_bbox: string
+export const dictkey_bidi: string
+export const dictkey_blocks: string
+export const dictkey_bpc: string
+export const dictkey_c: string
+export const dictkey_char_flags: string
+export const dictkey_chars: string
+export const dictkey_color: string
+export const dictkey_colorspace: string
+export const dictkey_content: string
+export const dictkey_creationDate: string
+export const dictkey_cs_name: string
+export const dictkey_da: string
+export const dictkey_dashes: string
+export const dictkey_desc: string
+export const dictkey_descr: string
+export const dictkey_dir: string
+export const dictkey_effect: string
+export const dictkey_ext: string
+export const dictkey_filename: string
+export const dictkey_fill: string
+export const dictkey_flags: string
+export const dictkey_font: string
+export const dictkey_glyph: string
+export const dictkey_height: string
+export const dictkey_id: string
+export const dictkey_image: string
+export const dictkey_items: string
+export const dictkey_length: string
+export const dictkey_lines: string
+export const dictkey_matrix: string
+export const dictkey_modDate: string
+export const dictkey_name: string
+export const dictkey_number: string
+export const dictkey_origin: string
+export const dictkey_rect: string
+export const dictkey_size: string
+export const dictkey_smask: string
+export const dictkey_spans: string
+export const dictkey_stroke: string
+export const dictkey_style: string
+export const dictkey_subject: string
+export const dictkey_text: string
+export const dictkey_title: string
+export const dictkey_type: string
+export const dictkey_ufilename: string
+export const dictkey_width: string
+export const dictkey_wmode: string
+export const dictkey_xref: string
+export const dictkey_xres: string
+export const dictkey_yres: string
+export const PDF_STRUCT_BROKEN: number
+export const PDF_STRUCT_FIXED: number
+export const PDF_STRUCT_HAS_ATTRIBUTES: number
+export const PDF_STRUCT_HAS_CYCLE: number
+export const PDF_STRUCT_HAS_TABLE_ATTRIBUTES: number
+export const PDF_STRUCT_HAS_TABLE_SPAN_ATTRIBUTES: number
+export const PDF_STRUCT_NOT_PRESENT: number
+export const PDF_STRUCT_PRESENT: number
+export const LINK_FLAG_B_VALID: number
+export const LINK_FLAG_FIT_H: number
+export const LINK_FLAG_FIT_V: number
+export const LINK_FLAG_L_VALID: number
+export const LINK_FLAG_R_IS_ZOOM: number
+export const LINK_FLAG_R_VALID: number
+export const LINK_FLAG_T_VALID: number
+export const LINK_GOTO: number
+export const LINK_GOTOR: number
+export const LINK_LAUNCH: number
+export const LINK_NAMED: number
+export const LINK_NONE: number
+export const LINK_URI: number
+export const PDF_ENCRYPT_AES_128: number
+export const PDF_ENCRYPT_AES_256: number
+export const PDF_ENCRYPT_KEEP: number
+export const PDF_ENCRYPT_NONE: number
+export const PDF_ENCRYPT_RC4_128: number
+export const PDF_ENCRYPT_RC4_40: number
+export const PDF_ENCRYPT_UNKNOWN: number
+export const PDF_PERM_ACCESSIBILITY: number
+export const PDF_PERM_ANNOTATE: number
+export const PDF_PERM_ASSEMBLE: number
+export const PDF_PERM_COPY: number
+export const PDF_PERM_FORM: number
+export const PDF_PERM_MODIFY: number
+export const PDF_PERM_PRINT: number
+export const PDF_PERM_PRINT_HQ: number
+export const PDF_PAGE_LABEL_ALPHA_LC: string
+export const PDF_PAGE_LABEL_ALPHA_UC: string
+export const PDF_PAGE_LABEL_DECIMAL: string
+export const PDF_PAGE_LABEL_NONE: number
+export const PDF_PAGE_LABEL_ROMAN_LC: string
+export const PDF_PAGE_LABEL_ROMAN_UC: string
+export const PDF_SIGNATURE_DEFAULT_APPEARANCE: number
+export const PDF_SIGNATURE_ERROR_DIGEST_FAILURE: number
+export const PDF_SIGNATURE_ERROR_NOT_SIGNED: number
+export const PDF_SIGNATURE_ERROR_NOT_TRUSTED: number
+export const PDF_SIGNATURE_ERROR_NO_CERTIFICATE: number
+export const PDF_SIGNATURE_ERROR_NO_SIGNATURES: number
+export const PDF_SIGNATURE_ERROR_OKAY: number
+export const PDF_SIGNATURE_ERROR_SELF_SIGNED: number
+export const PDF_SIGNATURE_ERROR_SELF_SIGNED_IN_CHAIN: number
+export const PDF_SIGNATURE_ERROR_UNKNOWN: number
+export const PDF_SIGNATURE_SHOW_DATE: number
+export const PDF_SIGNATURE_SHOW_DN: number
+export const PDF_SIGNATURE_SHOW_GRAPHIC_NAME: number
+export const PDF_SIGNATURE_SHOW_LABELS: number
+export const PDF_SIGNATURE_SHOW_LOGO: number
+export const PDF_SIGNATURE_SHOW_TEXT_NAME: number
+export const SigFlag_AppendOnly: number
+export const SigFlag_SignaturesExist: number
+export const PDF_ALERT_BUTTON_CANCEL: number
+export const PDF_ALERT_BUTTON_GROUP_OK: number
+export const PDF_ALERT_BUTTON_GROUP_OK_CANCEL: number
+export const PDF_ALERT_BUTTON_GROUP_YES_NO: number
+export const PDF_ALERT_BUTTON_GROUP_YES_NO_CANCEL: number
+export const PDF_ALERT_BUTTON_NO: number
+export const PDF_ALERT_BUTTON_NONE: number
+export const PDF_ALERT_BUTTON_OK: number
+export const PDF_ALERT_BUTTON_YES: number
+export const PDF_ALERT_ICON_ERROR: number
+export const PDF_ALERT_ICON_QUESTION: number
+export const PDF_ALERT_ICON_STATUS: number
+export const PDF_ALERT_ICON_WARNING: number
+export const PDF_DOCUMENT_EVENT_ALERT: number
+export const PDF_DOCUMENT_EVENT_EXEC_MENU_ITEM: number
+export const PDF_DOCUMENT_EVENT_LAUNCH_URL: number
+export const PDF_DOCUMENT_EVENT_MAIL_DOC: number
+export const PDF_DOCUMENT_EVENT_PRINT: number
+export const PDF_DOCUMENT_EVENT_SUBMIT: number
+export const PDF_LAYER_UI_CHECKBOX: number
+export const PDF_LAYER_UI_LABEL: number
+export const PDF_LAYER_UI_RADIOBOX: number
+export const PDF_OC_OFF: number
+export const PDF_OC_ON: number
+export const PDF_OC_TOGGLE: number
+export const PDF_NOT_ZUGFERD: number
+export const PDF_ZUGFERD_BASIC: number
+export const PDF_ZUGFERD_BASIC_WL: number
+export const PDF_ZUGFERD_COMFORT: number
+export const PDF_ZUGFERD_EXTENDED: number
+export const PDF_ZUGFERD_MINIMUM: number
+export const PDF_ZUGFERD_UNKNOWN: number
+export const PDF_ZUGFERD_XRECHNUNG: number
+export const PDF_CLEAN_STRUCTURE_DROP: number
+export const PDF_CLEAN_STRUCTURE_KEEP: number
+export const PDF_CLEAN_VECTORIZE_NO: number
+export const PDF_CLEAN_VECTORIZE_YES: number
+export const CS_CMYK: number
+export const CS_GRAY: number
+export const CS_RGB: number
+export const FZ_RECOMPRESS_FAX: number
+export const FZ_RECOMPRESS_J2K: number
+export const FZ_RECOMPRESS_JPEG: number
+export const FZ_RECOMPRESS_LOSSLESS: number
+export const FZ_RECOMPRESS_NEVER: number
+export const FZ_RECOMPRESS_SAME: number
+export const FZ_SUBSAMPLE_AVERAGE: number
+export const FZ_SUBSAMPLE_BICUBIC: number
+export const PDF_ANNOT_3D: number
+export const PDF_ANNOT_CARET: number
+export const PDF_ANNOT_CIRCLE: number
+export const PDF_ANNOT_FILE_ATTACHMENT: number
+export const PDF_ANNOT_FREE_TEXT: number
+export const PDF_ANNOT_HIGHLIGHT: number
+export const PDF_ANNOT_INK: number
+export const PDF_ANNOT_IS_HIDDEN: number
+export const PDF_ANNOT_IS_INVISIBLE: number
+export const PDF_ANNOT_IS_LOCKED: number
+export const PDF_ANNOT_IS_LOCKED_CONTENTS: number
+export const PDF_ANNOT_IS_NO_ROTATE: number
+export const PDF_ANNOT_IS_NO_VIEW: number
+export const PDF_ANNOT_IS_NO_ZOOM: number
+export const PDF_ANNOT_IS_PRINT: number
+export const PDF_ANNOT_IS_READ_ONLY: number
+export const PDF_ANNOT_IS_TOGGLE_NO_VIEW: number
+export const PDF_ANNOT_IT_DEFAULT: number
+export const PDF_ANNOT_IT_FREETEXT_CALLOUT: number
+export const PDF_ANNOT_IT_FREETEXT_TYPEWRITER: number
+export const PDF_ANNOT_IT_LINE_ARROW: number
+export const PDF_ANNOT_IT_LINE_DIMENSION: number
+export const PDF_ANNOT_IT_POLYGON_CLOUD: number
+export const PDF_ANNOT_IT_POLYGON_DIMENSION: number
+export const PDF_ANNOT_IT_POLYLINE_DIMENSION: number
+export const PDF_ANNOT_IT_STAMP_IMAGE: number
+export const PDF_ANNOT_IT_STAMP_SNAPSHOT: number
+export const PDF_ANNOT_IT_UNKNOWN: number
+export const PDF_ANNOT_LE_BUTT: number
+export const PDF_ANNOT_LE_CIRCLE: number
+export const PDF_ANNOT_LE_CLOSED_ARROW: number
+export const PDF_ANNOT_LE_DIAMOND: number
+export const PDF_ANNOT_LE_NONE: number
+export const PDF_ANNOT_LE_OPEN_ARROW: number
+export const PDF_ANNOT_LE_R_CLOSED_ARROW: number
+export const PDF_ANNOT_LE_R_OPEN_ARROW: number
+export const PDF_ANNOT_LE_SLASH: number
+export const PDF_ANNOT_LE_SQUARE: number
+export const PDF_ANNOT_LINE: number
+export const PDF_ANNOT_LINK: number
+export const PDF_ANNOT_MOVIE: number
+export const PDF_ANNOT_POLYGON: number
+export const PDF_ANNOT_POLY_LINE: number
+export const PDF_ANNOT_POPUP: number
+export const PDF_ANNOT_PRINTER_MARK: number
+export const PDF_ANNOT_PROJECTION: number
+export const PDF_ANNOT_Q_CENTER: number
+export const PDF_ANNOT_Q_LEFT: number
+export const PDF_ANNOT_Q_RIGHT: number
+export const PDF_ANNOT_REDACT: number
+export const PDF_ANNOT_RICH_MEDIA: number
+export const PDF_ANNOT_SCREEN: number
+export const PDF_ANNOT_SOUND: number
+export const PDF_ANNOT_SQUARE: number
+export const PDF_ANNOT_SQUIGGLY: number
+export const PDF_ANNOT_STAMP: number
+export const PDF_ANNOT_STRIKE_OUT: number
+export const PDF_ANNOT_TEXT: number
+export const PDF_ANNOT_TRAP_NET: number
+export const PDF_ANNOT_UNDERLINE: number
+export const PDF_ANNOT_UNKNOWN: number
+export const PDF_ANNOT_WATERMARK: number
+export const PDF_ANNOT_WIDGET: number
+export const PDF_BORDER_EFFECT_CLOUDY: number
+export const PDF_BORDER_EFFECT_NONE: number
+export const PDF_BORDER_STYLE_BEVELED: number
+export const PDF_BORDER_STYLE_DASHED: number
+export const PDF_BORDER_STYLE_INSET: number
+export const PDF_BORDER_STYLE_SOLID: number
+export const PDF_BORDER_STYLE_UNDERLINE: number
+export const PDF_BTN_FIELD_IS_NO_TOGGLE_TO_OFF: number
+export const PDF_BTN_FIELD_IS_PUSHBUTTON: number
+export const PDF_BTN_FIELD_IS_RADIO: number
+export const PDF_BTN_FIELD_IS_RADIOS_IN_UNISON: number
+export const PDF_CH_FIELD_IS_COMBO: number
+export const PDF_CH_FIELD_IS_COMMIT_ON_SEL_CHANGE: number
+export const PDF_CH_FIELD_IS_DO_NOT_SPELL_CHECK: number
+export const PDF_CH_FIELD_IS_EDIT: number
+export const PDF_CH_FIELD_IS_MULTI_SELECT: number
+export const PDF_CH_FIELD_IS_SORT: number
+export const PDF_FIELD_IS_NO_EXPORT: number
+export const PDF_FIELD_IS_READ_ONLY: number
+export const PDF_FIELD_IS_REQUIRED: number
+export const PDF_TX_FIELD_IS_COMB: number
+export const PDF_TX_FIELD_IS_DO_NOT_SCROLL: number
+export const PDF_TX_FIELD_IS_DO_NOT_SPELL_CHECK: number
+export const PDF_TX_FIELD_IS_FILE_SELECT: number
+export const PDF_TX_FIELD_IS_MULTILINE: number
+export const PDF_TX_FIELD_IS_PASSWORD: number
+export const PDF_TX_FIELD_IS_RICH_TEXT: number
+export const PDF_WIDGET_TX_FORMAT_DATE: number
+export const PDF_WIDGET_TX_FORMAT_NONE: number
+export const PDF_WIDGET_TX_FORMAT_NUMBER: number
+export const PDF_WIDGET_TX_FORMAT_SPECIAL: number
+export const PDF_WIDGET_TX_FORMAT_TIME: number
+export const PDF_WIDGET_TYPE_BUTTON: number
+export const PDF_WIDGET_TYPE_CHECKBOX: number
+export const PDF_WIDGET_TYPE_COMBOBOX: number
+export const PDF_WIDGET_TYPE_LISTBOX: number
+export const PDF_WIDGET_TYPE_RADIOBUTTON: number
+export const PDF_WIDGET_TYPE_SIGNATURE: number
+export const PDF_WIDGET_TYPE_TEXT: number
+export const PDF_WIDGET_TYPE_UNKNOWN: number
+export const STAMP_Approved: number
+export const STAMP_AsIs: number
+export const STAMP_Confidential: number
+export const STAMP_Departmental: number
+export const STAMP_Draft: number
+export const STAMP_Experimental: number
+export const STAMP_Expired: number
+export const STAMP_Final: number
+export const STAMP_ForComment: number
+export const STAMP_ForPublicRelease: number
+export const STAMP_NotApproved: number
+export const STAMP_NotForPublicRelease: number
+export const STAMP_Sold: number
+export const STAMP_TopSecret: number
+export const PDF_BM_Color: string
+export const PDF_BM_ColorBurn: string
+export const PDF_BM_ColorDodge: string
+export const PDF_BM_Darken: string
+export const PDF_BM_Difference: string
+export const PDF_BM_Exclusion: string
+export const PDF_BM_HardLight: string
+export const PDF_BM_Hue: string
+export const PDF_BM_Lighten: string
+export const PDF_BM_Luminosity: string
+export const PDF_BM_Multiply: string
+export const PDF_BM_Normal: string
+export const PDF_BM_Overlay: string
+export const PDF_BM_Saturation: string
+export const PDF_BM_Screen: string
+export const PDF_BM_SoftLight: string
+export const PDF_REDACT_IMAGE_NONE: number
+export const PDF_REDACT_IMAGE_PIXELS: number
+export const PDF_REDACT_IMAGE_REMOVE: number
+export const PDF_REDACT_IMAGE_REMOVE_UNLESS_INVISIBLE: number
+export const PDF_REDACT_LINE_ART_NONE: number
+export const PDF_REDACT_LINE_ART_REMOVE_IF_COVERED: number
+export const PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED: number
+export const PDF_REDACT_TEXT_NONE: number
+export const PDF_REDACT_TEXT_REMOVE: number
+export const PDF_REDACT_TEXT_REMOVE_INVISIBLE: number
+export const UCDN_SCRIPT_ADLAM: number
+export const UCDN_SCRIPT_AHOM: number
+export const UCDN_SCRIPT_ANATOLIAN_HIEROGLYPHS: number
+export const UCDN_SCRIPT_ARABIC: number
+export const UCDN_SCRIPT_ARMENIAN: number
+export const UCDN_SCRIPT_AVESTAN: number
+export const UCDN_SCRIPT_BALINESE: number
+export const UCDN_SCRIPT_BAMUM: number
+export const UCDN_SCRIPT_BASSA_VAH: number
+export const UCDN_SCRIPT_BATAK: number
+export const UCDN_SCRIPT_BENGALI: number
+export const UCDN_SCRIPT_BHAIKSUKI: number
+export const UCDN_SCRIPT_BOPOMOFO: number
+export const UCDN_SCRIPT_BRAHMI: number
+export const UCDN_SCRIPT_BRAILLE: number
+export const UCDN_SCRIPT_BUGINESE: number
+export const UCDN_SCRIPT_BUHID: number
+export const UCDN_SCRIPT_CANADIAN_ABORIGINAL: number
+export const UCDN_SCRIPT_CARIAN: number
+export const UCDN_SCRIPT_CAUCASIAN_ALBANIAN: number
+export const UCDN_SCRIPT_CHAKMA: number
+export const UCDN_SCRIPT_CHAM: number
+export const UCDN_SCRIPT_CHEROKEE: number
+export const UCDN_SCRIPT_CHORASMIAN: number
+export const UCDN_SCRIPT_COMMON: number
+export const UCDN_SCRIPT_COPTIC: number
+export const UCDN_SCRIPT_CUNEIFORM: number
+export const UCDN_SCRIPT_CYPRIOT: number
+export const UCDN_SCRIPT_CYPRO_MINOAN: number
+export const UCDN_SCRIPT_CYRILLIC: number
+export const UCDN_SCRIPT_DESERET: number
+export const UCDN_SCRIPT_DEVANAGARI: number
+export const UCDN_SCRIPT_DIVES_AKURU: number
+export const UCDN_SCRIPT_DOGRA: number
+export const UCDN_SCRIPT_DUPLOYAN: number
+export const UCDN_SCRIPT_EGYPTIAN_HIEROGLYPHS: number
+export const UCDN_SCRIPT_ELBASAN: number
+export const UCDN_SCRIPT_ELYMAIC: number
+export const UCDN_SCRIPT_ETHIOPIC: number
+export const UCDN_SCRIPT_GARAY: number
+export const UCDN_SCRIPT_GEORGIAN: number
+export const UCDN_SCRIPT_GLAGOLITIC: number
+export const UCDN_SCRIPT_GOTHIC: number
+export const UCDN_SCRIPT_GRANTHA: number
+export const UCDN_SCRIPT_GREEK: number
+export const UCDN_SCRIPT_GUJARATI: number
+export const UCDN_SCRIPT_GUNJALA_GONDI: number
+export const UCDN_SCRIPT_GURMUKHI: number
+export const UCDN_SCRIPT_GURUNG_KHEMA: number
+export const UCDN_SCRIPT_HAN: number
+export const UCDN_SCRIPT_HANGUL: number
+export const UCDN_SCRIPT_HANIFI_ROHINGYA: number
+export const UCDN_SCRIPT_HANUNOO: number
+export const UCDN_SCRIPT_HATRAN: number
+export const UCDN_SCRIPT_HEBREW: number
+export const UCDN_SCRIPT_HIRAGANA: number
+export const UCDN_SCRIPT_IMPERIAL_ARAMAIC: number
+export const UCDN_SCRIPT_INHERITED: number
+export const UCDN_SCRIPT_INSCRIPTIONAL_PAHLAVI: number
+export const UCDN_SCRIPT_INSCRIPTIONAL_PARTHIAN: number
+export const UCDN_SCRIPT_JAVANESE: number
+export const UCDN_SCRIPT_KAITHI: number
+export const UCDN_SCRIPT_KANNADA: number
+export const UCDN_SCRIPT_KATAKANA: number
+export const UCDN_SCRIPT_KAWI: number
+export const UCDN_SCRIPT_KAYAH_LI: number
+export const UCDN_SCRIPT_KHAROSHTHI: number
+export const UCDN_SCRIPT_KHITAN_SMALL_SCRIPT: number
+export const UCDN_SCRIPT_KHMER: number
+export const UCDN_SCRIPT_KHOJKI: number
+export const UCDN_SCRIPT_KHUDAWADI: number
+export const UCDN_SCRIPT_KIRAT_RAI: number
+export const UCDN_SCRIPT_LAO: number
+export const UCDN_SCRIPT_LATIN: number
+export const UCDN_SCRIPT_LEPCHA: number
+export const UCDN_SCRIPT_LIMBU: number
+export const UCDN_SCRIPT_LINEAR_A: number
+export const UCDN_SCRIPT_LINEAR_B: number
+export const UCDN_SCRIPT_LISU: number
+export const UCDN_SCRIPT_LYCIAN: number
+export const UCDN_SCRIPT_LYDIAN: number
+export const UCDN_SCRIPT_MAHAJANI: number
+export const UCDN_SCRIPT_MAKASAR: number
+export const UCDN_SCRIPT_MALAYALAM: number
+export const UCDN_SCRIPT_MANDAIC: number
+export const UCDN_SCRIPT_MANICHAEAN: number
+export const UCDN_SCRIPT_MARCHEN: number
+export const UCDN_SCRIPT_MASARAM_GONDI: number
+export const UCDN_SCRIPT_MEDEFAIDRIN: number
+export const UCDN_SCRIPT_MEETEI_MAYEK: number
+export const UCDN_SCRIPT_MENDE_KIKAKUI: number
+export const UCDN_SCRIPT_MEROITIC_CURSIVE: number
+export const UCDN_SCRIPT_MEROITIC_HIEROGLYPHS: number
+export const UCDN_SCRIPT_MIAO: number
+export const UCDN_SCRIPT_MODI: number
+export const UCDN_SCRIPT_MONGOLIAN: number
+export const UCDN_SCRIPT_MRO: number
+export const UCDN_SCRIPT_MULTANI: number
+export const UCDN_SCRIPT_MYANMAR: number
+export const UCDN_SCRIPT_NABATAEAN: number
+export const UCDN_SCRIPT_NAG_MUNDARI: number
+export const UCDN_SCRIPT_NANDINAGARI: number
+export const UCDN_SCRIPT_NEWA: number
+export const UCDN_SCRIPT_NEW_TAI_LUE: number
+export const UCDN_SCRIPT_NKO: number
+export const UCDN_SCRIPT_NUSHU: number
+export const UCDN_SCRIPT_NYIAKENG_PUACHUE_HMONG: number
+export const UCDN_SCRIPT_OGHAM: number
+export const UCDN_SCRIPT_OLD_HUNGARIAN: number
+export const UCDN_SCRIPT_OLD_ITALIC: number
+export const UCDN_SCRIPT_OLD_NORTH_ARABIAN: number
+export const UCDN_SCRIPT_OLD_PERMIC: number
+export const UCDN_SCRIPT_OLD_PERSIAN: number
+export const UCDN_SCRIPT_OLD_SOGDIAN: number
+export const UCDN_SCRIPT_OLD_SOUTH_ARABIAN: number
+export const UCDN_SCRIPT_OLD_TURKIC: number
+export const UCDN_SCRIPT_OLD_UYGHUR: number
+export const UCDN_SCRIPT_OL_CHIKI: number
+export const UCDN_SCRIPT_OL_ONAL: number
+export const UCDN_SCRIPT_ORIYA: number
+export const UCDN_SCRIPT_OSAGE: number
+export const UCDN_SCRIPT_OSMANYA: number
+export const UCDN_SCRIPT_PAHAWH_HMONG: number
+export const UCDN_SCRIPT_PALMYRENE: number
+export const UCDN_SCRIPT_PAU_CIN_HAU: number
+export const UCDN_SCRIPT_PHAGS_PA: number
+export const UCDN_SCRIPT_PHOENICIAN: number
+export const UCDN_SCRIPT_PSALTER_PAHLAVI: number
+export const UCDN_SCRIPT_REJANG: number
+export const UCDN_SCRIPT_RUNIC: number
+export const UCDN_SCRIPT_SAMARITAN: number
+export const UCDN_SCRIPT_SAURASHTRA: number
+export const UCDN_SCRIPT_SHARADA: number
+export const UCDN_SCRIPT_SHAVIAN: number
+export const UCDN_SCRIPT_SIDDHAM: number
+export const UCDN_SCRIPT_SIGNWRITING: number
+export const UCDN_SCRIPT_SINHALA: number
+export const UCDN_SCRIPT_SOGDIAN: number
+export const UCDN_SCRIPT_SORA_SOMPENG: number
+export const UCDN_SCRIPT_SOYOMBO: number
+export const UCDN_SCRIPT_SUNDANESE: number
+export const UCDN_SCRIPT_SUNUWAR: number
+export const UCDN_SCRIPT_SYLOTI_NAGRI: number
+export const UCDN_SCRIPT_SYRIAC: number
+export const UCDN_SCRIPT_TAGALOG: number
+export const UCDN_SCRIPT_TAGBANWA: number
+export const UCDN_SCRIPT_TAI_LE: number
+export const UCDN_SCRIPT_TAI_THAM: number
+export const UCDN_SCRIPT_TAI_VIET: number
+export const UCDN_SCRIPT_TAKRI: number
+export const UCDN_SCRIPT_TAMIL: number
+export const UCDN_SCRIPT_TANGSA: number
+export const UCDN_SCRIPT_TANGUT: number
+export const UCDN_SCRIPT_TELUGU: number
+export const UCDN_SCRIPT_THAANA: number
+export const UCDN_SCRIPT_THAI: number
+export const UCDN_SCRIPT_TIBETAN: number
+export const UCDN_SCRIPT_TIFINAGH: number
+export const UCDN_SCRIPT_TIRHUTA: number
+export const UCDN_SCRIPT_TODHRI: number
+export const UCDN_SCRIPT_TOTO: number
+export const UCDN_SCRIPT_TULU_TIGALARI: number
+export const UCDN_SCRIPT_UGARITIC: number
+export const UCDN_SCRIPT_UNKNOWN: number
+export const UCDN_SCRIPT_VAI: number
+export const UCDN_SCRIPT_VITHKUQI: number
+export const UCDN_SCRIPT_WANCHO: number
+export const UCDN_SCRIPT_WARANG_CITI: number
+export const UCDN_SCRIPT_YEZIDI: number
+export const UCDN_SCRIPT_YI: number
+export const UCDN_SCRIPT_ZANABAZAR_SQUARE: number
+export const PDF_CID_FONT_RESOURCE: number
+export const PDF_CJK_FONT_RESOURCE: number
+export const PDF_FD_ALL_CAP: number
+export const PDF_FD_FIXED_PITCH: number
+export const PDF_FD_FORCE_BOLD: number
+export const PDF_FD_ITALIC: number
+export const PDF_FD_NONSYMBOLIC: number
+export const PDF_FD_SCRIPT: number
+export const PDF_FD_SERIF: number
+export const PDF_FD_SMALL_CAP: number
+export const PDF_FD_SYMBOLIC: number
+export const PDF_SIMPLE_ENCODING_CYRILLIC: number
+export const PDF_SIMPLE_ENCODING_GREEK: number
+export const PDF_SIMPLE_ENCODING_LATIN: number
+export const PDF_SIMPLE_FONT_RESOURCE: number
+export const PDF_ENUM_FALSE: number
+export const PDF_ENUM_LIMIT: number
+export const PDF_ENUM_NULL: number
+export const PDF_ENUM_TRUE: number
+export const PDF_LEXBUF_LARGE: number
+export const PDF_LEXBUF_SMALL: number
+export const PDF_MAX_GEN_NUMBER: number
+export const PDF_MAX_OBJECT_NUMBER: number
+export const PDF_MRANGE_CAP: number
+export const PDF_NUM_TOKENS: number
+export const PDF_PROCESSOR_REQUIRES_DECODED_IMAGES: number
+export const PDF_TOK_CLOSE_ARRAY: number
+export const PDF_TOK_CLOSE_BRACE: number
+export const PDF_TOK_CLOSE_DICT: number
+export const PDF_TOK_ENDOBJ: number
+export const PDF_TOK_ENDSTREAM: number
+export const PDF_TOK_EOF: number
+export const PDF_TOK_ERROR: number
+export const PDF_TOK_FALSE: number
+export const PDF_TOK_INT: number
+export const PDF_TOK_KEYWORD: number
+export const PDF_TOK_NAME: number
+export const PDF_TOK_NEWOBJ: number
+export const PDF_TOK_NULL: number
+export const PDF_TOK_OBJ: number
+export const PDF_TOK_OPEN_ARRAY: number
+export const PDF_TOK_OPEN_BRACE: number
+export const PDF_TOK_OPEN_DICT: number
+export const PDF_TOK_R: number
+export const PDF_TOK_REAL: number
+export const PDF_TOK_STARTXREF: number
+export const PDF_TOK_STREAM: number
+export const PDF_TOK_STRING: number
+export const PDF_TOK_TRAILER: number
+export const PDF_TOK_TRUE: number
+export const PDF_TOK_XREF: number
+export const b: number
+export const f: string
+export const g: number
+export const matrix_like: string
+export const name: string
+export const point_like: string
+export const quad_like: string
+export const r: number
+export const rect_like: string
+export const trace_device_CLIP_PATH: number
+export const trace_device_CLIP_STROKE_PATH: number
+export const trace_device_FILL_PATH: number
+export const trace_device_STROKE_PATH: number
+/** The identity matrix. */
+export declare function Identity(): Matrix
+/** The gray colorspace. */
+export declare function csGRAY(): Colorspace
+/** The red-green-blue colorspace. */
+export declare function csRGB(): Colorspace
+/** The cyan-magenta-yellow-black colorspace. */
+export declare function csCMYK(): Colorspace
+/** The standard fourteen font names. */
+export declare function Base14_fontnames(): Array<string>
+/** The standard fourteen font name pairs. */
+export declare function Base14_fontdict(): any
+/** Symbol font glyph widths. */
+export declare function symbol_glyphs(): any
+/** Zapf dingbats glyph widths. */
+export declare function zapf_glyphs(): any
+/** The named PDF color table. */
+export declare function pdfcolor(): any
+/** Characters forbidden in PDF names. */
+export declare function INVALID_NAME_CHARS(): Array<string>
+/** module.ASSERT_PDF from the compatible API. */
+export declare function assertPDF(cond: boolean): void
+/** module.CheckColor from the compatible API. */
+export declare function checkColor(color?: Array<number> | undefined | null): void
+/** module.CheckMarkerArg from the compatible API. */
+export declare function checkMarkerArg(quads: any): any
+/** module.CheckMorph from the compatible API. */
+export declare function checkMorph(value: any): boolean
+/** module.CheckParent from the compatible API. */
+export declare function checkParent(value: any): void
+/** module.CheckQuad from the compatible API. */
+export declare function checkQuad(value: any): boolean
+/** module.CheckRect from the compatible API. */
+export declare function checkRect(value: any): boolean
+/** module.ColorCode from the compatible API. */
+export declare function colorCode(color: any, format: string): string
+/** module.ConversionHeader from the compatible API. */
+export declare function conversionHeader(kind: string, filename?: string | undefined | null): string
+/** module.ConversionTrailer from the compatible API. */
+export declare function conversionTrailer(kind: string): string
+/** module.EMPTY_IRECT from the compatible API. */
+export declare function emptyIRECT(): IRect
+/** module.EMPTY_QUAD from the compatible API. */
+export declare function emptyQUAD(): Quad
+/** module.EMPTY_RECT from the compatible API. */
+export declare function emptyRECT(): Rect
+/** module.ENSURE_OPERATION from the compatible API. */
+export declare function ensureOPERATION(doc: Document): void
+/** module.INFINITE_IRECT from the compatible API. */
+export declare function infiniteIRECT(): IRect
+/** module.INFINITE_QUAD from the compatible API. */
+export declare function infiniteQUAD(): Quad
+/** module.INFINITE_RECT from the compatible API. */
+export declare function infiniteRECT(): Rect
+/** module.PDF_NAME from the compatible API. */
+export declare function pdfNAME(value: any): string
+/** module.PySequence_Check from the compatible API. */
+export declare function pysequenceCheck(value: any): boolean
+/** module.PySequence_Size from the compatible API. */
+export declare function pysequenceSize(value: any): number
+/** module.PyUnicode_DecodeRawUnicodeEscape from the compatible API. */
+export declare function pyunicodeDecodeRawUnicodeEscape(text: string, errors: string): string
+/** module.RAISEPY from the compatible API. */
+export declare function rAISEPY(message: string, exc: any): void
+/**
+ * module.annot_postprocess from the compatible API.
+ *
+ * Not yet wired: page and annotation borrows cannot combine in this binding. Raises until the facade grows the accessor.
+ */
+export declare function annotPostprocess(): any
+/** module.annot_preprocess from the compatible API. */
+export declare function annotPreprocess(page: Page): number
+/**
+ * module.apply_pages from the compatible API.
+ *
+ * Not yet wired: page callbacks cannot cross into this binding. Raises until the facade grows the accessor.
+ */
+export declare function applyPages(): any
+/** module.args_match from the compatible API. */
+export declare function argsMatch(args: Array<any>, types: Array<any>): boolean
+/** module.colors_pdf_dict from the compatible API. */
+export declare function colorsPdfDict(): any
+/** module.colors_wx_list from the compatible API. */
+export declare function colorsWxList(): Array<string>
+/** module.compute_scissor from the compatible API. */
+export declare function computeScissor(device: any): any
+/** module.dest_is_valid from the compatible API. */
+export declare function destIsValid(dest: any, pageCount: number, pageObjectNums: Array<number>, names: Array<string>): boolean
+/** module.dest_is_valid_page from the compatible API. */
+export declare function destIsValidPage(obj: any, pageObjectNums: Array<number>, pageCount: number): boolean
+/** module.detect_super_script from the compatible API. */
+export declare function detectSuperScript(line: any, ch: any): boolean
+/** module.dir_str from the compatible API. */
+export declare function dirStr(value: any): string
+/** module.exception_info from the compatible API. */
+export declare function exceptionInfo(): any
+/** module.extra_FzDocument_insert_pdf from the compatible API. */
+export declare function extraFzDocumentInsertPdf(doc: Document, src: Document, options?: any | undefined | null): void
+/** module.find_string from the compatible API. */
+export declare function findString(text: string, needle: string): number | null
+/** module.format_g from the compatible API. */
+export declare function formatG(value: number, fmt: string): string
+/** module.getTJstr from the compatible API. */
+export declare function getTJstr(text: string, glyphs: Array<number> | undefined | null, simple: boolean, ordering: number): string
+/** module.get_env_bool from the compatible API. */
+export declare function getEnvBool(name: string, defaultValue: boolean): boolean
+/** module.get_env_int from the compatible API. */
+export declare function getEnvInt(name: string, defaultValue: number): number
+/** module.get_highlight_selection from the compatible API. */
+export declare function getHighlightSelection(page: Page, start?: PointLike | undefined | null, stop?: PointLike | undefined | null, clip?: RectLike | undefined | null): Array<Quad>
+/** module.get_pdf_now from the compatible API. */
+export declare function getPdfNow(): string
+/** module.get_pdf_str from the compatible API. */
+export declare function getPdfStr(text: string): string
+/** module.hdist from the compatible API. */
+export declare function hdist(direction: any, a: any, b: any): number
+/** module.log from the compatible API. */
+export declare function log(text: string, caller?: number | undefined | null): void
+/** module.make_escape from the compatible API. */
+export declare function makeEscape(ch: string): string
+/** module.make_story_elpos from the compatible API. */
+export declare function makeStoryElpos(): any
+/** module.match_string from the compatible API. */
+export declare function matchString(h0: any, n0: any): boolean
+/** module.message from the compatible API. */
+export declare function message(text: string): void
+/** module.message_warning from the compatible API. */
+export declare function messageWarning(text: string): void
+/** module.no_recommend_layout from the compatible API. */
+export declare function noRecommendLayout(): boolean
+/** module.page_merge from the compatible API. */
+export declare function pageMerge(target: Document, source: Document, pageFrom: number, pageTo: number, options?: any | undefined | null): void
+/** module.paper_rect from the compatible API. */
+export declare function paperRect(name: string): Rect
+/** module.paper_size from the compatible API. */
+export declare function paperSize(name: string): any
+/** module.paper_sizes from the compatible API. */
+export declare function paperSizes(): Array<string>
+/** module.pdf_lookup_page_loc from the compatible API. */
+export declare function pdfLookupPageLoc(doc: Document, needle: any): any
+/** module.pdfobj_string from the compatible API. */
+export declare function pdfobjString(obj: any, prefix: string): string
+/** module.planish_line from the compatible API. */
+export declare function planishLine(p1: PointLike, p2: PointLike): Matrix
+/** module.restore_aliases from the compatible API. */
+export declare function restoreAliases(): void
+/** module.sRGB_to_pdf from the compatible API. */
+export declare function srgbToPdf(srgb: number): any
+/** module.sRGB_to_rgb from the compatible API. */
+export declare function srgbToRgb(srgb: number): any
+/** module.set_log from the compatible API. */
+export declare function setLog(options?: any | undefined | null): void
+/** module.set_messages from the compatible API. */
+export declare function setMessages(options?: any | undefined | null): void
+/** module.string_in_names_list from the compatible API. */
+export declare function stringInNamesList(text: string, names: Array<string>): boolean
+/** module.strip_outline from the compatible API. */
+export declare function stripOutline(doc: Document, outlines: any, pageCount: number, pageObjectNums: Array<number>, names: Array<string>): void
+/** module.strip_outlines from the compatible API. */
+export declare function stripOutlines(doc: Document, outlines: any, pageCount: number, pageObjectNums: Array<number>, names: Array<string>): void
+/** module.util_concat_matrix from the compatible API. */
+export declare function utilConcatMatrix(one: MatrixLike, two: MatrixLike): Matrix
+/** module.util_ensure_widget_calc from the compatible API. */
+export declare function utilEnsureWidgetCalc(annot: Annot): void
+/** module.util_hor_matrix from the compatible API. */
+export declare function utilHorMatrix(center: PointLike, point: PointLike): Matrix
+/** module.util_include_point_in_rect from the compatible API. */
+export declare function utilIncludePointInRect(rect: RectLike, point: PointLike): Rect
+/** module.util_intersect_rect from the compatible API. */
+export declare function utilIntersectRect(one: RectLike, two: RectLike): Rect
+/** module.util_invert_matrix from the compatible API. */
+export declare function utilInvertMatrix(matrix: MatrixLike): Matrix
+/** module.util_is_point_in_rect from the compatible API. */
+export declare function utilIsPointInRect(point: PointLike, rect: RectLike): number
+/** module.util_make_irect from the compatible API. */
+export declare function utilMakeIrect(p0: any | undefined | null, p1: any | undefined | null, x0: number, y0: number, x1: number, y1: number): IRect
+/** module.util_make_rect from the compatible API. */
+export declare function utilMakeRect(p0: any | undefined | null, p1: any | undefined | null, x0: number, y0: number, x1: number, y1: number): Rect
+/** module.util_measure_string from the compatible API. */
+export declare function utilMeasureString(text: string, fontname: string, fontsize: number, encoding: number): number
+/** module.util_point_in_quad from the compatible API. */
+export declare function utilPointInQuad(point: PointLike, quad: QuadLike): boolean
+/** module.util_round_rect from the compatible API. */
+export declare function utilRoundRect(rect: RectLike): IRect
+/** module.util_sine_between from the compatible API. */
+export declare function utilSineBetween(center: PointLike, point: PointLike, other: PointLike): number
+/** module.util_transform_point from the compatible API. */
+export declare function utilTransformPoint(point: PointLike, matrix: MatrixLike): Point
+/** module.util_transform_rect from the compatible API. */
+export declare function utilTransformRect(rect: RectLike, matrix: MatrixLike): Rect
+/** module.util_union_rect from the compatible API. */
+export declare function utilUnionRect(one: RectLike, two: RectLike): Rect
+/** module.vdist from the compatible API. */
+export declare function vdist(direction: any, a: any, b: any): number
+export interface PointLike {
+  x: number
+  y: number
+}
+export interface RectLike {
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+}
+export interface IRectLike {
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+}
+export interface MatrixLike {
+  a: number
+  b: number
+  c: number
+  d: number
+  e: number
+  f: number
+}
+export interface QuadLike {
+  ul: PointLike
+  ur: PointLike
+  ll: PointLike
+  lr: PointLike
+}
+/** module.calc_image_matrix from the compatible API. */
+export declare function calcImageMatrix(width: number, height: number, target: RectLike, rotate: number, keep: boolean): Matrix
+/** module.image_profile from the compatible API. */
+export declare function imageProfile(data: Buffer): any
+/** module.CheckFont from the compatible API. */
+export declare function checkFont(page: Page, fontname: string): any
+/** module.CheckFontInfo from the compatible API. */
+export declare function checkFontInfo(doc: Document, xref: number): any
+/** module.Page__add_text_marker from the compatible API. */
+export declare function pageAddTextMarker(page: Page, quads: Array<QuadLike>, annotKind: number): Annot
+/** module.UpdateFontInfo from the compatible API. */
+export declare function updateFontInfo(doc: Document, info: Array<any>): void
+/** module.canon from the compatible API. */
+export declare function canon(ch: string): string
+/** module.chartocanon from the compatible API. */
+export declare function chartocanon(text: string): string
+/** module.css_for_font from the compatible API. */
+export declare function cssForFont(fontcode: string, css?: string | undefined | null, archive?: any | undefined | null, name?: string | undefined | null): string
+/** module.get_tessdata from the compatible API. */
+export declare function getTessdata(tessdata?: string | undefined | null): string
+/** module.get_text from the compatible API. */
+export declare function getText(path: string, options?: any | undefined | null): string
+/** module.get_text_length from the compatible API. */
+export declare function getTextLength(text: string, fontname: string, fontsize?: number | undefined | null, encoding?: number | undefined | null): number
+/** module.glyph_name_to_unicode from the compatible API. */
+export declare function glyphNameToUnicode(name: string): number
+/** module.make_table from the compatible API. */
+export declare function makeTable(rect?: RectLike | undefined | null, cols?: number | undefined | null, rows?: number | undefined | null): Array<any>
+/** module.on_highlight_char from the compatible API. */
+export declare function onHighlightChar(hits: any, line: any, ch: any): any
+/** module.recover_bbox_quad from the compatible API. */
+export declare function recoverBboxQuad(direction: Array<number>, span: any, bbox: RectLike): Quad
+/** module.recover_char_quad from the compatible API. */
+export declare function recoverCharQuad(direction: Array<number>, span: any, ch: any): Quad
+/** module.recover_line_quad from the compatible API. */
+export declare function recoverLineQuad(line: any, spans?: Array<any> | undefined | null): Quad
+/** module.recover_quad from the compatible API. */
+export declare function recoverQuad(direction: Array<number>, span: any): Quad
+/** module.recover_span_quad from the compatible API. */
+export declare function recoverSpanQuad(direction: Array<number>, span: any, chars?: Array<any> | undefined | null): Quad
+/**
+ * module.repair_mono_font from the compatible API.
+ *
+ * Not yet wired: FontInfo cannot be built in this binding. Raises until the facade grows the accessor.
+ */
+export declare function repairMonoFont(): any
+/** module.unicode_to_glyph_name from the compatible API. */
+export declare function unicodeToGlyphName(code: number): string
 /** Document metadata. */
 export interface DocumentInfo {
   title?: string
@@ -126,6 +992,239 @@ export interface TextBlockInfo {
   /** Individual spans within this block. */
   spans: Array<TextSpanInfo>
 }
+/** One image stored on a page, as `pageImages` lists it. */
+export interface PageImageInfo {
+  /** Handle for `extractImageData` and `decodeImagePixels`. */
+  id: number
+  /** Image width, in pixels. */
+  width: number
+  /** Image height, in pixels. */
+  height: number
+  /** Bits per component. */
+  bitsPerComponent: number
+  /** Components per pixel. */
+  components: number
+  /** Decoded pixel layout: `DeviceGray`, `DeviceRGB` or `DeviceCMYK`. */
+  colorSpace: string
+  /** Colour-space name recorded in the image dictionary. */
+  colorSpaceName: string
+  /** First filter name, normalised, or empty for raw samples. */
+  filter: string
+  /** Resource name the page lists the image under. */
+  name: string
+  /** Whether the image carries a soft mask. */
+  hasMask: boolean
+}
+/** One extracted image: header facts plus encoded bytes. */
+export interface ExtractedImageInfo {
+  /** Image width, in pixels. */
+  width: number
+  /** Image height, in pixels. */
+  height: number
+  /** Bits per component. */
+  bitsPerComponent: number
+  /** Components per pixel. */
+  components: number
+  /** Decoded pixel layout: `DeviceGray`, `DeviceRGB` or `DeviceCMYK`. */
+  colorSpace: string
+  /** Colour-space name recorded in the image dictionary. */
+  colorSpaceName: string
+  /** Encoding of `data`: `jpeg` or `png`. */
+  encoding: string
+  /** Encoded image bytes. */
+  data: Buffer
+  /** Whether the image is masked. */
+  masked: boolean
+  /** Horizontal resolution, in dots per inch. */
+  xres: number
+  /** Vertical resolution, in dots per inch. */
+  yres: number
+}
+/** One decoded image: raw samples, top row first. */
+export interface DecodedImageInfo {
+  /** Image width, in pixels. */
+  width: number
+  /** Image height, in pixels. */
+  height: number
+  /** Components per pixel. */
+  components: number
+  /** Decoded pixel layout: `DeviceGray`, `DeviceRGB` or `DeviceCMYK`. */
+  colorSpace: string
+  /** Raw samples, `components` bytes per pixel. */
+  pixels: Buffer
+}
+/**
+ * Which pages `extractBlocks` and `extractMarkdown` hand back (#573),
+ * and how `extractMarkdown` treats figures.
+ *
+ * Every field is optional, so `{}` and a missing argument mean the same
+ * thing they mean in Rust: the whole document, without figures.
+ */
+export interface ExtractOpts {
+  /** First page of the window, counted from zero. Default 0. */
+  firstPage?: number
+  /** How many pages from `firstPage`; absent for the rest of the document. */
+  pageCount?: number
+  /**
+   * An explicit list of pages, counted from zero, instead of the window.
+   * Absent for the window. Pages come back in reading order whatever
+   * order lists them; a page past the last one, or a list beside a
+   * window, is an error.
+   */
+  pages?: Array<number>
+  /**
+   * `"never"` (default: read what the document draws), `"auto"`
+   * (recognize the pages that need it) or `"force"` (recognize every page
+   * in the window, replacing a born-digital page's own text rather than
+   * doubling it).
+   */
+  ocr?: string
+  /** The Tesseract language tag OCR runs in. Default `"eng"`. */
+  ocrLanguage?: string
+  /** The resolution OCR renders pages at, in dots per inch. Default 150. */
+  ocrDpi?: number
+  /**
+   * Write the running heads as plain paragraphs at their reading-order
+   * position. Default `false`. Only `extractMarkdown` reads it.
+   */
+  includeHeaders?: boolean
+  /**
+   * Write the page numbers and running footers as plain paragraphs at
+   * their reading-order position. Default `false`. Only `extractMarkdown`
+   * reads it.
+   */
+  includeFooters?: boolean
+  /**
+   * `"comment"` (default: `<!-- page N -->` where the page changes) or
+   * `"none"`: no marker, paragraphs separated by a blank line. Only
+   * `extractMarkdown` reads it.
+   */
+  pageSeparators?: string
+  code?: boolean
+  /**
+   * `"fast"` (default: the shipping engine) or `"balanced"` (the layout
+   * model tier, markdown only). Anything else is `E-UNSUPPORTED`.
+   */
+  quality?: string
+  /**
+   * Where the model tier looks for its weights. Absent resolves through
+   * `PDFLUENT_MODEL_DIR` to the per-user model dir. Read only with
+   * `quality: 'balanced'`.
+   */
+  modelDir?: string
+  /**
+   * Where the TATR table model lives: set, the balanced tier's table
+   * regions are structured with TATR first; absent, TATR stays off.
+   */
+  tableModelDir?: string
+  /**
+   * Keep the balanced tier's running heads and feet as paragraphs
+   * instead of dropping them. Default `false`. Read only with
+   * `quality: 'balanced'`.
+   */
+  keepFurniture?: boolean
+}
+/**
+ * One block of a document's structure: what a caller chunks, cites or embeds
+ * (#573).
+ *
+ * `kind` is one of `paragraph`, `heading`, `listItem`, `tableCell`, `header`,
+ * `footer` or `caption` -- the same seven names the JSON serializer writes -- and the
+ * fields belonging to that kind carry a value while the rest are absent.
+ */
+export interface GridDoubtInfo {
+  /** Rows admitted with too few runs of ink to be a row on their own. */
+  thinRows: number
+  /** The share of the grid's cells the page drew ink in, 0 to 1. */
+  fill: number
+  /** Which attempt produced the grid; above 0 means rows had to be trimmed. */
+  retriedFrom: number
+  /** Rows with ink in every column, which the column bounds rest on. */
+  fullRows: number
+  /** How many columns the grid has, so the facts above have their scale. */
+  columns: number
+}
+export interface BlockInfo {
+  /** `paragraph`, `heading`, `listItem`, `tableCell`, `header`, `footer` or `caption`. */
+  kind: string
+  /** The block's text, the line breaks of the measure taken out. */
+  text: string
+  /** 0-based page index the block was drawn on. */
+  page: number
+  /** `[x0, y0, x1, y1]` in PDF user space, y up. */
+  bbox: Array<number>
+  /**
+   * Place in the document's reading order, counted from the first block of
+   * the first page -- the document's numbering, not the window's.
+   */
+  index: number
+  /**
+   * Whether the block continues the one before it, because the page broke a
+   * paragraph in two.
+   */
+  continuesPrevious: boolean
+  /**
+   * How sure the learned model is of `kind`, between 0 and 1, or absent where
+   * no model spoke about this block.
+   *
+   * ABSENT IS NOT LOW. A block no model has an opinion about carries the
+   * heuristics' verdict, and the heuristics produce a decision rather than a
+   * probability, so an absent value means nobody measured this block. Code
+   * that routes the doubtful cases must treat it as unknown and not as zero.
+   */
+  confidence?: number
+  /**
+   * What the heuristic builder had to go on when it found this cell's table,
+   * absent for a block that is not a table cell.
+   *
+   * Five facts and not a score, and a property of the table: every cell of one
+   * table carries the same values.
+   */
+  grid?: GridDoubtInfo
+  /** A heading's level (1, 2 or 3) or a list item's nesting depth. */
+  level?: number
+  /** The number the document wrote on a list item, absent for a bullet. */
+  ordinal?: number
+  /** A table cell's 0-based row. */
+  row?: number
+  /** A table cell's 0-based column, counted across the whole table. */
+  column?: number
+  /** How many rows a table cell covers. */
+  rowSpan?: number
+  /** How many columns a table cell covers. */
+  columnSpan?: number
+  /** Whether a table cell is in the table's header row. */
+  header?: boolean
+}
+/**
+ * One word of a document's text, with the box it was drawn in.
+ *
+ * `block` is the position in the list `extractBlocks` returns under the same
+ * options -- the window's numbering, not the document's -- and `line` the
+ * 0-based line within that block.
+ */
+export interface WordInfo {
+  /** The word, without surrounding whitespace. */
+  text: string
+  /** 0-based page index the word was drawn on. */
+  page: number
+  /** `[x0, y0, x1, y1]` in PDF user space, y up. */
+  bbox: Array<number>
+  /** Position of the word's block in the `extractBlocks` answer. */
+  block: number
+  /** 0-based line within the word's block. */
+  line: number
+  /** 0-based word within the word's line, in the order the line reads. */
+  word: number
+  /** Baseline angle in degrees, counter-clockwise from +x; 0 upright. */
+  dir: number
+  /** Whether the word's span is set bold. */
+  bold: boolean
+  /** Whether the word's span is set italic. */
+  italic: boolean
+  /** Font size of the word's span, in points. */
+  fontSize: number
+}
 /** Result of a text redaction operation. */
 export interface RedactionResult {
   /** Number of text matches found. */
@@ -212,6 +1311,1553 @@ export declare function mergePdfs(paths: Array<string>, outputPath: string): voi
  * ```
  */
 export declare function validatePdfa(path: string, level: string): ComplianceReportInfo
+export declare class Document {
+  /**
+   * Document.__contains__ from the compatible API.
+   *
+   * Not yet wired: the facade cannot serve it (unconstructible:Location). Raises until the facade grows the accessor.
+   */
+  contains(): any
+  /** Document.__delitem__ from the compatible API. */
+  delitem(index: number): void
+  /** Document.__enter__ from the compatible API. */
+  enter(): void
+  /** Document.__eq__ from the compatible API. */
+  eq(other: Document): boolean
+  /** Document.__exit__ from the compatible API. */
+  exit(): void
+  /** Document.__ge__ from the compatible API. */
+  ge(other: Document): boolean
+  /** Document.__getitem__ from the compatible API. */
+  getitem(index?: number | undefined | null): Page
+  /** Document.__gt__ from the compatible API. */
+  gt(other: Document): boolean
+  /** Document.__init__ from the compatible API. */
+  constructor(filename?: string | undefined | null, stream?: Buffer | undefined | null, filetype?: string | undefined | null, rect?: RectLike | undefined | null, width?: number | undefined | null, height?: number | undefined | null, fontsize?: number | undefined | null, archive?: any | undefined | null)
+  /** Document.__le__ from the compatible API. */
+  le(other: Document): boolean
+  /** Document.__len__ from the compatible API. */
+  len(): number
+  /** Document.__lt__ from the compatible API. */
+  lt(other: Document): boolean
+  /** Document.__ne__ from the compatible API. */
+  ne(other: Document): boolean
+  /** Document.authenticate from the compatible API. */
+  authenticate(password: string): number
+  /** Document.can_save_incrementally from the compatible API. */
+  canSaveIncrementally(): boolean
+  /** Document.chapter_count from the compatible API. */
+  get chapterCount(): number
+  /** Document.chapter_page_count from the compatible API. */
+  chapterPageCount(chapter: number): number
+  /** Document.close from the compatible API. */
+  close(): void
+  /** Document.convert_to_pdf from the compatible API. */
+  convertToPdf(fromPage?: number | undefined | null, toPage?: number | undefined | null, rotate?: number | undefined | null): Buffer
+  /** Document.embfile_count from the compatible API. */
+  embfileCount(): number
+  /** Document.embfile_get from the compatible API. */
+  embfileGet(item: any): Buffer
+  /** Document.embfile_info from the compatible API. */
+  embfileInfo(item: any): any
+  /** Document.embfile_names from the compatible API. */
+  embfileNames(): Array<string>
+  /** Document.ez_save from the compatible API. */
+  ezSave(path: string, options?: any | undefined | null): void
+  /** Document.find_bookmark from the compatible API. */
+  findBookmark(mark: number): any
+  /** Document.get_layer from the compatible API. */
+  getLayer(config?: number | undefined | null): any
+  /** Document.get_layers from the compatible API. */
+  getLayers(): Array<any>
+  /** Document.get_new_xref from the compatible API. */
+  getNewXref(): number
+  /** Document.get_oc from the compatible API. */
+  getOc(xref: number): number
+  /** Document.get_ocgs from the compatible API. */
+  getOcgs(): Array<any>
+  /** Document.get_ocmd from the compatible API. */
+  getOcmd(xref: number): any
+  /** Document.get_outline_xrefs from the compatible API. */
+  getOutlineXrefs(): Array<number>
+  /** Document.get_page_labels from the compatible API. */
+  getPageLabels(): Array<any>
+  /** Document.get_page_numbers from the compatible API. */
+  getPageNumbers(label: string, onlyOne?: boolean | undefined | null): Array<number>
+  /** Document.get_page_xobjects from the compatible API. */
+  getPageXobjects(page: number): Array<number>
+  /** Document.get_sigflags from the compatible API. */
+  getSigflags(): number
+  /** Document.get_toc from the compatible API. */
+  getToc(simple?: boolean | undefined | null): Array<any>
+  /** Document.get_xml_metadata from the compatible API. */
+  getXmlMetadata(): string
+  /** Document.init_doc from the compatible API. */
+  initDoc(): void
+  /** Document.is_dirty from the compatible API. */
+  get isDirty(): boolean
+  /** Document.is_fast_webaccess from the compatible API. */
+  get isFastWebaccess(): boolean
+  /** Document.is_form_pdf from the compatible API. */
+  get isFormPdf(): boolean
+  /** Document.is_pdf from the compatible API. */
+  get isPdf(): boolean
+  /** Document.is_reflowable from the compatible API. */
+  get isReflowable(): boolean
+  /** Document.is_repaired from the compatible API. */
+  get isRepaired(): boolean
+  /** Document.is_stream from the compatible API. */
+  isStream(xref?: number | undefined | null): boolean
+  /** Document.language from the compatible API. */
+  get language(): string
+  /** Document.last_location from the compatible API. */
+  get lastLocation(): any
+  /** Document.layer_ui_configs from the compatible API. */
+  layerUiConfigs(): Array<any>
+  /** Document.layout from the compatible API. */
+  layout(rect?: RectLike | undefined | null, width?: number | undefined | null, height?: number | undefined | null, fontsize?: number | undefined | null): void
+  /** Document.load_page from the compatible API. */
+  loadPage(number: number): Page
+  /** Document.location_from_page_number from the compatible API. */
+  locationFromPageNumber(page: number): any
+  /**
+   * Document.make_bookmark from the compatible API.
+   *
+   * Not yet wired: the facade cannot serve it (unconstructible:Location). Raises until the facade grows the accessor.
+   */
+  makeBookmark(): any
+  /** Document.markinfo from the compatible API. */
+  get markinfo(): any
+  /** Document.name from the compatible API. */
+  get name(): string
+  /** Document.need_appearances from the compatible API. */
+  needAppearances(value?: any | undefined | null): boolean
+  /** Document.needs_pass from the compatible API. */
+  get needsPass(): number
+  /**
+   * Document.next_location from the compatible API.
+   *
+   * Not yet wired: the facade cannot serve it (unconstructible:Location). Raises until the facade grows the accessor.
+   */
+  nextLocation(): any
+  /** Document.outline from the compatible API. */
+  get outline(): Array<any>
+  /** Document.page_count from the compatible API. */
+  get pageCount(): number
+  /** Document.page_count2 from the compatible API. */
+  get pageCount2(): any
+  /** Document.page_cropbox from the compatible API. */
+  pageCropbox(page: number): Rect
+  /**
+   * Document.page_number_from_location from the compatible API.
+   *
+   * Not yet wired: the facade cannot serve it (unconstructible:Location). Raises until the facade grows the accessor.
+   */
+  pageNumberFromLocation(): any
+  /** Document.page_xref from the compatible API. */
+  pageXref(page: number): number
+  /** Document.pagelayout from the compatible API. */
+  get pagelayout(): string
+  /** Document.pagemode from the compatible API. */
+  get pagemode(): string
+  /**
+   * Document.pages from the compatible API.
+   * Iterate pages over a start/stop/step slice.
+   */
+  pages(start?: number | undefined | null, stop?: number | undefined | null, step?: number | undefined | null): Array<Page>
+  /** Document.pdf_catalog from the compatible API. */
+  pdfCatalog(): string
+  /** Document.pdf_trailer from the compatible API. */
+  pdfTrailer(compressed?: boolean | undefined | null, ascii?: boolean | undefined | null): string
+  /** Document.permissions from the compatible API. */
+  get permissions(): number
+  /**
+   * Document.prev_location from the compatible API.
+   *
+   * Not yet wired: the facade cannot serve it (unconstructible:Location). Raises until the facade grows the accessor.
+   */
+  prevLocation(): any
+  /** Document.recolor from the compatible API. */
+  recolor(components?: number | undefined | null): void
+  /** Document.reload_page from the compatible API. */
+  reloadPage(page: Page): Page
+  /** Document.resolve_names from the compatible API. */
+  resolveNames(): void
+  /** Document.save from the compatible API. */
+  save(path: string, options?: any | undefined | null): void
+  /** Document.saveIncr from the compatible API. */
+  saveIncr(): void
+  /** Document.save_snapshot from the compatible API. */
+  saveSnapshot(path: string): void
+  /** Document.switch_layer from the compatible API. */
+  switchLayer(config: number, asDefault?: boolean | undefined | null): void
+  /** Document.this from the compatible API. */
+  get this(): number
+  /** Document.this_is_pdf from the compatible API. */
+  get thisIsPdf(): boolean
+  /** Document.tobytes from the compatible API. */
+  tobytes(options?: any | undefined | null): Buffer
+  /** Document.version_count from the compatible API. */
+  get versionCount(): number
+  /** Document.write from the compatible API. */
+  write(options?: any | undefined | null): Buffer
+  /** Document.xref from the compatible API. */
+  get xref(): number
+  /** Document.xref_get_key from the compatible API. */
+  xrefGetKey(xref: number, key: string): any
+  /** Document.xref_get_keys from the compatible API. */
+  xrefGetKeys(xref: number): Array<string>
+  /** Document.xref_is_stream from the compatible API. */
+  xrefIsStream(xref?: number | undefined | null): boolean
+  /** Document.xref_is_xobject from the compatible API. */
+  xrefIsXobject(xref: number): boolean
+  /** Document.xref_length from the compatible API. */
+  xrefLength(): number
+  /** Document.xref_object from the compatible API. */
+  xrefObject(xref: number, compressed?: boolean | undefined | null, ascii?: boolean | undefined | null): string
+  /** Document.xref_stream from the compatible API. */
+  xrefStream(xref: number): Buffer
+  /** Document.xref_stream_raw from the compatible API. */
+  xrefStreamRaw(xref: number): Buffer
+  /** Document.xref_xml_metadata from the compatible API. */
+  xrefXmlMetadata(): number
+  /** Document.add_layer from the compatible API. */
+  addLayer(name: string, creator?: string | undefined | null, on?: boolean | undefined | null): void
+  /** Document.add_ocg from the compatible API. */
+  addOcg(name: string, config?: number | undefined | null, on?: boolean | undefined | null, intent?: string | undefined | null, usage?: string | undefined | null): number
+  /** Document.apply_css from the compatible API. */
+  applyCss(css: string, append?: boolean | undefined | null): void
+  /** Document.bake from the compatible API. */
+  bake(options?: any | undefined | null): void
+  /** Document.copy_page from the compatible API. */
+  copyPage(page: number, to?: number | undefined | null): void
+  /** Document.del_toc_item from the compatible API. */
+  delTocItem(index: number): void
+  /** Document.del_xml_metadata from the compatible API. */
+  delXmlMetadata(): void
+  /** Document.delete_page from the compatible API. */
+  deletePage(page?: number | undefined | null): void
+  /** Document.delete_pages from the compatible API. */
+  deletePages(pages: any): void
+  /** Document.embfile_add from the compatible API. */
+  embfileAdd(name: string, data: Buffer, options?: any | undefined | null): void
+  /** Document.embfile_del from the compatible API. */
+  embfileDel(item: any): void
+  /** Document.embfile_upd from the compatible API. */
+  embfileUpd(item: any, data?: Buffer | undefined | null, options?: any | undefined | null): void
+  /** Document.fullcopy_page from the compatible API. */
+  fullcopyPage(page: number, to?: number | undefined | null): void
+  /** Document.has_annots from the compatible API. */
+  hasAnnots(): boolean
+  /** Document.has_links from the compatible API. */
+  hasLinks(): boolean
+  /** Document.insert_file from the compatible API. */
+  insertFile(path: string, options?: any | undefined | null): void
+  /** Document.insert_page from the compatible API. */
+  insertPage(page: number, options?: any | undefined | null): number
+  /** Document.insert_pdf from the compatible API. */
+  insertPdf(source: Document, options?: any | undefined | null): void
+  /** Document.journal_can_do from the compatible API. */
+  journalCanDo(): any
+  /** Document.journal_enable from the compatible API. */
+  journalEnable(): void
+  /** Document.journal_is_enabled from the compatible API. */
+  journalIsEnabled(): boolean
+  /** Document.journal_load from the compatible API. */
+  journalLoad(path: string): void
+  /** Document.journal_op_name from the compatible API. */
+  journalOpName(step: number): string
+  /** Document.journal_position from the compatible API. */
+  journalPosition(): number
+  /** Document.journal_redo from the compatible API. */
+  journalRedo(): void
+  /** Document.journal_save from the compatible API. */
+  journalSave(path: string): void
+  /** Document.journal_start_op from the compatible API. */
+  journalStartOp(name?: string | undefined | null): void
+  /** Document.journal_stop_op from the compatible API. */
+  journalStopOp(): void
+  /** Document.journal_undo from the compatible API. */
+  journalUndo(): void
+  /** Document.move_page from the compatible API. */
+  movePage(page: number, to?: number | undefined | null): void
+  /** Document.new_page from the compatible API. */
+  newPage(page?: number | undefined | null, width?: number | undefined | null, height?: number | undefined | null): Page
+  /** Document.page_annot_xrefs from the compatible API. */
+  pageAnnotXrefs(page: number): Array<number>
+  /** Document.repair from the compatible API. */
+  repair(): void
+  /** Document.resolve_link from the compatible API. */
+  resolveLink(uri?: string | undefined | null, chapters?: number | undefined | null): any
+  /** Document.scrub from the compatible API. */
+  scrub(options?: any | undefined | null): void
+  /** Document.select from the compatible API. */
+  select(pages: Array<number>): void
+  /** Document.set_language from the compatible API. */
+  setLanguage(language?: string | undefined | null): void
+  /** Document.set_layer from the compatible API. */
+  setLayer(config: number, options?: any | undefined | null): void
+  /** Document.set_layer_ui_config from the compatible API. */
+  setLayerUiConfig(number: number, action?: number | undefined | null): void
+  /** Document.set_markinfo from the compatible API. */
+  setMarkinfo(markinfo: any): boolean
+  /** Document.set_metadata from the compatible API. */
+  setMetadata(metadata: any): void
+  /** Document.set_oc from the compatible API. */
+  setOc(xref: number, oc: number): void
+  /** Document.set_ocmd from the compatible API. */
+  setOcmd(xref?: number | undefined | null, options?: any | undefined | null): number
+  /** Document.set_page_labels from the compatible API. */
+  setPageLabels(labels: Array<any>): void
+  /** Document.set_pagelayout from the compatible API. */
+  setPagelayout(pagelayout: string): void
+  /** Document.set_pagemode from the compatible API. */
+  setPagemode(pagemode: string): void
+  /** Document.set_toc from the compatible API. */
+  setToc(toc: Array<any>, collapse?: number | undefined | null): number
+  /** Document.set_toc_item from the compatible API. */
+  setTocItem(index: number, options?: any | undefined | null): void
+  /** Document.set_xml_metadata from the compatible API. */
+  setXmlMetadata(metadata: string): void
+  /** Document.subset_fonts from the compatible API. */
+  subsetFonts(verbose?: boolean | undefined | null, fallback?: boolean | undefined | null): any
+  /** Document.update_object from the compatible API. */
+  updateObject(xref: number, text: string, page?: number | undefined | null): void
+  /** Document.update_stream from the compatible API. */
+  updateStream(xref?: number | undefined | null, data?: Buffer | undefined | null, newStream?: boolean | undefined | null, compress?: boolean | undefined | null): void
+  /** Document.xref_copy from the compatible API. */
+  xrefCopy(source: number, target: number, keep?: Array<string> | undefined | null): void
+  /** Document.xref_set_key from the compatible API. */
+  xrefSetKey(xref: number, key: string, value: string): void
+  /** Document.extract_image from the compatible API. */
+  extractImage(xref: number): any
+  /** Document.get_page_images from the compatible API. */
+  getPageImages(page: number, full?: boolean | undefined | null): Array<any>
+  /** Document.get_page_pixmap from the compatible API. */
+  getPagePixmap(page: number, options?: any | undefined | null, colorspace?: Colorspace | undefined | null): Pixmap
+  /** Document.rewrite_images from the compatible API. */
+  rewriteImages(options?: any | undefined | null): void
+  /** Document.xref_is_image from the compatible API. */
+  xrefIsImage(xref: number): boolean
+  /** Document.FormFonts from the compatible API. */
+  get formFonts(): Array<any>
+  /** Document.extract_font from the compatible API. */
+  extractFont(xref?: number | undefined | null, infoOnly?: boolean | undefined | null, name?: string | undefined | null): any
+  /** Document.get_char_widths from the compatible API. */
+  getCharWidths(xref: number, limit?: number | undefined | null, index?: number | undefined | null, fontDict?: any | undefined | null): Array<number>
+  /** Document.get_page_fonts from the compatible API. */
+  getPageFonts(page: number, full?: boolean | undefined | null): Array<any>
+  /** Document.get_page_text from the compatible API. */
+  getPageText(page: number, options?: any | undefined | null, textpage?: TextPage | undefined | null): any
+  /** Document.search_page_for from the compatible API. */
+  searchPageFor(page: number, needle: string, options?: any | undefined | null, textpage?: TextPage | undefined | null): any
+  /** Document.xref_is_font from the compatible API. */
+  xrefIsFont(xref: number): boolean
+}
+export declare class Page {
+  /** Page.__eq__ from the compatible API. */
+  eq(other: Page): boolean
+  /** Page.__ge__ from the compatible API. */
+  ge(other: Page): boolean
+  /** Page.__gt__ from the compatible API. */
+  gt(other: Page): boolean
+  /** Page.__init__ from the compatible API. */
+  constructor(page: number, document: Document)
+  /** Page.__le__ from the compatible API. */
+  le(other: Page): boolean
+  /** Page.__lt__ from the compatible API. */
+  lt(other: Page): boolean
+  /** Page.__ne__ from the compatible API. */
+  ne(other: Page): boolean
+  /** Page.artbox from the compatible API. */
+  get artbox(): Rect
+  /** Page.bleedbox from the compatible API. */
+  get bleedbox(): Rect
+  /** Page.bound from the compatible API. */
+  bound(): Rect
+  /** Page.clip_to_rect from the compatible API. */
+  clipToRect(rect: RectLike): void
+  /** Page.cropbox from the compatible API. */
+  get cropbox(): Rect
+  /** Page.cropbox_position from the compatible API. */
+  get cropboxPosition(): Point
+  /** Page.derotation_matrix from the compatible API. */
+  get derotationMatrix(): Matrix
+  /** Page.get_bboxlog from the compatible API. */
+  getBboxlog(layers?: any | undefined | null): any
+  /** Page.get_contents from the compatible API. */
+  getContents(): Array<number>
+  /** Page.get_displaylist from the compatible API. */
+  getDisplaylist(): any
+  /** Page.get_label from the compatible API. */
+  getLabel(): string
+  /** Page.get_layout from the compatible API. */
+  getLayout(options?: any | undefined | null): any | null
+  /** Page.get_oc_items from the compatible API. */
+  getOcItems(): Array<any>
+  /** Page.get_xobjects from the compatible API. */
+  getXobjects(): Array<number>
+  /** Page.is_wrapped from the compatible API. */
+  get isWrapped(): boolean
+  /** Page.language from the compatible API. */
+  get language(): string
+  /** Page.mediabox from the compatible API. */
+  get mediabox(): Rect
+  /** Page.mediabox_size from the compatible API. */
+  get mediaboxSize(): any
+  /** Page.read_contents from the compatible API. */
+  readContents(): Buffer
+  /** Page.recolor from the compatible API. */
+  recolor(components?: number | undefined | null): void
+  /** Page.rect from the compatible API. */
+  get rect(): Rect
+  /** Page.refresh from the compatible API. */
+  refresh(): void
+  /** Page.rotation from the compatible API. */
+  get rotation(): number
+  /** Page.rotation_matrix from the compatible API. */
+  get rotationMatrix(): Matrix
+  /**
+   * Page.run from the compatible API.
+   *
+   * Not yet wired: display lists are sealed in this build. Raises until the facade grows the accessor.
+   */
+  run(): any
+  /** Page.transformation_matrix from the compatible API. */
+  get transformationMatrix(): Matrix
+  /** Page.trimbox from the compatible API. */
+  get trimbox(): Rect
+  /** Page.wrap_contents from the compatible API. */
+  wrapContents(): void
+  /** Page.xref from the compatible API. */
+  get xref(): number
+  /** Page.add_caret_annot from the compatible API. */
+  addCaretAnnot(point: PointLike): Annot
+  /** Page.add_circle_annot from the compatible API. */
+  addCircleAnnot(rect: RectLike): Annot
+  /** Page.add_file_annot from the compatible API. */
+  addFileAnnot(point: PointLike, buffer: Buffer, filename: string, options?: any | undefined | null): Annot
+  /** Page.add_freetext_annot from the compatible API. */
+  addFreetextAnnot(rect: RectLike, text: string, options?: any | undefined | null): Annot
+  /** Page.add_highlight_annot from the compatible API. */
+  addHighlightAnnot(options?: any | undefined | null): Annot
+  /** Page.add_ink_annot from the compatible API. */
+  addInkAnnot(handwriting: Array<Array<PointLike>>): Annot
+  /** Page.add_line_annot from the compatible API. */
+  addLineAnnot(p1: PointLike, p2: PointLike): Annot
+  /** Page.add_polygon_annot from the compatible API. */
+  addPolygonAnnot(points: Array<PointLike>): Annot
+  /** Page.add_polyline_annot from the compatible API. */
+  addPolylineAnnot(points: Array<PointLike>): Annot
+  /** Page.add_rect_annot from the compatible API. */
+  addRectAnnot(rect: RectLike): Annot
+  /** Page.add_redact_annot from the compatible API. */
+  addRedactAnnot(quad: QuadLike, options?: any | undefined | null): Annot
+  /** Page.add_squiggly_annot from the compatible API. */
+  addSquigglyAnnot(options?: any | undefined | null): Annot
+  /** Page.add_stamp_annot from the compatible API. */
+  addStampAnnot(rect: RectLike, stamp?: number | undefined | null): Annot
+  /** Page.add_strikeout_annot from the compatible API. */
+  addStrikeoutAnnot(options?: any | undefined | null): Annot
+  /** Page.add_text_annot from the compatible API. */
+  addTextAnnot(point: PointLike, text: string, icon: string): Annot
+  /** Page.add_underline_annot from the compatible API. */
+  addUnderlineAnnot(options?: any | undefined | null): Annot
+  /** Page.add_widget from the compatible API. */
+  addWidget(widget: Widget): Annot
+  /** Page.annot_names from the compatible API. */
+  annotNames(): Array<string>
+  /** Page.annot_xrefs from the compatible API. */
+  annotXrefs(): Array<any>
+  /** Page.annots from the compatible API. */
+  annots(types?: Array<number> | undefined | null): Array<any>
+  /** Page.apply_redactions from the compatible API. */
+  applyRedactions(options?: any | undefined | null): boolean
+  /** Page.clean_contents from the compatible API. */
+  cleanContents(sanitize?: boolean | undefined | null): void
+  /** Page.cluster_drawings from the compatible API. */
+  clusterDrawings(options?: any | undefined | null): Array<any>
+  /** Page.delete_annot from the compatible API. */
+  deleteAnnot(annot: Annot): void
+  /** Page.delete_image from the compatible API. */
+  deleteImage(xref: number): void
+  /** Page.delete_link from the compatible API. */
+  deleteLink(link: Link): void
+  /** Page.delete_widget from the compatible API. */
+  deleteWidget(widget: Widget): Widget
+  /** Page.draw_bezier from the compatible API. */
+  drawBezier(p1: PointLike, p2: PointLike, p3: PointLike, p4: PointLike, options?: any | undefined | null): Point
+  /** Page.draw_circle from the compatible API. */
+  drawCircle(center: PointLike, radius: number, options?: any | undefined | null): Point
+  /** Page.draw_curve from the compatible API. */
+  drawCurve(p1: PointLike, p2: PointLike, p3: PointLike, options?: any | undefined | null): Point
+  /** Page.draw_line from the compatible API. */
+  drawLine(p1: PointLike, p2: PointLike, options?: any | undefined | null): Point
+  /** Page.draw_oval from the compatible API. */
+  drawOval(rect: RectLike, options?: any | undefined | null): Point
+  /** Page.draw_polyline from the compatible API. */
+  drawPolyline(points: Array<PointLike>, options?: any | undefined | null): Point
+  /** Page.draw_quad from the compatible API. */
+  drawQuad(quad: QuadLike, options?: any | undefined | null): Point
+  /** Page.draw_rect from the compatible API. */
+  drawRect(rect: RectLike, options?: any | undefined | null, radius?: number | undefined | null): Point
+  /** Page.draw_sector from the compatible API. */
+  drawSector(center: PointLike, point: PointLike, beta: number, fullSector?: boolean | undefined | null, options?: any | undefined | null): Point
+  /** Page.draw_squiggle from the compatible API. */
+  drawSquiggle(p1: PointLike, p2: PointLike, breadth?: number | undefined | null, options?: any | undefined | null): Point
+  /** Page.draw_zigzag from the compatible API. */
+  drawZigzag(p1: PointLike, p2: PointLike, breadth?: number | undefined | null, options?: any | undefined | null): Point
+  /** Page.first_annot from the compatible API. */
+  get firstAnnot(): any | null
+  /** Page.first_link from the compatible API. */
+  get firstLink(): Link | null
+  /** Page.first_widget from the compatible API. */
+  get firstWidget(): Widget | null
+  /** Page.get_cdrawings from the compatible API. */
+  getCdrawings(options?: any | undefined | null): Array<any>
+  /** Page.get_drawings from the compatible API. */
+  getDrawings(extended?: boolean | undefined | null): Array<any>
+  /** Page.get_links from the compatible API. */
+  getLinks(): Array<Link>
+  /** Page.insert_font from the compatible API. */
+  insertFont(options?: any | undefined | null): number
+  /** Page.insert_htmlbox from the compatible API. */
+  insertHtmlbox(rect: RectLike, text: string, options?: any | undefined | null): any
+  /** Page.insert_image from the compatible API. */
+  insertImage(rect: RectLike, options?: any | undefined | null, pixmap?: Pixmap | undefined | null, stream?: Buffer | undefined | null): number
+  /** Page.insert_link from the compatible API. */
+  insertLink(link: Link, mark?: boolean | undefined | null): void
+  /** Page.insert_text from the compatible API. */
+  insertText(point: PointLike, text: any, options?: any | undefined | null): number
+  /** Page.insert_textbox from the compatible API. */
+  insertTextbox(rect: RectLike, text: any, options?: any | undefined | null): number
+  /** Page.links from the compatible API. */
+  links(kinds?: Array<number> | undefined | null): Array<Link>
+  /** Page.load_annot from the compatible API. */
+  loadAnnot(ident: any): Annot
+  /** Page.load_links from the compatible API. */
+  loadLinks(): Array<Link>
+  /** Page.load_widget from the compatible API. */
+  loadWidget(xref: number): Widget
+  /** Page.new_shape from the compatible API. */
+  newShape(): Shape
+  /** Page.remove_rotation from the compatible API. */
+  removeRotation(): void
+  /** Page.replace_image from the compatible API. */
+  replaceImage(xref: number, options?: any | undefined | null): void
+  /** Page.set_artbox from the compatible API. */
+  setArtbox(rect: RectLike): void
+  /** Page.set_bleedbox from the compatible API. */
+  setBleedbox(rect: RectLike): void
+  /** Page.set_contents from the compatible API. */
+  setContents(xref: number): void
+  /** Page.set_cropbox from the compatible API. */
+  setCropbox(rect: RectLike): void
+  /** Page.set_language from the compatible API. */
+  setLanguage(language?: string | undefined | null): void
+  /** Page.set_mediabox from the compatible API. */
+  setMediabox(rect: RectLike): void
+  /** Page.set_rotation from the compatible API. */
+  setRotation(rotation: number): void
+  /** Page.set_trimbox from the compatible API. */
+  setTrimbox(rect: RectLike): void
+  /** Page.show_pdf_page from the compatible API. */
+  showPdfPage(rect: RectLike, source: Document, options?: any | undefined | null): number
+  /** Page.update_link from the compatible API. */
+  updateLink(link: Link): void
+  /** Page.widgets from the compatible API. */
+  widgets(types?: Array<number> | undefined | null): Array<Widget>
+  /** Page.write_text from the compatible API. */
+  writeText(options?: any | undefined | null): void
+  /** Page.get_image_bbox from the compatible API. */
+  getImageBbox(name: string, transform?: boolean | undefined | null): Rect
+  /** Page.get_image_info from the compatible API. */
+  getImageInfo(hashes?: boolean | undefined | null, xrefs?: boolean | undefined | null): Array<any>
+  /** Page.get_image_rects from the compatible API. */
+  getImageRects(name: string, transform?: boolean | undefined | null): Array<Rect>
+  /** Page.get_images from the compatible API. */
+  getImages(full?: boolean | undefined | null): Array<any>
+  /** Page.get_pixmap from the compatible API. */
+  getPixmap(options?: any | undefined | null, colorspace?: Colorspace | undefined | null): Pixmap
+  /** Page.get_svg_image from the compatible API. */
+  getSvgImage(matrix?: MatrixLike | undefined | null, textAsPath?: boolean | undefined | null): string
+  /** Page.extend_textpage from the compatible API. */
+  extendTextpage(target: TextPage, flags?: number | undefined | null, matrix?: MatrixLike | undefined | null): void
+  /** Page.find_tables from the compatible API. */
+  findTables(options?: any | undefined | null): any
+  /** Page.get_fonts from the compatible API. */
+  getFonts(full?: boolean | undefined | null): Array<any>
+  /** Page.get_text from the compatible API. */
+  getText(options?: any | undefined | null, textpage?: TextPage | undefined | null): any
+  /** Page.get_text_blocks from the compatible API. */
+  getTextBlocks(options?: any | undefined | null, textpage?: TextPage | undefined | null): Array<any>
+  /** Page.get_text_selection from the compatible API. */
+  getTextSelection(begin: PointLike, end: PointLike, clip?: RectLike | undefined | null): string
+  /** Page.get_text_words from the compatible API. */
+  getTextWords(options?: any | undefined | null, textpage?: TextPage | undefined | null): Array<any>
+  /** Page.get_textbox from the compatible API. */
+  getTextbox(rect: RectLike, textpage?: TextPage | undefined | null): string
+  /** Page.get_textpage from the compatible API. */
+  getTextpage(clip?: RectLike | undefined | null, flags?: number | undefined | null, matrix?: MatrixLike | undefined | null): TextPage
+  /** Page.get_textpage_ocr from the compatible API. */
+  getTextpageOcr(options?: any | undefined | null): TextPage
+  /** Page.get_texttrace from the compatible API. */
+  getTexttrace(): Array<any>
+  /** Page.search_for from the compatible API. */
+  searchFor(needle: string, options?: any | undefined | null, textpage?: TextPage | undefined | null): any
+}
+export declare class Link {
+  /** Read the link kind code. */
+  get kind(): number
+  /** Write the link kind code. */
+  set kind(value: number)
+  /** Read the link cross-reference. */
+  get xref(): number
+  /** Read the link identifier. */
+  get id(): string
+  /** Link.__eq__ from the compatible API. */
+  eq(other: Link): boolean
+  /** Link.__ge__ from the compatible API. */
+  ge(other: Link): boolean
+  /** Link.__gt__ from the compatible API. */
+  gt(other: Link): boolean
+  /** Link.__init__ from the compatible API. */
+  constructor()
+  /** Link.__le__ from the compatible API. */
+  le(other: Link): boolean
+  /** Link.__lt__ from the compatible API. */
+  lt(other: Link): boolean
+  /** Link.__ne__ from the compatible API. */
+  ne(other: Link): boolean
+  /** Link.border from the compatible API. */
+  get border(): any
+  /** Link.colors from the compatible API. */
+  get colors(): any
+  /** Link.dest from the compatible API. */
+  get dest(): any | null
+  /** Link.flags from the compatible API. */
+  get flags(): number
+  /** Link.is_external from the compatible API. */
+  get isExternal(): boolean
+  /** Link.next from the compatible API. */
+  get next(): Link | null
+  /** Link.rect from the compatible API. */
+  get rect(): Rect
+  /** Link.set_border from the compatible API. */
+  setBorder(options?: any | undefined | null): void
+  /** Link.set_colors from the compatible API. */
+  setColors(colors?: any | undefined | null): void
+  /** Link.set_flags from the compatible API. */
+  setFlags(flags: number): void
+  /** Link.uri from the compatible API. */
+  get uri(): string
+}
+export declare class Annot {
+  /** Annot.__bool__ from the compatible API. */
+  bool(): boolean
+  /** Annot.__eq__ from the compatible API. */
+  eq(other: Annot): boolean
+  /** Annot.__ge__ from the compatible API. */
+  ge(other: Annot): boolean
+  /** Annot.__gt__ from the compatible API. */
+  gt(other: Annot): boolean
+  /** Annot.__init__ from the compatible API. */
+  constructor(annot: Annot)
+  /** Annot.__le__ from the compatible API. */
+  le(other: Annot): boolean
+  /** Annot.__lt__ from the compatible API. */
+  lt(other: Annot): boolean
+  /** Annot.__ne__ from the compatible API. */
+  ne(other: Annot): boolean
+  /** Annot.apn_bbox from the compatible API. */
+  get apnBbox(): Rect
+  /** Annot.apn_matrix from the compatible API. */
+  get apnMatrix(): Matrix
+  /** Annot.blendmode from the compatible API. */
+  get blendmode(): string
+  /** Annot.border from the compatible API. */
+  get border(): any
+  /** Annot.clean_contents from the compatible API. */
+  cleanContents(sanitize?: boolean | undefined | null): void
+  /** Annot.colors from the compatible API. */
+  get colors(): any
+  /** Annot.delete_responses from the compatible API. */
+  deleteResponses(): void
+  /** Annot.file_info from the compatible API. */
+  get fileInfo(): any
+  /** Annot.flags from the compatible API. */
+  get flags(): number
+  /** Annot.get_file from the compatible API. */
+  getFile(): Buffer
+  /** Annot.get_oc from the compatible API. */
+  getOc(): number
+  /** Annot.get_parent from the compatible API. */
+  getParent(): any
+  /** Annot.get_pixmap from the compatible API. */
+  getPixmap(options?: any | undefined | null, colorspace?: Colorspace | undefined | null): Pixmap
+  /** Annot.get_sound from the compatible API. */
+  getSound(): Buffer
+  /** Annot.get_text from the compatible API. */
+  getText(options?: any | undefined | null, textpage?: TextPage | undefined | null): any
+  /** Annot.get_textbox from the compatible API. */
+  getTextbox(rect?: RectLike | undefined | null): string
+  /** Annot.get_textpage from the compatible API. */
+  getTextpage(clip?: RectLike | undefined | null, flags?: number | undefined | null): TextPage
+  /** Annot.has_popup from the compatible API. */
+  get hasPopup(): boolean
+  /** Annot.info from the compatible API. */
+  get info(): any
+  /** Annot.irt_xref from the compatible API. */
+  get irtXref(): number
+  /** Annot.is_open from the compatible API. */
+  get isOpen(): boolean
+  /** Annot.language from the compatible API. */
+  get language(): string
+  /** Annot.line_ends from the compatible API. */
+  get lineEnds(): any
+  /** Annot.next from the compatible API. */
+  get next(): Annot | null
+  /** Annot.opacity from the compatible API. */
+  get opacity(): number
+  /** Annot.popup_rect from the compatible API. */
+  get popupRect(): Rect
+  /** Annot.popup_xref from the compatible API. */
+  get popupXref(): number
+  /** Annot.rect from the compatible API. */
+  get rect(): Rect
+  /** Annot.rect_delta from the compatible API. */
+  get rectDelta(): Rect
+  /** Annot.rotation from the compatible API. */
+  get rotation(): number
+  /** Annot.set_apn_bbox from the compatible API. */
+  setApnBbox(bbox: RectLike): void
+  /** Annot.set_apn_matrix from the compatible API. */
+  setApnMatrix(matrix: MatrixLike): void
+  /** Annot.set_blendmode from the compatible API. */
+  setBlendmode(blendMode: string): void
+  /** Annot.set_border from the compatible API. */
+  setBorder(options?: any | undefined | null): void
+  /** Annot.set_colors from the compatible API. */
+  setColors(colors?: any | undefined | null): void
+  /** Annot.set_flags from the compatible API. */
+  setFlags(flags: number): void
+  /** Annot.set_info from the compatible API. */
+  setInfo(options?: any | undefined | null): void
+  /** Annot.set_irt_xref from the compatible API. */
+  setIrtXref(xref: number): void
+  /** Annot.set_language from the compatible API. */
+  setLanguage(language?: string | undefined | null): void
+  /** Annot.set_line_ends from the compatible API. */
+  setLineEnds(start: number, end: number): void
+  /** Annot.set_name from the compatible API. */
+  setName(name: string): void
+  /** Annot.set_oc from the compatible API. */
+  setOc(oc?: number | undefined | null): void
+  /** Annot.set_opacity from the compatible API. */
+  setOpacity(opacity: number): void
+  /** Annot.set_open from the compatible API. */
+  setOpen(isOpen: boolean): void
+  /** Annot.set_popup from the compatible API. */
+  setPopup(rect: RectLike): void
+  /** Annot.set_rect from the compatible API. */
+  setRect(rect: RectLike): void
+  /** Annot.set_rotation from the compatible API. */
+  setRotation(rotate?: number | undefined | null): void
+  /** Annot.type from the compatible API. */
+  get type(): any
+  /** Annot.update from the compatible API. */
+  update(options?: any | undefined | null): void
+  /** Annot.update_file from the compatible API. */
+  updateFile(data: Buffer, filename?: string | undefined | null, displayName?: string | undefined | null, description?: string | undefined | null): void
+  /** Annot.update_timing_test from the compatible API. */
+  updateTimingTest(): number
+  /** Annot.vertices from the compatible API. */
+  get vertices(): Array<Point>
+  /** Annot.xref from the compatible API. */
+  get xref(): number
+}
+export declare class Widget {
+  /** Read the field name. */
+  get fieldName(): string
+  /** Write the field name. */
+  set fieldName(value: string)
+  /** Read the field type code. */
+  get fieldType(): number
+  /** Write the field type code. */
+  set fieldType(value: number)
+  /** Read the field value. */
+  get fieldValue(): string
+  /** Write the field value. */
+  set fieldValue(value: string)
+  /** Read the field box. */
+  get rect(): Rect
+  /** Write the field box. */
+  set rect(value: RectLike)
+  /** Widget.__eq__ from the compatible API. */
+  eq(other: Widget): boolean
+  /** Widget.__ge__ from the compatible API. */
+  ge(other: Widget): boolean
+  /** Widget.__gt__ from the compatible API. */
+  gt(other: Widget): boolean
+  /** Widget.__init__ from the compatible API. */
+  constructor()
+  /** Widget.__le__ from the compatible API. */
+  le(other: Widget): boolean
+  /** Widget.__lt__ from the compatible API. */
+  lt(other: Widget): boolean
+  /** Widget.__ne__ from the compatible API. */
+  ne(other: Widget): boolean
+  /** Widget.button_states from the compatible API. */
+  buttonStates(): Array<string>
+  /** Widget.next from the compatible API. */
+  get next(): Widget | null
+  /** Widget.on_state from the compatible API. */
+  onState(): string
+  /** Widget.reset from the compatible API. */
+  reset(): void
+  /** Widget.update from the compatible API. */
+  update(syncFlags?: any | undefined | null): void
+}
+export declare class Shape {
+  /** Shape.__eq__ from the compatible API. */
+  eq(other: Shape): boolean
+  /** Shape.__ge__ from the compatible API. */
+  ge(other: Shape): boolean
+  /** Shape.__gt__ from the compatible API. */
+  gt(other: Shape): boolean
+  /** Shape.__init__ from the compatible API. */
+  constructor(page: Page)
+  /** Shape.__le__ from the compatible API. */
+  le(other: Shape): boolean
+  /** Shape.__lt__ from the compatible API. */
+  lt(other: Shape): boolean
+  /** Shape.__ne__ from the compatible API. */
+  ne(other: Shape): boolean
+  /** Shape.commit from the compatible API. */
+  commit(overlay?: boolean | undefined | null): void
+  /** Shape.draw_bezier from the compatible API. */
+  drawBezier(p1: PointLike, p2: PointLike, p3: PointLike, p4: PointLike): Point
+  /** Shape.draw_circle from the compatible API. */
+  drawCircle(center: PointLike, radius: number): Point
+  /** Shape.draw_curve from the compatible API. */
+  drawCurve(p1: PointLike, p2: PointLike, p3: PointLike): Point
+  /** Shape.draw_line from the compatible API. */
+  drawLine(p1: PointLike, p2: PointLike): Point
+  /** Shape.draw_oval from the compatible API. */
+  drawOval(rect: RectLike): Point
+  /** Shape.draw_polyline from the compatible API. */
+  drawPolyline(points: Array<PointLike>): Point
+  /** Shape.draw_quad from the compatible API. */
+  drawQuad(quad: QuadLike): Point
+  /** Shape.draw_rect from the compatible API. */
+  drawRect(rect: RectLike, radius?: number | undefined | null): Point
+  /** Shape.draw_sector from the compatible API. */
+  drawSector(center: PointLike, point: PointLike, beta: number, fullSector?: boolean | undefined | null): Point
+  /** Shape.draw_squiggle from the compatible API. */
+  drawSquiggle(p1: PointLike, p2: PointLike, breadth?: number | undefined | null): Point
+  /** Shape.draw_zigzag from the compatible API. */
+  drawZigzag(p1: PointLike, p2: PointLike, breadth?: number | undefined | null): Point
+  /** Shape.finish from the compatible API. */
+  finish(options?: any | undefined | null): void
+  /** Shape.horizontal_angle from the compatible API. */
+  horizontalAngle(center: PointLike, point: PointLike): number
+  /** Shape.insert_text from the compatible API. */
+  insertText(point: PointLike, text: any, options?: any | undefined | null): number
+  /** Shape.insert_textbox from the compatible API. */
+  insertTextbox(rect: RectLike, text: any, options?: any | undefined | null): number
+  /** Shape.updateRect from the compatible API. */
+  updateRect(rect: RectLike): void
+}
+export declare class Font {
+  /** Font.__eq__ from the compatible API. */
+  eq(other: Font): boolean
+  /** Font.__ge__ from the compatible API. */
+  ge(other: Font): boolean
+  /** Font.__gt__ from the compatible API. */
+  gt(other: Font): boolean
+  /** Font.__init__ from the compatible API. */
+  constructor(options?: any | undefined | null, fontbuffer?: Buffer | undefined | null)
+  /** Font.__le__ from the compatible API. */
+  le(other: Font): boolean
+  /** Font.__lt__ from the compatible API. */
+  lt(other: Font): boolean
+  /** Font.__ne__ from the compatible API. */
+  ne(other: Font): boolean
+  /** Font.ascender from the compatible API. */
+  get ascender(): number
+  /** Font.bbox from the compatible API. */
+  get bbox(): Rect
+  /** Font.buffer from the compatible API. */
+  get buffer(): Buffer
+  /** Font.char_lengths from the compatible API. */
+  charLengths(text: string, options?: any | undefined | null): Array<number>
+  /** Font.descender from the compatible API. */
+  get descender(): number
+  /** Font.flags from the compatible API. */
+  get flags(): any
+  /** Font.glyph_advance from the compatible API. */
+  glyphAdvance(chr: number, options?: any | undefined | null): number
+  /** Font.glyph_bbox from the compatible API. */
+  glyphBbox(chr: number, options?: any | undefined | null): Rect
+  /** Font.glyph_count from the compatible API. */
+  get glyphCount(): number
+  /** Font.glyph_name_to_unicode from the compatible API. */
+  glyphNameToUnicode(name: string): number
+  /** Font.has_glyph from the compatible API. */
+  hasGlyph(chr: number, options?: any | undefined | null): number
+  /** Font.is_bold from the compatible API. */
+  get isBold(): boolean
+  /** Font.is_italic from the compatible API. */
+  get isItalic(): boolean
+  /** Font.is_monospaced from the compatible API. */
+  get isMonospaced(): boolean
+  /** Font.is_serif from the compatible API. */
+  get isSerif(): boolean
+  /** Font.is_writable from the compatible API. */
+  get isWritable(): boolean
+  /** Font.name from the compatible API. */
+  get name(): string
+  /** Font.text_length from the compatible API. */
+  textLength(text: string, options?: any | undefined | null): number
+  /** Font.unicode_to_glyph_name from the compatible API. */
+  unicodeToGlyphName(chr: number): string
+  /** Font.valid_codepoints from the compatible API. */
+  validCodepoints(): Array<number>
+}
+export declare class TextWriter {
+  /** TextWriter.__eq__ from the compatible API. */
+  eq(other: TextWriter): boolean
+  /** TextWriter.__ge__ from the compatible API. */
+  ge(other: TextWriter): boolean
+  /** TextWriter.__gt__ from the compatible API. */
+  gt(other: TextWriter): boolean
+  /** TextWriter.__init__ from the compatible API. */
+  constructor(rect: RectLike, options?: any | undefined | null)
+  /** TextWriter.__le__ from the compatible API. */
+  le(other: TextWriter): boolean
+  /** TextWriter.__lt__ from the compatible API. */
+  lt(other: TextWriter): boolean
+  /** TextWriter.__ne__ from the compatible API. */
+  ne(other: TextWriter): boolean
+  /** TextWriter.append from the compatible API. */
+  append(pos: PointLike, text: string, options?: any | undefined | null, font?: Font | undefined | null): any
+  /** TextWriter.appendv from the compatible API. */
+  appendv(pos: PointLike, text: string, options?: any | undefined | null, font?: Font | undefined | null): any
+  /** TextWriter.clean_rtl from the compatible API. */
+  cleanRtl(text: string): string
+  /** TextWriter.fill_textbox from the compatible API. */
+  fillTextbox(rect: RectLike, text: any, options?: any | undefined | null, font?: Font | undefined | null): Array<any>
+  /** TextWriter.write_text from the compatible API. */
+  writeText(page: Page, options?: any | undefined | null): void
+}
+export declare class Point {
+  /** Read the x component. */
+  get x(): number
+  /** Write the x component. */
+  set x(value: number)
+  /** Read the y component. */
+  get y(): number
+  /** Write the y component. */
+  set y(value: number)
+  /** Point.__abs__ from the compatible API. */
+  abs(): number
+  /** Point.__add__ from the compatible API. */
+  add(other: PointLike): Point
+  /** Point.__bool__ from the compatible API. */
+  bool(): boolean
+  /** Point.__eq__ from the compatible API. */
+  eq(other: PointLike): boolean
+  /** Point.__ge__ from the compatible API. */
+  ge(other: PointLike): boolean
+  /** Point.__getitem__ from the compatible API. */
+  getitem(i: number): number
+  /** Point.__gt__ from the compatible API. */
+  gt(other: PointLike): boolean
+  /** Point.__init__ from the compatible API. */
+  constructor(x?: number | undefined | null, y?: number | undefined | null)
+  /** Point.__le__ from the compatible API. */
+  le(other: PointLike): boolean
+  /** Point.__len__ from the compatible API. */
+  len(): number
+  /** Point.__lt__ from the compatible API. */
+  lt(other: PointLike): boolean
+  /** Point.__mul__ from the compatible API. */
+  mul(matrix: MatrixLike): Point
+  /** Point.__ne__ from the compatible API. */
+  ne(other: PointLike): boolean
+  /** Point.__neg__ from the compatible API. */
+  neg(): Point
+  /** Point.__pos__ from the compatible API. */
+  pos(): Point
+  /** Point.__setitem__ from the compatible API. */
+  setitem(i: number, value: number): void
+  /** Point.__sub__ from the compatible API. */
+  sub(other: PointLike): Point
+  /** Point.__truediv__ from the compatible API. */
+  truediv(matrix: MatrixLike): Point
+  /** Point.abs_unit from the compatible API. */
+  get absUnit(): Point
+  /** Point.distance_to from the compatible API. */
+  distanceTo(other: PointLike): number
+  /** Point.norm from the compatible API. */
+  norm(): number
+  /** Point.transform from the compatible API. */
+  transform(matrix: MatrixLike): Point
+  /** Point.unit from the compatible API. */
+  get unit(): Point
+}
+export declare class Rect {
+  /** Read the x0 component. */
+  get x0(): number
+  /** Write the x0 component. */
+  set x0(value: number)
+  /** Read the y0 component. */
+  get y0(): number
+  /** Write the y0 component. */
+  set y0(value: number)
+  /** Read the x1 component. */
+  get x1(): number
+  /** Write the x1 component. */
+  set x1(value: number)
+  /** Read the y1 component. */
+  get y1(): number
+  /** Write the y1 component. */
+  set y1(value: number)
+  /** Rect.__abs__ from the compatible API. */
+  abs(): number
+  /** Rect.__add__ from the compatible API. */
+  add(other: RectLike): Rect
+  /** Rect.__bool__ from the compatible API. */
+  bool(): boolean
+  /** Rect.__contains__ from the compatible API. */
+  containsOp(point: PointLike): number
+  /** Rect.__eq__ from the compatible API. */
+  eq(other: RectLike): boolean
+  /** Rect.__ge__ from the compatible API. */
+  ge(other: RectLike): boolean
+  /** Rect.__getitem__ from the compatible API. */
+  getitem(i: number): number
+  /** Rect.__gt__ from the compatible API. */
+  gt(other: RectLike): boolean
+  /** Rect.__init__ from the compatible API. */
+  constructor(x0?: number | undefined | null, y0?: number | undefined | null, x1?: number | undefined | null, y1?: number | undefined | null)
+  /** Rect.__le__ from the compatible API. */
+  le(other: RectLike): boolean
+  /** Rect.__len__ from the compatible API. */
+  len(): number
+  /** Rect.__lt__ from the compatible API. */
+  lt(other: RectLike): boolean
+  /** Rect.__mul__ from the compatible API. */
+  mul(matrix: MatrixLike): Rect
+  /** Rect.__ne__ from the compatible API. */
+  ne(other: RectLike): boolean
+  /** Rect.__neg__ from the compatible API. */
+  neg(): Rect
+  /** Rect.__pos__ from the compatible API. */
+  pos(): Rect
+  /** Rect.__setitem__ from the compatible API. */
+  setitem(i: number, value: number): void
+  /** Rect.__sub__ from the compatible API. */
+  sub(other: RectLike): Rect
+  /** Rect.__truediv__ from the compatible API. */
+  truediv(matrix: MatrixLike): Rect
+  /** Rect.bl from the compatible API. */
+  get bl(): Point
+  /** Rect.bottom_left from the compatible API. */
+  get bottomLeft(): Point
+  /** Rect.bottom_right from the compatible API. */
+  get bottomRight(): Point
+  /** Rect.br from the compatible API. */
+  get br(): Point
+  /** Rect.contains from the compatible API. */
+  contains(other: RectLike): boolean
+  /** Rect.get_area from the compatible API. */
+  getArea(): number
+  /** Rect.height from the compatible API. */
+  get height(): number
+  /** Rect.include_point from the compatible API. */
+  includePoint(point: PointLike): Rect
+  /** Rect.include_rect from the compatible API. */
+  includeRect(other: RectLike): Rect
+  /** Rect.intersect from the compatible API. */
+  intersect(other: RectLike): Rect
+  /** Rect.intersects from the compatible API. */
+  intersects(other: RectLike): boolean
+  /** Rect.irect from the compatible API. */
+  get irect(): IRect
+  /** Rect.is_empty from the compatible API. */
+  get isEmpty(): boolean
+  /** Rect.is_infinite from the compatible API. */
+  get isInfinite(): boolean
+  /** Rect.is_valid from the compatible API. */
+  get isValid(): boolean
+  /** Rect.morph from the compatible API. */
+  morph(point: PointLike, matrix: MatrixLike): Quad
+  /** Rect.norm from the compatible API. */
+  norm(): number
+  /** Rect.normalize from the compatible API. */
+  normalize(): Rect
+  /** Rect.quad from the compatible API. */
+  get quad(): Quad
+  /** Rect.round from the compatible API. */
+  round(): IRect
+  /** Rect.tl from the compatible API. */
+  get tl(): Point
+  /** Rect.top_left from the compatible API. */
+  get topLeft(): Point
+  /** Rect.top_right from the compatible API. */
+  get topRight(): Point
+  /** Rect.torect from the compatible API. */
+  torect(target: RectLike): Matrix
+  /** Rect.tr from the compatible API. */
+  get tr(): Point
+  /** Rect.transform from the compatible API. */
+  transform(matrix: MatrixLike): Rect
+  /** Rect.width from the compatible API. */
+  get width(): number
+}
+export declare class IRect {
+  /** Read the x0 component. */
+  get x0(): number
+  /** Write the x0 component. */
+  set x0(value: number)
+  /** Read the y0 component. */
+  get y0(): number
+  /** Write the y0 component. */
+  set y0(value: number)
+  /** Read the x1 component. */
+  get x1(): number
+  /** Write the x1 component. */
+  set x1(value: number)
+  /** Read the y1 component. */
+  get y1(): number
+  /** Write the y1 component. */
+  set y1(value: number)
+  /** IRect.__add__ from the compatible API. */
+  add(other: IRectLike): IRect
+  /** IRect.__contains__ from the compatible API. */
+  containsOp(point: PointLike): number
+  /** IRect.__eq__ from the compatible API. */
+  eq(other: IRectLike): boolean
+  /** IRect.__ge__ from the compatible API. */
+  ge(other: IRectLike): boolean
+  /** IRect.__getitem__ from the compatible API. */
+  getitem(i: number): number
+  /** IRect.__gt__ from the compatible API. */
+  gt(other: IRectLike): boolean
+  /** IRect.__init__ from the compatible API. */
+  constructor(x0?: number | undefined | null, y0?: number | undefined | null, x1?: number | undefined | null, y1?: number | undefined | null)
+  /** IRect.__le__ from the compatible API. */
+  le(other: IRectLike): boolean
+  /** IRect.__len__ from the compatible API. */
+  len(): number
+  /** IRect.__lt__ from the compatible API. */
+  lt(other: IRectLike): boolean
+  /** IRect.__mul__ from the compatible API. */
+  mul(matrix: MatrixLike): IRect
+  /** IRect.__ne__ from the compatible API. */
+  ne(other: IRectLike): boolean
+  /** IRect.__neg__ from the compatible API. */
+  neg(): IRect
+  /** IRect.__pos__ from the compatible API. */
+  pos(): IRect
+  /** IRect.__setitem__ from the compatible API. */
+  setitem(i: number, value: number): void
+  /** IRect.__sub__ from the compatible API. */
+  sub(other: IRectLike): IRect
+  /** IRect.__truediv__ from the compatible API. */
+  truediv(matrix: MatrixLike): IRect
+  /** IRect.bl from the compatible API. */
+  get bl(): Point
+  /** IRect.bottom_left from the compatible API. */
+  get bottomLeft(): Point
+  /** IRect.bottom_right from the compatible API. */
+  get bottomRight(): Point
+  /** IRect.br from the compatible API. */
+  get br(): Point
+  /** IRect.contains from the compatible API. */
+  contains(other: IRectLike): boolean
+  /** IRect.get_area from the compatible API. */
+  getArea(): number
+  /** IRect.height from the compatible API. */
+  get height(): number
+  /** IRect.include_point from the compatible API. */
+  includePoint(point: PointLike): IRect
+  /** IRect.include_rect from the compatible API. */
+  includeRect(other: IRectLike): IRect
+  /** IRect.intersect from the compatible API. */
+  intersect(other: IRectLike): IRect
+  /** IRect.intersects from the compatible API. */
+  intersects(other: IRectLike): boolean
+  /** IRect.is_empty from the compatible API. */
+  get isEmpty(): boolean
+  /** IRect.is_infinite from the compatible API. */
+  get isInfinite(): boolean
+  /** IRect.is_valid from the compatible API. */
+  get isValid(): boolean
+  /** IRect.morph from the compatible API. */
+  morph(point: PointLike, matrix: MatrixLike): Quad
+  /** IRect.norm from the compatible API. */
+  norm(): number
+  /** IRect.normalize from the compatible API. */
+  normalize(): IRect
+  /** IRect.quad from the compatible API. */
+  get quad(): Quad
+  /** IRect.rect from the compatible API. */
+  get rect(): Rect
+  /** IRect.tl from the compatible API. */
+  get tl(): Point
+  /** IRect.top_left from the compatible API. */
+  get topLeft(): Point
+  /** IRect.top_right from the compatible API. */
+  get topRight(): Point
+  /** IRect.torect from the compatible API. */
+  torect(target: IRectLike): Matrix
+  /** IRect.tr from the compatible API. */
+  get tr(): Point
+  /** IRect.transform from the compatible API. */
+  transform(matrix: MatrixLike): IRect
+  /** IRect.width from the compatible API. */
+  get width(): number
+}
+export declare class Matrix {
+  /** Read the a component. */
+  get a(): number
+  /** Write the a component. */
+  set a(value: number)
+  /** Read the b component. */
+  get b(): number
+  /** Write the b component. */
+  set b(value: number)
+  /** Read the c component. */
+  get c(): number
+  /** Write the c component. */
+  set c(value: number)
+  /** Read the d component. */
+  get d(): number
+  /** Write the d component. */
+  set d(value: number)
+  /** Read the e component. */
+  get e(): number
+  /** Write the e component. */
+  set e(value: number)
+  /** Read the f component. */
+  get f(): number
+  /** Write the f component. */
+  set f(value: number)
+  /** Matrix.__abs__ from the compatible API. */
+  abs(): number
+  /** Matrix.__add__ from the compatible API. */
+  add(other: MatrixLike): Matrix
+  /** Matrix.__bool__ from the compatible API. */
+  bool(): boolean
+  /** Matrix.__eq__ from the compatible API. */
+  eq(other: MatrixLike): boolean
+  /** Matrix.__ge__ from the compatible API. */
+  ge(other: MatrixLike): boolean
+  /** Matrix.__getitem__ from the compatible API. */
+  getitem(i: number): number
+  /** Matrix.__gt__ from the compatible API. */
+  gt(other: MatrixLike): boolean
+  /** Matrix.__init__ from the compatible API. */
+  constructor(a?: number | undefined | null, b?: number | undefined | null, c?: number | undefined | null, d?: number | undefined | null, e?: number | undefined | null, f?: number | undefined | null)
+  /** Matrix.__invert__ from the compatible API. */
+  invertOp(src?: MatrixLike | undefined | null): Matrix
+  /** Matrix.__le__ from the compatible API. */
+  le(other: MatrixLike): boolean
+  /** Matrix.__len__ from the compatible API. */
+  len(): number
+  /** Matrix.__lt__ from the compatible API. */
+  lt(other: MatrixLike): boolean
+  /** Matrix.__mul__ from the compatible API. */
+  mul(matrix: MatrixLike): Matrix
+  /** Matrix.__ne__ from the compatible API. */
+  ne(other: MatrixLike): boolean
+  /** Matrix.__neg__ from the compatible API. */
+  neg(): Matrix
+  /** Matrix.__pos__ from the compatible API. */
+  pos(): Matrix
+  /** Matrix.__setitem__ from the compatible API. */
+  setitem(i: number, value: number): void
+  /** Matrix.__sub__ from the compatible API. */
+  sub(other: MatrixLike): Matrix
+  /** Matrix.__truediv__ from the compatible API. */
+  truediv(matrix: MatrixLike): Matrix
+  /** Matrix.concat from the compatible API. */
+  concat(one: MatrixLike, two: MatrixLike): Matrix
+  /** Matrix.invert from the compatible API. */
+  invert(src?: MatrixLike | undefined | null): Matrix
+  /** Matrix.is_rectilinear from the compatible API. */
+  get isRectilinear(): boolean
+  /** Matrix.norm from the compatible API. */
+  norm(): number
+  /** Matrix.prerotate from the compatible API. */
+  prerotate(theta: number): Matrix
+  /** Matrix.prescale from the compatible API. */
+  prescale(sx: number, sy: number): Matrix
+  /** Matrix.preshear from the compatible API. */
+  preshear(h: number, v: number): Matrix
+  /** Matrix.pretranslate from the compatible API. */
+  pretranslate(tx: number, ty: number): Matrix
+}
+export declare class Quad {
+  /** Read the ul corner. */
+  get ul(): Point
+  /** Write the ul corner. */
+  set ul(value: PointLike)
+  /** Read the ur corner. */
+  get ur(): Point
+  /** Write the ur corner. */
+  set ur(value: PointLike)
+  /** Read the ll corner. */
+  get ll(): Point
+  /** Write the ll corner. */
+  set ll(value: PointLike)
+  /** Read the lr corner. */
+  get lr(): Point
+  /** Write the lr corner. */
+  set lr(value: PointLike)
+  /** Quad.__abs__ from the compatible API. */
+  abs(): number
+  /** Quad.__add__ from the compatible API. */
+  add(other: QuadLike): Quad
+  /** Quad.__bool__ from the compatible API. */
+  bool(): boolean
+  /** Quad.__contains__ from the compatible API. */
+  contains(point: PointLike): boolean
+  /** Quad.__eq__ from the compatible API. */
+  eq(other: QuadLike): boolean
+  /** Quad.__ge__ from the compatible API. */
+  ge(other: QuadLike): boolean
+  /** Quad.__getitem__ from the compatible API. */
+  getitem(i: number): Point
+  /** Quad.__gt__ from the compatible API. */
+  gt(other: QuadLike): boolean
+  /** Quad.__init__ from the compatible API. */
+  constructor(ul?: PointLike | undefined | null, ur?: PointLike | undefined | null, ll?: PointLike | undefined | null, lr?: PointLike | undefined | null)
+  /** Quad.__le__ from the compatible API. */
+  le(other: QuadLike): boolean
+  /** Quad.__len__ from the compatible API. */
+  len(): number
+  /** Quad.__lt__ from the compatible API. */
+  lt(other: QuadLike): boolean
+  /** Quad.__mul__ from the compatible API. */
+  mul(matrix: MatrixLike): Quad
+  /** Quad.__ne__ from the compatible API. */
+  ne(other: QuadLike): boolean
+  /** Quad.__neg__ from the compatible API. */
+  neg(): Quad
+  /** Quad.__pos__ from the compatible API. */
+  pos(): Quad
+  /** Quad.__setitem__ from the compatible API. */
+  setitem(i: number, value: PointLike): void
+  /** Quad.__sub__ from the compatible API. */
+  sub(other: QuadLike): Quad
+  /** Quad.__truediv__ from the compatible API. */
+  truediv(matrix: MatrixLike): Quad
+  /** Quad.height from the compatible API. */
+  get height(): number
+  /** Quad.is_convex from the compatible API. */
+  get isConvex(): boolean
+  /** Quad.is_empty from the compatible API. */
+  get isEmpty(): boolean
+  /** Quad.is_infinite from the compatible API. */
+  get isInfinite(): boolean
+  /** Quad.is_rectangular from the compatible API. */
+  get isRectangular(): boolean
+  /** Quad.morph from the compatible API. */
+  morph(point: PointLike, matrix: MatrixLike): Quad
+  /** Quad.rect from the compatible API. */
+  get rect(): Rect
+  /** Quad.transform from the compatible API. */
+  transform(matrix: MatrixLike): Quad
+  /** Quad.width from the compatible API. */
+  get width(): number
+}
+export declare class Pixmap {
+  /** Pixmap.__eq__ from the compatible API. */
+  eq(other: Pixmap): boolean
+  /** Pixmap.__ge__ from the compatible API. */
+  ge(other: Pixmap): boolean
+  /** Pixmap.__gt__ from the compatible API. */
+  gt(other: Pixmap): boolean
+  /** Pixmap.__init__ from the compatible API. */
+  constructor(colorspace: Colorspace, bounds: IRectLike, alpha?: boolean | undefined | null)
+  /** Open an image pixmap from encoded bytes. */
+  static fromBytes(data: Buffer): Pixmap
+  /** Open an image pixmap from a file path. */
+  static fromFile(path: string): Pixmap
+  /** Copy a pixmap, optionally changing its alpha flag. */
+  static fromPixmap(src: Pixmap, alpha?: boolean | undefined | null): Pixmap
+  /**
+   * Convert a pixmap to another colorspace.
+   *
+   * Not yet wired: the facade has no convert entry point. Raises until it grows one.
+   */
+  static convert(colorspace: Colorspace, src: Pixmap): Pixmap
+  /** Pixmap.__le__ from the compatible API. */
+  le(other: Pixmap): boolean
+  /** Pixmap.__len__ from the compatible API. */
+  len(): number
+  /** Pixmap.__lt__ from the compatible API. */
+  lt(other: Pixmap): boolean
+  /** Pixmap.__ne__ from the compatible API. */
+  ne(other: Pixmap): boolean
+  /** Pixmap.alpha from the compatible API. */
+  get alpha(): boolean
+  /** Pixmap.clear_with from the compatible API. */
+  clearWith(value?: number | undefined | null, bbox?: IRectLike | undefined | null): void
+  /** Pixmap.color_count from the compatible API. */
+  colorCount(colors?: number | undefined | null, clip?: IRectLike | undefined | null): number
+  /** Pixmap.color_topusage from the compatible API. */
+  colorTopusage(clip?: IRectLike | undefined | null): any
+  /** Pixmap.colorspace from the compatible API. */
+  get colorspace(): Colorspace
+  /** Pixmap.copy from the compatible API. */
+  copy(source: Pixmap, bbox: IRectLike): void
+  /** Pixmap.digest from the compatible API. */
+  get digest(): Buffer
+  /** Pixmap.gamma_with from the compatible API. */
+  gammaWith(gamma: number): void
+  /** Pixmap.h from the compatible API. */
+  get h(): number
+  /** Pixmap.height from the compatible API. */
+  get height(): number
+  /** Pixmap.invert_irect from the compatible API. */
+  invertIrect(bbox?: IRectLike | undefined | null): void
+  /** Pixmap.irect from the compatible API. */
+  get irect(): IRect
+  /** Pixmap.is_monochrome from the compatible API. */
+  get isMonochrome(): boolean
+  /** Pixmap.is_unicolor from the compatible API. */
+  get isUnicolor(): boolean
+  /** Pixmap.n from the compatible API. */
+  get n(): number
+  /** Pixmap.pdfocr_save from the compatible API. */
+  pdfocrSave(path: string, compress?: boolean | undefined | null, language?: string | undefined | null, tessdata?: string | undefined | null): void
+  /** Pixmap.pdfocr_tobytes from the compatible API. */
+  pdfocrTobytes(compress: boolean | undefined | null, language: string, tessdata?: string | undefined | null): Buffer
+  /** Pixmap.pil_image from the compatible API. */
+  pilImage(): any
+  /** Pixmap.pil_save from the compatible API. */
+  pilSave(path: string, format?: string | undefined | null): void
+  /** Pixmap.pil_tobytes from the compatible API. */
+  pilTobytes(format: string): Buffer
+  /** Pixmap.pixel from the compatible API. */
+  pixel(x: number, y: number): Buffer
+  /** Pixmap.samples from the compatible API. */
+  get samples(): Buffer
+  /** Pixmap.samples_mv from the compatible API. */
+  get samplesMv(): Buffer
+  /** Pixmap.samples_ptr from the compatible API. */
+  get samplesPtr(): number
+  /** Pixmap.save from the compatible API. */
+  save(path: string, output?: string | undefined | null, jpgQuality?: number | undefined | null): void
+  /** Pixmap.set_alpha from the compatible API. */
+  setAlpha(options?: any | undefined | null): void
+  /** Pixmap.set_dpi from the compatible API. */
+  setDpi(xres: number, yres: number): void
+  /** Pixmap.set_origin from the compatible API. */
+  setOrigin(x: number, y: number): void
+  /** Pixmap.set_pixel from the compatible API. */
+  setPixel(x: number, y: number, color: Buffer): void
+  /** Pixmap.set_rect from the compatible API. */
+  setRect(bbox: IRectLike, color: Buffer): void
+  /** Pixmap.shrink from the compatible API. */
+  shrink(factor: number): void
+  /** Pixmap.size from the compatible API. */
+  get size(): number
+  /** Pixmap.stride from the compatible API. */
+  get stride(): number
+  /** Pixmap.tint_with from the compatible API. */
+  tintWith(black: number, white: number): void
+  /** Pixmap.tobytes from the compatible API. */
+  tobytes(output: string, jpgQuality?: number | undefined | null): Buffer
+  /** Pixmap.w from the compatible API. */
+  get w(): number
+  /** Pixmap.warp from the compatible API. */
+  warp(quad: QuadLike, width: number, height: number): Pixmap
+  /** Pixmap.width from the compatible API. */
+  get width(): number
+  /** Pixmap.x from the compatible API. */
+  get x(): number
+  /** Pixmap.xres from the compatible API. */
+  get xres(): number
+  /** Pixmap.y from the compatible API. */
+  get y(): number
+  /** Pixmap.yres from the compatible API. */
+  get yres(): number
+}
+export declare class Colorspace {
+  /** Colorspace.__eq__ from the compatible API. */
+  eq(other: Colorspace): boolean
+  /** Colorspace.__ge__ from the compatible API. */
+  ge(other: Colorspace): boolean
+  /** Colorspace.__gt__ from the compatible API. */
+  gt(other: Colorspace): boolean
+  /** Colorspace.__init__ from the compatible API. */
+  constructor(kind: number)
+  /** Colorspace.__le__ from the compatible API. */
+  le(other: Colorspace): boolean
+  /** Colorspace.__lt__ from the compatible API. */
+  lt(other: Colorspace): boolean
+  /** Colorspace.__ne__ from the compatible API. */
+  ne(other: Colorspace): boolean
+  /** Colorspace.n from the compatible API. */
+  get n(): number
+  /** Colorspace.name from the compatible API. */
+  get name(): string
+}
+export declare class TextPage {
+  /** TextPage.__eq__ from the compatible API. */
+  eq(other: TextPage): boolean
+  /** TextPage.__ge__ from the compatible API. */
+  ge(other: TextPage): boolean
+  /** TextPage.__gt__ from the compatible API. */
+  gt(other: TextPage): boolean
+  /** TextPage.__init__ from the compatible API. */
+  constructor(page: Page)
+  /** TextPage.__le__ from the compatible API. */
+  le(other: TextPage): boolean
+  /** TextPage.__lt__ from the compatible API. */
+  lt(other: TextPage): boolean
+  /** TextPage.__ne__ from the compatible API. */
+  ne(other: TextPage): boolean
+  /** TextPage.extractBLOCKS from the compatible API. */
+  extractBLOCKS(): Array<any>
+  /** TextPage.extractDICT from the compatible API. */
+  extractDICT(cb?: any | undefined | null, sort?: boolean | undefined | null): any
+  /** TextPage.extractHTML from the compatible API. */
+  extractHTML(): string
+  /** TextPage.extractIMGINFO from the compatible API. */
+  extractIMGINFO(hashes?: boolean | undefined | null): Array<any>
+  /** TextPage.extractJSON from the compatible API. */
+  extractJSON(cb?: any | undefined | null, sort?: boolean | undefined | null): string
+  /** TextPage.extractRAWDICT from the compatible API. */
+  extractRAWDICT(cb?: any | undefined | null, sort?: boolean | undefined | null): any
+  /** TextPage.extractRAWJSON from the compatible API. */
+  extractRAWJSON(cb?: any | undefined | null, sort?: boolean | undefined | null): string
+  /** TextPage.extractSelection from the compatible API. */
+  extractSelection(begin: PointLike, end: PointLike): string
+  /** TextPage.extractTEXT from the compatible API. */
+  extractTEXT(sort?: boolean | undefined | null): string
+  /** TextPage.extractText from the compatible API. */
+  extractText(sort?: boolean | undefined | null): string
+  /** TextPage.extractTextbox from the compatible API. */
+  extractTextbox(rect: RectLike): string
+  /** TextPage.extractWORDS from the compatible API. */
+  extractWORDS(delimiters?: string | undefined | null): Array<any>
+  /** TextPage.extractXHTML from the compatible API. */
+  extractXHTML(): string
+  /** TextPage.extractXML from the compatible API. */
+  extractXML(): string
+  /** TextPage.poolsize from the compatible API. */
+  poolsize(): number
+  /** TextPage.rect from the compatible API. */
+  get rect(): Rect
+  /** TextPage.search from the compatible API. */
+  search(needle: string, hitMax?: number | undefined | null, quads?: boolean | undefined | null): any
+}
 /**
  * A PDF document handle.
  *
@@ -251,6 +2897,61 @@ export declare class PdfDocument {
   renderAll(options?: RenderOpts | undefined | null): Promise<Array<RenderResult>>
   /** Extract structured text blocks from a page. */
   extractTextBlocks(index: number): Array<TextBlockInfo>
+  /**
+   * The document as markdown, in reading order (#573).
+   *
+   * Preview: output quality is still improving and the API may change in a minor release.
+   *
+   * Headings become `#` to `###`, list items `-` and `1.`, a table a pipe
+   * table or an HTML one where markdown cannot hold its shape, and a change
+   * of page an HTML comment. The running heads a document repeats are not in
+   * it unless `includeHeaders` or `includeFooters` is set; they are in
+   * {@link extractBlocks}.
+   *
+   * `options.images` is `"placeholder"` (default: an `<!-- image -->` marker
+   * where each figure stands), `"none"`, `"embed"` or `"write"`:
+   * `"embed"` links each figure as a base64 data URI, `"write"` saves each
+   * figure under `imageDir` as `<stem>-p<page>-<n>.<ext>`. See
+   * `tableOutput`, `imageDpi`, `imageSizeLimit`, `includeHeaders`,
+   *
+   * @experimental
+   */
+  extractMarkdown(options?: ExtractOpts | undefined | null): string
+  /**
+   * The document as a Docling `DoclingDocument`, as JSON (#629).
+   *
+   * Preview: output quality is still improving and the API may change in a minor release.
+   *
+   * The schema version the engine pins, which docling-core's
+   * `DoclingDocument.model_validate_json` loads as it is. `name` is
+   * `DoclingDocument.name`, which Docling fills with the file's stem;
+   * absent means `"document"`.
+   *
+   * @experimental
+   */
+  extractDocling(options?: ExtractOpts | undefined | null, name?: string | undefined | null): string
+  /**
+   * The document's blocks, in reading order (#573).
+   *
+   * Preview: output quality is still improving and the API may change in a minor release.
+   *
+   * One {@link BlockInfo} per paragraph, heading, list item, table cell and
+   * running head, each with the page and the box it was drawn in.
+   *
+   * @experimental
+   */
+  extractBlocks(options?: ExtractOpts | undefined | null): Array<BlockInfo>
+  /**
+   * Every word of the document, with the box it was drawn in.
+   *
+   * One {@link WordInfo} per word, in reading order, block by block and
+   * line by line -- what a caller cites, highlights or grounds with. Built
+   * from the blocks {@link extractBlocks} returns under the same options,
+   * so `blocks[word.block]` is the block the word came from.
+   *
+   * Preview: output quality is still improving and the API may change in a minor release.
+   */
+  extractWords(options?: ExtractOpts | undefined | null): Array<WordInfo>
   /** Get all form fields in the document. */
   getFormFields(): Array<FormFieldInfo>
   /**
@@ -358,6 +3059,27 @@ export declare class PdfDocument {
    * See `toDocx`.
    */
   toPptx(): Buffer
+  /**
+   * List the images stored on one page (0-based index).
+   *
+   * One entry per image XObject in the page's resources, in resource
+   * order. Past the last page the error carries
+   * `E-PAGE-OUT-OF-RANGE`.
+   */
+  pageImages(index: number): Array<PageImageInfo>
+  /**
+   * Extract one stored image: header facts plus encoded bytes.
+   *
+   * JPEG payloads pass through untouched; everything else arrives
+   * decoded and re-encoded as PNG.
+   */
+  extractImageData(imageId: number): ExtractedImageInfo
+  /**
+   * Decode one stored image to raw samples, top row first.
+   *
+   * Palettes and stencils are expanded.
+   */
+  decodeImagePixels(imageId: number): DecodedImageInfo
 }
 /** A handle to a single page within a PDF document. */
 export declare class PdfPage {
@@ -437,18 +3159,35 @@ export declare class TextEditor {
 // `index.d.ts`.
 
 /**
- * Base class for all PDFluent SDK errors.
+ * The error every PDFluent operation throws, synchronous or rejected.
  *
- * Always branch on `.code` — never on `.message`.
+ * Always branch on `.code` — never on `.message`. There is one class, as in
+ * the Python binding; `.code` names the family. The codes are the C8 error
+ * catalogue (`docs/error_catalogue.md`), e.g. `E-PARSE-INVALID-PDF`,
+ * `E-SECURITY-DECRYPTION-FAILED`, `E-PAGE-OUT-OF-RANGE`, `E-UNSUPPORTED`.
+ *
+ * Not a `PdfluentError`: napi's own argument-conversion errors (a string where
+ * a number belongs), which fire before any operation starts.
  */
 export declare class PdfluentError extends Error {
+  /**
+   * The binding constructs these; a caller that does (a test double, say)
+   * has to supply the code and operation the type promises.
+   */
+  constructor(
+    message: string,
+    opts: { code: string; operation: string; cause?: string | null },
+  )
   /** Stable machine-readable error code from the C8 error catalogue. */
-  readonly code: string | null
-  /** Short verb describing the operation that failed (e.g. "activate"). */
-  readonly operation: string | null
+  readonly code: string
+  /** The name of the call that failed, e.g. "open" or "renderPage". */
+  readonly operation: string
   /** Optional human-readable detail string. May be `null`. */
   readonly cause: string | null
 }
 
-/** License-specific error subclass thrown by all license activation surfaces. */
-export declare class PdfluentLicenseError extends PdfluentError {}
+// @pdfluent-chunks-layer
+// Re-applied by scripts/build/postbuild.cjs after every napi build (see
+// chunks.d.ts, the source of truth). Do NOT edit these lines.
+export { iterChunks } from './chunks'
+export type { Chunk, ChunkMetadata, ChunkTable, IterChunksOptions, TocItem } from './chunks'

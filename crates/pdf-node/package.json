@@ -1,20 +1,31 @@
 {
   "name": "@pdfluent/node",
-  "version": "1.0.0",
-  "description": "Enterprise PDF SDK for Node.js \u2014 find and replace PDF text while preserving fonts and layout, plus rendering, text extraction, forms, annotations, redaction, encryption, and PDF/A compliance.",
+  "version": "1.1.0",
+  "description": "PDF SDK for Node.js — find and replace PDF text while preserving fonts and layout, plus rendering, text extraction, forms, annotations, redaction, encryption, and PDF/A compliance.",
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {
     ".": {
-      "types": "./index.d.ts",
-      "import": "./index.mjs",
-      "require": "./index.js"
+      "import": {
+        "types": "./index.d.mts",
+        "default": "./index.mjs"
+      },
+      "require": {
+        "types": "./index.d.ts",
+        "default": "./index.js"
+      }
     }
   },
   "files": [
     "index.js",
     "index.mjs",
     "index.d.ts",
+    "index.d.mts",
+    "chunks.js",
+    "chunks.d.ts",
+    "pdfluent-error.js",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.txt",
     "LICENSE",
     "LICENSE-COMMERCIAL",
     "LICENSE-OFFER",
@@ -28,6 +39,7 @@
       "x86_64-unknown-linux-gnu",
       "x86_64-unknown-linux-musl",
       "aarch64-unknown-linux-gnu",
+      "aarch64-unknown-linux-musl",
       "x86_64-pc-windows-msvc"
     ]
   },
@@ -35,10 +47,10 @@
     "node": ">= 18"
   },
   "scripts": {
-    "build": "napi build --release --platform && node scripts/build/postbuild.cjs",
+    "build": "napi build --release --platform --features ort-layout,ort-tables && node scripts/build/postbuild.cjs",
     "build:debug": "napi build --platform && node scripts/build/postbuild.cjs",
     "postbuild:errors": "node scripts/build/postbuild.cjs",
-    "test": "jest tests/ --testPathIgnorePatterns tests/license && jest tests/license.test.js && jest tests/license_signed_payload.test.js",
+    "test": "jest tests/",
     "release:gen": "node scripts/release/generate-npm-dirs.cjs",
     "release:validate": "node scripts/release/validate-main-tarball.cjs",
     "release:publish": "bash scripts/release/publish.sh",
@@ -62,11 +74,7 @@
     "signature",
     "rust",
     "napi",
-    "pdfluent",
-    "typescript",
-    "types",
-    "esm",
-    "nodejs"
+    "pdfluent"
   ],
   "license": "SEE LICENSE IN LICENSE-OFFER",
   "licenseUrl": "https://pdfluent.com/terms",
@@ -74,23 +82,25 @@
     "type": "git",
     "url": "https://github.com/pdfluent/pdfluent-sdk"
   },
-  "homepage": "https://pdfluent.com",
+  "homepage": "https://pdfluent.com/sdk/",
   "bugs": {
-    "url": "https://pdfluent.com/support"
+    "url": "https://github.com/pdfluent/pdfluent-sdk/issues"
   },
   "publishConfig": {
     "access": "public"
   },
   "optionalDependencies": {
-    "@pdfluent/node-darwin-arm64": "1.0.0",
-    "@pdfluent/node-darwin-x64": "1.0.0",
-    "@pdfluent/node-linux-arm64-gnu": "1.0.0",
-    "@pdfluent/node-linux-x64-gnu": "1.0.0",
-    "@pdfluent/node-linux-x64-musl": "1.0.0",
-    "@pdfluent/node-win32-x64-msvc": "1.0.0"
+    "@pdfluent/node-darwin-arm64": "1.1.0",
+    "@pdfluent/node-darwin-x64": "1.1.0",
+    "@pdfluent/node-linux-arm64-gnu": "1.1.0",
+    "@pdfluent/node-linux-arm64-musl": "1.1.0",
+    "@pdfluent/node-linux-x64-gnu": "1.1.0",
+    "@pdfluent/node-linux-x64-musl": "1.1.0",
+    "@pdfluent/node-win32-x64-msvc": "1.1.0"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.0",
-    "jest": "^30.3.0"
+    "jest": "^30.3.0",
+    "pngjs": "^7.0.0"
   }
 }

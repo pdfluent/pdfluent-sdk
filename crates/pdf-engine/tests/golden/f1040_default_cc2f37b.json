@@ -1,0 +1,3189 @@
+{
+  "blocks": [
+    {
+      "index": 0,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [41.598, 748.001, 47.569, 765.3680000433922],
+      "text": "Form",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "F", "x": 41.598, "y": 748.001, "width": 4.018, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "o", "x": 41.598, "y": 752.0190000066757, "width": 4.018, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "r", "x": 41.598, "y": 756.0370000133514, "width": 2.331, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "m", "x": 41.598, "y": 758.3680000433922, "width": 5.971, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 1,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [97.6, 760.665, 245.39799975681305, 766.665],
+      "text": "Department of the Treasury—Internal Revenue Service",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Department of the Treasury—Internal Revenue Service ", "x": 97.6, "y": 760.665, "width": 147.79799975681306, "height": 6, "fontSize": 6, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 2,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [43.2, 747.768, 283.84000535011296, 772.062],
+      "text": "1040 U.S. Individual Income Tax Return",
+      "continuesPrevious": false,
+      "confidence": 0.3319691730798403,
+      "spans": [
+        { "text": "1040 ", "x": 43.2, "y": 748.062, "width": 53.87999954223632, "height": 24, "fontSize": 24, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "U.S. Individual Income Tax Return ", "x": 97.6, "y": 747.768, "width": 186.24000535011297, "height": 12, "fontSize": 12, "fontName": "ITCFranklinGothicStd-Demi", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 3,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [298, 747.717, 570.2979998254776, 768.719],
+      "text": "2025 OMB No. 1545-0074 IRS Use Only—Do not write or staple in this space.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "2025", "x": 298, "y": 748.719, "width": 52.000000820159926, "height": 20, "fontSize": 20, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "OMB No. 1545-0074", "x": 356.31, "y": 748, "width": 64.98099956941604, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "IRS Use Only—Do not write or staple in this space. ", "x": 432.172, "y": 747.717, "width": 138.1259998254776, "height": 6, "fontSize": 6, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 4,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [36, 735.504, 575.0169998965264, 742.504],
+      "text": "For the year Jan. 1–Dec. 31, 2025, or other tax year beginning  , 2025, ending  , 20  See separate instructions.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "For the year Jan. 1–Dec. 31, 2025, or other tax year beginning ", "x": 36, "y": 735.504, "width": 192.41600000667566, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ", 2025, ending ", "x": 318.3, "y": 735.504, "width": 46.563999672889736, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ", 20 ", "x": 455.6, "y": 735.504, "width": 13.621999879837063, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "See separate instructions.", "x": 493.6, "y": 735.504, "width": 81.41699989652636, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 5,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [46.4, 723.002, 573.8000000400542, 730.102],
+      "text": "Filed pursuant to section 301.9100-2 Combat zone Deceased MM  /    DD   /   YYYY Spouse MM  /    DD   /   YYYY",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Filed pursuant to section 301.9100-2", "x": 46.4, "y": 723.102, "width": 104.74415000000005, "height": 6.65, "fontSize": 6.65, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Combat zone", "x": 165.6, "y": 723.102, "width": 42.13299974465369, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Deceased", "x": 385.2, "y": 723.102, "width": 30.746519990186584, "height": 6.86, "fontSize": 6.86, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "MM  ", "x": 418.6, "y": 723.002, "width": 16.085999866485622, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "/", "x": 434, "y": 723.002, "width": 2.331, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "    DD   ", "x": 434.68599984645846, "y": 723.002, "width": 22.5050000600815, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "/", "x": 455.6, "y": 723.002, "width": 2.331, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "   YYYY", "x": 457.19099988651277, "y": 723.002, "width": 23.009000153541535, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Spouse", "x": 485.9, "y": 723.002, "width": 23.855999943256393, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "MM  ", "x": 512.2, "y": 723.002, "width": 16.085999866485622, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "/", "x": 527.6, "y": 723.002, "width": 2.331, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "    DD   ", "x": 528.2859998464585, "y": 723.002, "width": 22.505000060081443, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "/", "x": 549.2, "y": 723.002, "width": 2.331, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "   YYYY", "x": 550.7909998865127, "y": 723.002, "width": 23.00900015354148, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 6,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [46.4, 711.103, 63.90699987983704, 718.103],
+      "text": "Other",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Other", "x": 46.4, "y": 711.103, "width": 17.50699987983704, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 7,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [36, 676.002, 577.4894399902869, 707.003],
+      "text": "Your first name and middle initial  Last name  Your social security number If joint return, spouse’s first name and middle initial Last name  Spouse’s social security number",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Your first name and middle initial ", "x": 36, "y": 700.003, "width": 104.50999965286255, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Last name ", "x": 256, "y": 700.003, "width": 34.62899978971484, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Your social security number ", "x": 472, "y": 700.003, "width": 95.5219995877743, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "If joint return, spouse’s first name and middle initial", "x": 36, "y": 676.002, "width": 159.55099946260452, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Last name ", "x": 256, "y": 676.002, "width": 34.62899978971484, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Spouse’s social security number ", "x": 472, "y": 676.002, "width": 105.48943999028688, "height": 6.79, "fontSize": 6.79, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 8,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [36, 652.001, 575.4899999499321, 660.1],
+      "text": "Home address (number and street). If you have a P.O. box, see instructions.  Apt. no.  Check here if your main home, and your",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Home address (number and street). If you have a P.O. box, see instructions. ", "x": 36, "y": 652.001, "width": 239.09899922227862, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Apt. no. ", "x": 421.6, "y": 652.001, "width": 26.585999866485622, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Check here if your main home, and your ", "x": 470, "y": 653.1, "width": 105.4899999499321, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 9,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [470, 645.6030000000001, 568.7699999958277, 652.6030000000001],
+      "text": "spouse’s if filing a joint return, was in",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "spouse’s if filing a joint return, was in ", "x": 470, "y": 645.6030000000001, "width": 98.76999999582767, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 10,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [36, 628.003, 571.4369999790192, 645.1060000000001],
+      "text": "the U.S. for more than half of 2025. City, town, or post office. If you have a foreign address, also complete spaces below.  State ZIP code Presidential Election Campaign",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "the U.S. for more than half of 2025. ", "x": 470, "y": 638.1060000000001, "width": 93.5339997112751, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "City, town, or post office. If you have a foreign address, also complete spaces below. ", "x": 36, "y": 628.003, "width": 268.0929997763634, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "State", "x": 335.2, "y": 628.003, "width": 16.463999983310714, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "ZIP code", "x": 400, "y": 628.003, "width": 28.259000000000015, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Presidential Election Campaign", "x": 472.565, "y": 628.189, "width": 98.87199997901922, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 11,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [470, 620.604, 577.1280000033378, 627.604],
+      "text": "Check here if you, or your spouse",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Check here if you, or your spouse ", "x": 470, "y": 620.604, "width": 107.12800000333777, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 12,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [36, 604.002, 572.4730001134867, 620.604],
+      "text": "if filing jointly, want $3 to go to Foreign country name                                         Foreign province/state/county                                       Foreign postal code    this fund. Checking a box below",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "if filing jointly, want $3 to go to ", "x": 469.9999999999999, "y": 613.604, "width": 97.25100000667555, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Foreign country name                                        ", "x": 36, "y": 604.002, "width": 146.29999901866913, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Foreign province/state/county                                       Foreign postal code   ", "x": 227.2, "y": 604.002, "width": 240.99399990653995, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "this fund. Checking a box below ", "x": 469.99999999999966, "y": 606.604, "width": 102.47300011348705, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 13,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [469.99999999999943, 599.604, 576.3229999999992, 606.604],
+      "text": "will not change your tax or refund.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "will not change your tax or refund.", "x": 469.99999999999943, "y": 599.604, "width": 106.32299999999975, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 14,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [493.2, 591.004, 563.3709999165535, 598.004],
+      "text": "You  Spouse",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "You ", "x": 493.2, "y": 591.004, "width": 15.042999943256405, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Spouse ", "x": 536.4, "y": 591.004, "width": 26.970999916553524, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 15,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [36, 555.252, 85.58999985694885, 586.719],
+      "text": "Filing Status Check only one box.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Filing Status", "x": 36, "y": 576.719, "width": 49.58999985694885, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Check only  ", "x": 36, "y": 563.001, "width": 38.898999889850614, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "one box. ", "x": 36, "y": 555.252, "width": 29.301999946594236, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 16,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [110, 543.288, 321.12799980545043, 586.288],
+      "text": "Single Married filing jointly (even if only one had income) Married filing separately (MFS). Enter spouse’s SSN above and full name here:",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Single ", "x": 110, "y": 578.288, "width": 24.29600002670287, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Married filing jointly (even if only one had income) ", "x": 110, "y": 566.289, "width": 178.2479996910095, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Married filing separately (MFS). Enter spouse’s SSN above ", "x": 110, "y": 554.288, "width": 211.12799980545043, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "and full name here:", "x": 110, "y": 543.288, "width": 68.31999971771239, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 17,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [362, 547.697, 577.61599924469, 586.288],
+      "text": "Head of household (HOH) Qualifying surviving spouse (QSS) If you checked the HOH or QSS box, enter the child’s name if the qualifying person is a child but not your dependent:",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Head of household (HOH)", "x": 362, "y": 578.288, "width": 91.86399981689453, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Qualifying surviving spouse (QSS)", "x": 362, "y": 566.289, "width": 120.60799977493286, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "If you checked the HOH or QSS box, enter the child’s name ", "x": 362, "y": 556.193, "width": 215.61599924469, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "if the qualifying person is a child but not your dependent:", "x": 362, "y": 547.697, "width": 203.46399929428105, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 18,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [110, 516.29, 567.8559990158082, 534.538],
+      "text": "If treating a nonresident alien or dual-status alien spouse as a U.S. resident for the entire tax year, check the box and enter their name (see instructions and attach statement if required):",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "If treating a nonresident alien or dual-status alien spouse as a U.S. resident for the entire tax year, check the box and enter their ", "x": 110, "y": 526.538, "width": 457.85599901580815, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "name (see instructions and attach statement if required):", "x": 110, "y": 516.29, "width": 198.99999999999994, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 19,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [36, 501.86, 509.240000026703, 513.488],
+      "text": "Digital Assets At any time during 2025, did you: (a) receive (as a reward, award, or payment for property or services); or (b) sell,",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Digital Assets", "x": 36, "y": 501.86, "width": 54.57999998569488, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "At any time during 2025, did you: (a) receive (as a reward, award, or payment for property or services); or (b) sell, ", "x": 97.6, "y": 505.488, "width": 411.640000026703, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 20,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [97.6160000000001, 497.488, 576.0159999732972, 505.788],
+      "text": "exchange, or otherwise dispose of a digital asset (or a financial interest in a digital asset)? (See instructions.)  . . Yes  No",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "exchange, or otherwise dispose of a digital asset (or a financial interest in a digital asset)? (See instructions.)  . .", "x": 97.6160000000001, "y": 497.488, "width": 387.87199976348876, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Yes ", "x": 529.2, "y": 497.788, "width": 16.447999977111863, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "No", "x": 565.2, "y": 497.788, "width": 10.815999973297153, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 21,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [36, 483.86, 543.1999999098778, 493.86],
+      "text": "Dependents Dependent 1 Dependent 2 Dependent 3 Dependent 4",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Dependents", "x": 36, "y": 483.86, "width": 47.0300000333786, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Dependent 1", "x": 176.801, "y": 486.503, "width": 42.39899990987777, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Dependent 2", "x": 284.801, "y": 486.503, "width": 42.39899990987777, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Dependent 3", "x": 392.801, "y": 486.503, "width": 42.39899990987777, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Dependent 4", "x": 500.801, "y": 486.503, "width": 42.39899990987777, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 22,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [36, 472.882, 136.5169998731613, 481.884],
+      "text": "(see instructions) (1) First name",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "(see instructions)", "x": 36, "y": 472.882, "width": 52.89199993658066, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(1) ", "x": 93.6, "y": 474.884, "width": 9.982000013351438, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "First name", "x": 103.58199999332427, "y": 474.884, "width": 32.93499987983702, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 23,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [93.6, 462.885, 136.2649997797012, 469.885],
+      "text": "(2) Last name",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "(2)", "x": 93.6, "y": 462.885, "width": 8.035999986648562, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": " Last name", "x": 101.63600001335143, "y": 462.885, "width": 34.62899976634978, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 24,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [36, 423.645, 516.7950000166893, 464.145],
+      "text": "If more than four  (3) SSN dependents,  (4) Relationship see instructions and check  (5) Check if lived  (a) Yes (a) Yes (a) Yes (a) Yes",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "If more ", "x": 36, "y": 456.645, "width": 25.559999964237214, "height": 7.5, "fontSize": 7.5, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "than four ", "x": 36, "y": 448.395, "width": 32.09249990344047, "height": 7.5, "fontSize": 7.5, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(3) ", "x": 93.6, "y": 450.886, "width": 9.982000013351438, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "SSN", "x": 103.58199999332427, "y": 450.886, "width": 14.126000026702883, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "dependents, ", "x": 36, "y": 440.145, "width": 44.04749976754188, "height": 7.5, "fontSize": 7.5, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(4) ", "x": 93.6, "y": 438.887, "width": 9.982000013351438, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Relationship", "x": 103.58199999332427, "y": 438.887, "width": 38.24800000667577, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "see instructions ", "x": 36, "y": 431.895, "width": 53.97, "height": 7.5, "fontSize": 7.5, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "and check ", "x": 36.00000000000001, "y": 423.645, "width": 36.95999982118605, "height": 7.5, "fontSize": 7.5, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(5)", "x": 93.6, "y": 427.853, "width": 8.035999986648562, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": " Check if lived ", "x": 101.63600001335143, "y": 427.853, "width": 42.61699998664855, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(a)", "x": 155.438, "y": 426.002, "width": 8.162000033378604, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Yes", "x": 181, "y": 426.002, "width": 11.7950000166893, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(a)", "x": 263.438, "y": 426.002, "width": 8.162000033378604, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Yes", "x": 289, "y": 426.002, "width": 11.7950000166893, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(a)", "x": 371.438, "y": 426.002, "width": 8.162000033378604, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Yes", "x": 397, "y": 426.002, "width": 11.7950000166893, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(a)", "x": 479.438, "y": 426.002, "width": 8.162000033378604, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Yes", "x": 505, "y": 426.002, "width": 11.7950000166893, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 25,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [36.00000000000001, 413.353, 552.2009998164177, 427.601],
+      "text": "with you more here  . . than half of 2025 (b) And in the U.S. (b) And in the U.S. (b) And in the U.S. (b) And in the U.S.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "with you more ", "x": 93.60099999999998, "y": 420.601, "width": 46.28399993991853, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "here  . .", "x": 36.00000000000001, "y": 415.395, "width": 16.807499996423722, "height": 7.5, "fontSize": 7.5, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "than half of 2025", "x": 93.6, "y": 413.353, "width": 48.807360000000045, "height": 6.720000000000001, "fontSize": 6.720000000000001, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(b)", "x": 155.179, "y": 414.003, "width": 8.421000036716464, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "And in the U.S.", "x": 181, "y": 414.003, "width": 47.20099981641769, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(b)", "x": 263.179, "y": 414.003, "width": 8.421000036716464, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "And in the U.S.", "x": 289, "y": 414.003, "width": 47.20099981641772, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(b)", "x": 371.179, "y": 414.003, "width": 8.421000036716464, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "And in the U.S.", "x": 397, "y": 414.003, "width": 47.20099981641772, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(b)", "x": 479.179, "y": 414.003, "width": 8.421000036716464, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "And in the U.S.", "x": 505, "y": 414.003, "width": 47.20099981641772, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 26,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [93.6, 381.885, 129.25099993658066, 409.884],
+      "text": "(6) Check if (7) Credits",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "(6)", "x": 93.6, "y": 402.884, "width": 8.035999986648562, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": " Check if", "x": 101.63600001335143, "y": 402.884, "width": 27.61499992322922, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(7)", "x": 93.6, "y": 381.885, "width": 8.035999986648562, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": " Credits", "x": 101.63600001335143, "y": 381.885, "width": 24.5, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 27,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [159.6, 398.00399999999996, 188.7759998998642, 411.003],
+      "text": "Full-time student",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Full-time ", "x": 159.6, "y": 404.003, "width": 29.175999899864195, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "student", "x": 159.6, "y": 398.00399999999996, "width": 23.60399986982347, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 28,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [159.6, 377.005, 189.28699999666213, 390.004],
+      "text": "Child tax credit",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Child tax ", "x": 159.6, "y": 383.004, "width": 29.686999996662138, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "credit", "x": 159.6, "y": 377.005, "width": 17.759000020027173, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 29,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [210, 392.00499999999994, 251.1039998731613, 411.003],
+      "text": "Permanently and totally disabled",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Permanently ", "x": 210, "y": 404.003, "width": 41.103999873161314, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "and totally ", "x": 210, "y": 398.00399999999996, "width": 34.488999923229215, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "disabled", "x": 210, "y": 392.00499999999994, "width": 26.57899997329713, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 30,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [210, 371.006, 247.21899980306625, 390.004],
+      "text": "Credit for other dependents",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Credit for ", "x": 210, "y": 383.004, "width": 31.36700006341934, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "other ", "x": 210, "y": 377.005, "width": 18.150999983310697, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "dependents", "x": 210, "y": 371.006, "width": 37.218999803066254, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 31,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [267.6, 398.00399999999996, 296.77599989986425, 411.003],
+      "text": "Full-time student",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Full-time ", "x": 267.6, "y": 404.003, "width": 29.175999899864223, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "student", "x": 267.6, "y": 398.00399999999996, "width": 23.60399986982344, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 32,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [267.6, 377.005, 297.2869999966622, 390.004],
+      "text": "Child tax credit",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Child tax ", "x": 267.6, "y": 383.004, "width": 29.686999996662166, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "credit", "x": 267.6, "y": 377.005, "width": 17.759000020027145, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 33,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [318, 392.00499999999994, 359.10399987316134, 411.003],
+      "text": "Permanently and totally disabled",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Permanently ", "x": 318, "y": 404.003, "width": 41.10399987316134, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "and totally ", "x": 318, "y": 398.00399999999996, "width": 34.488999923229244, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "disabled", "x": 318, "y": 392.00499999999994, "width": 26.57899997329713, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 34,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [318, 371.006, 355.21899980306625, 390.004],
+      "text": "Credit for other dependents",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Credit for ", "x": 318, "y": 383.004, "width": 31.36700006341937, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "other ", "x": 318, "y": 377.005, "width": 18.150999983310726, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "dependents", "x": 318, "y": 371.006, "width": 37.218999803066254, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 35,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [375.6, 398.00399999999996, 404.77599989986425, 411.003],
+      "text": "Full-time student",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Full-time ", "x": 375.6, "y": 404.003, "width": 29.175999899864223, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "student", "x": 375.6, "y": 398.00399999999996, "width": 23.60399986982344, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 36,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [375.6, 377.005, 405.2869999966622, 390.004],
+      "text": "Child tax credit",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Child tax ", "x": 375.6, "y": 383.004, "width": 29.686999996662166, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "credit", "x": 375.6, "y": 377.005, "width": 17.759000020027145, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 37,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [426, 392.00499999999994, 467.10399987316134, 411.003],
+      "text": "Permanently and totally disabled",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Permanently ", "x": 426, "y": 404.003, "width": 41.10399987316134, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "and totally ", "x": 426, "y": 398.00399999999996, "width": 34.488999923229244, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "disabled", "x": 426, "y": 392.00499999999994, "width": 26.57899997329713, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 38,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [426, 371.006, 463.21899980306625, 390.004],
+      "text": "Credit for other dependents",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Credit for ", "x": 426, "y": 383.004, "width": 31.36700006341937, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "other ", "x": 426, "y": 377.005, "width": 18.150999983310726, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "dependents", "x": 426, "y": 371.006, "width": 37.218999803066254, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 39,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [483.6, 398.00399999999996, 512.7759998998642, 411.003],
+      "text": "Full-time student",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Full-time ", "x": 483.6, "y": 404.003, "width": 29.175999899864223, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "student", "x": 483.6, "y": 398.00399999999996, "width": 23.60399986982344, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 40,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [483.6, 377.005, 513.2869999966622, 390.004],
+      "text": "Child tax credit",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Child tax ", "x": 483.6, "y": 383.004, "width": 29.686999996662166, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "credit", "x": 483.6, "y": 377.005, "width": 17.759000020027145, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 41,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [534, 392.00499999999994, 575.1039998731613, 411.003],
+      "text": "Permanently and totally disabled",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Permanently ", "x": 534, "y": 404.003, "width": 41.10399987316134, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "and totally ", "x": 534, "y": 398.00399999999996, "width": 34.488999923229244, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "disabled", "x": 534, "y": 392.00499999999994, "width": 26.578999973297073, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 42,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [534, 371.006, 571.2189998030663, 390.004],
+      "text": "Credit for other dependents",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Credit for ", "x": 534, "y": 383.004, "width": 31.36700006341937, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "other ", "x": 534, "y": 377.005, "width": 18.150999983310726, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "dependents", "x": 534, "y": 371.006, "width": 37.218999803066254, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 43,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [108, 344.367, 573.4079990615845, 368.863],
+      "text": "Check if your filing status is MFS or HOH and you lived apart from your spouse for the last 6 months of 2025, or you are legally separated according to your state law under a written separation agreement or a decree of separate maintenance and you did not live in the same household as your spouse at the end of 2025.",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Check if your filing status is MFS or HOH and you lived apart from your spouse for the last 6 months of 2025, or you are legally ", "x": 108, "y": 360.863, "width": 454.4639988174439, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "separated according to your state law under a written separation agreement or a decree of separate maintenance and you did not ", "x": 108, "y": 352.615, "width": 465.4079990615845, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "live in the same household as your spouse at the end of 2025. ", "x": 108, "y": 344.367, "width": 223.63199903869628, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 44,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [36, 330.146, 68.14199990558625, 341.146],
+      "text": "Income",
+      "continuesPrevious": false,
+      "confidence": 0.44469475557201626,
+      "spans": [
+        { "text": "Income ", "x": 36, "y": 330.146, "width": 34.891999900341034, "height": 11, "fontSize": 11, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 45,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [96.352, 332.289, 105.392, 340.289],
+      "text": "1 a",
+      "continuesPrevious": false,
+      "confidence": 0.44469475557201626,
+      "spans": [
+        { "text": "1 ", "x": 96.352, "y": 332.289, "width": 6.671999954223637, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "a", "x": 100.8, "y": 332.289, "width": 4.592, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 46,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.2, 332.289, 316.7279994239807, 340.289],
+      "text": "Total amount from Form(s) W-2, box 1 (see instructions) . . . . . . . . . . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.44469475557201626,
+      "spans": [
+        { "text": "Total amount from Form(s) W-2, box 1 (see instructions)  . . . . . . . . . . . . .", "x": 115.2, "y": 332.289, "width": 201.5279994239807, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 47,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 3,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [488.68, 332.289, 497.7199999542236, 340.289],
+      "text": "1a",
+      "continuesPrevious": false,
+      "confidence": 0.44469475557201626,
+      "spans": [
+        { "text": "1a", "x": 488.68, "y": 332.289, "width": 9.039999954223617, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 48,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [36, 245.2589999999999, 85.2520000667572, 324.002],
+      "text": "Attach Form(s) W-2 here. Also attach Forms W-2G and 1099-R if tax was withheld. If you did not get a Form W-2, see instructions.",
+      "continuesPrevious": false,
+      "confidence": 0.44469475557201626,
+      "spans": [
+        { "text": "Attach Form(s) ", "x": 36, "y": 317.002, "width": 51.19800009346008, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "W-2 here. Also ", "x": 36, "y": 309.253, "width": 50.679999878168104, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "attach Forms ", "x": 36, "y": 301.50399999999996, "width": 46.27700003004074, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "W-2G and ", "x": 36, "y": 293.75499999999994, "width": 35.00000002002716, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "1099-R if tax ", "x": 36, "y": 286.0059999999999, "width": 43.68699978804588, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "was withheld.", "x": 36, "y": 278.2569999999999, "width": 45.737999876499174, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "  ", "x": 81.73799985647202, "y": 278.2569999999999, "width": 3.8919999799728373, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "If you did not ", "x": 36, "y": 268.5059999999999, "width": 43.04999985313415, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "get a Form ", "x": 36, "y": 260.7569999999999, "width": 35.916999896526335, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "W-2, see ", "x": 36, "y": 253.0079999999999, "width": 29.952999909877775, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "instructions.", "x": 36, "y": 245.2589999999999, "width": 38.247999926567076, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 49,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [100.8, 248.29, 105.688, 328.29],
+      "text": "b c d e f g h",
+      "continuesPrevious": false,
+      "confidence": 0.44469475557201626,
+      "spans": [
+        { "text": "b", "x": 100.8, "y": 320.29, "width": 4.888, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "c", "x": 100.8, "y": 308.288, "width": 4.592, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "d", "x": 100.8, "y": 296.289, "width": 4.888, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "e", "x": 100.8, "y": 284.29, "width": 4.592, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "f", "x": 100.8, "y": 272.288, "width": 2.664, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "g", "x": 100.8, "y": 260.289, "width": 4.888, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "h", "x": 100.8, "y": 248.29, "width": 4.744, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 50,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.2, 248.19, 386.224, 328.29],
+      "text": "Household employee wages not reported on Form(s) W-2 . . . . . . . . . . . . . Tip income not reported on line 1a (see instructions) . . . . . . . . . . . . . . Medicaid waiver payments not reported on Form(s) W-2 (see instructions) . . . . . . . . Taxable dependent care benefits from Form 2441, line 26 . . . . . . . . . . . . Employer-provided adoption benefits from Form 8839, line 31 . . . . . . . . . . . Wages from Form 8919, line 6 . . . . . . . . . . . . . . . . . . . . . Other earned income (see instructions). Enter type and amount:",
+      "continuesPrevious": false,
+      "confidence": 0.44469475557201626,
+      "spans": [
+        { "text": "Household employee wages not reported on Form(s) W-2 . . . . . . . . . . . . .", "x": 115.2, "y": 320.29, "width": 211.024, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Tip income not reported on line 1a (see instructions) . . . . . . . . . . . . . .", "x": 115.2, "y": 308.288, "width": 185.51999947738648, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Medicaid waiver payments not reported on Form(s) W-2 (see instructions)  . . . . . . . .", "x": 115.2, "y": 296.289, "width": 271.024, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Taxable dependent care benefits from Form 2441, line 26   . . . . . . . . . . . .", "x": 115.2, "y": 284.29, "width": 209.24799921417235, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Employer-provided adoption benefits from Form 8839, line 31   . . . . . . . . . . .", "x": 115.2, "y": 272.288, "width": 224.95999910736083, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Wages from Form 8919, line 6  . . . . . . . . . . . . . . . . . . . . .", "x": 115.2, "y": 260.289, "width": 115.02399999999999, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Other earned income (see instructions). Enter type and amount:", "x": 115.2, "y": 248.19, "width": 226.43999912643432, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 51,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 3,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [488.532, 248.29, 497.8679999542236, 328.29],
+      "text": "1b 1c 1d 1e 1f 1g 1h",
+      "continuesPrevious": false,
+      "confidence": 0.44469475557201626,
+      "spans": [
+        { "text": "1b", "x": 488.532, "y": 320.29, "width": 9.33599995422361, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "1c", "x": 488.68, "y": 308.288, "width": 9.039999954223617, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "1d", "x": 488.532, "y": 296.289, "width": 9.33599995422361, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "1e", "x": 488.68, "y": 284.29, "width": 9.039999954223617, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "1f", "x": 489.644, "y": 272.288, "width": 7.11199995422362, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "1g", "x": 488.532, "y": 260.289, "width": 9.33599995422361, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "1h", "x": 488.604, "y": 248.29, "width": 9.191999954223604, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 52,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [100.8, 236.288, 102.864, 244.288],
+      "text": "i",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "i", "x": 100.8, "y": 236.288, "width": 2.064, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 53,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 2,
+      "header": false,
+      "page": 0,
+      "bbox": [115.2, 236.288, 302.224, 244.288],
+      "text": "Nontaxable combat pay election (see instructions) . . . . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "Nontaxable combat pay election (see instructions)  . . . . . . .", "x": 115.2, "y": 236.288, "width": 187.024, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 54,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 4,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [396.344, 236.288, 402.85599995422365, 244.288],
+      "text": "1i",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "1i", "x": 396.344, "y": 236.288, "width": 6.511999954223654, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 55,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [100.8, 224.289, 104.952, 232.289],
+      "text": "z",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "z", "x": 100.8, "y": 224.289, "width": 4.152, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 56,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.2, 224.289, 204.86399958038328, 232.289],
+      "text": "Add lines 1a through 1h . . . . . . . . . . . . . . . . . . . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "Add lines 1a through 1h   . . . . . . . . . . . . . . . . . . . . . .", "x": 115.2, "y": 224.289, "width": 89.66399958038328, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 57,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 5,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [488.9, 224.289, 497.4999999542236, 232.289],
+      "text": "1z",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "1z", "x": 488.9, "y": 224.289, "width": 8.59999995422362, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 58,
+      "kind": "tableCell",
+      "row": 2,
+      "column": 0,
+      "rowSpan": 7,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [36, 203.243, 79.17599986314774, 218.643],
+      "text": "Attach Sch. B if required.",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "Attach Sch. B  ", "x": 36, "y": 211.643, "width": 47.06799985980987, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "if required.", "x": 36, "y": 203.243, "width": 33.446, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 59,
+      "kind": "tableCell",
+      "row": 2,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [96.26, 200.288, 105.29999995422364, 220.29],
+      "text": "2a 3a",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "2a", "x": 96.26, "y": 212.29, "width": 9.039999954223632, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "3a", "x": 96.26, "y": 200.288, "width": 9.039999954223632, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 60,
+      "kind": "tableCell",
+      "row": 2,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.20400000000001, 200.288, 245.71999995422365, 220.29],
+      "text": "Tax-exempt interest 2a . . . Qualified dividends 3a . . .",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "Tax-exempt interest . . .", "x": 115.20400000000001, "y": 212.29, "width": 79.024, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "2a ", "x": 236.68, "y": 212.29, "width": 11.263999961853017, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Qualified dividends  . . .", "x": 115.20400000000001, "y": 200.288, "width": 70.53599979782103, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "3a ", "x": 236.68, "y": 200.288, "width": 11.263999961853017, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 61,
+      "kind": "tableCell",
+      "row": 2,
+      "column": 4,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [338.4, 200.288, 422.224, 220.29],
+      "text": "b Taxable interest . . . . . b Ordinary dividends . . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "b  ", "x": 338.4, "y": 212.29, "width": 9.335999988555898, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Taxable interest   . . . . .", "x": 347.7359999656677, "y": 212.29, "width": 61.3359999885559, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "b  ", "x": 338.4, "y": 200.288, "width": 9.335999988555898, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Ordinary dividends . . . . .", "x": 347.7359999656677, "y": 200.288, "width": 74.48800003433229, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 62,
+      "kind": "tableCell",
+      "row": 2,
+      "column": 5,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [488.532, 200.288, 497.8679999542236, 220.29],
+      "text": "2b 3b",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "2b ", "x": 488.532, "y": 212.29, "width": 11.559999965667714, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "3b ", "x": 488.532, "y": 200.288, "width": 11.559999965667714, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 63,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [100.8, 188.289, 105.392, 196.289],
+      "text": "c",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "c", "x": 100.8, "y": 188.289, "width": 4.592, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 64,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.2, 188.289, 278.048, 196.289],
+      "text": "Check if your child’s dividends are included in 1",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "Check if your child’s dividends are included in", "x": 115.2, "y": 188.289, "width": 151.43000000000012, "height": 7.6, "fontSize": 7.6, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "1", "x": 273.6, "y": 188.289, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 65,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 3,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [296.201, 188.289, 322.1369998664856, 196.289],
+      "text": "Line 3a",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "Line 3a ", "x": 296.201, "y": 188.289, "width": 28.159999870300283, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 66,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 4,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [352.80100000000004, 188.289, 401.7839998664856, 196.289],
+      "text": "2 Line 3b",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "2", "x": 352.80100000000004, "y": 188.289, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Line 3b", "x": 375.4, "y": 188.289, "width": 26.383999866485624, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 67,
+      "kind": "tableCell",
+      "row": 4,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [96.352, 176.29, 105.39199995422364, 184.29],
+      "text": "4a",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "4a", "x": 96.352, "y": 176.29, "width": 9.039999954223632, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 68,
+      "kind": "tableCell",
+      "row": 4,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.2, 176.29, 245.71999995422365, 184.29],
+      "text": "IRA distributions 4a . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "IRA distributions . . . .", "x": 115.2, "y": 176.29, "width": 67.02399999999999, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "4a ", "x": 236.68, "y": 176.29, "width": 11.263999961853017, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 69,
+      "kind": "tableCell",
+      "row": 4,
+      "column": 4,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [338.4, 176.29, 410.224, 184.29],
+      "text": "b Taxable amount . . . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "b  ", "x": 338.4, "y": 176.29, "width": 9.335999988555898, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Taxable amount . . . . . .", "x": 347.7359999656677, "y": 176.29, "width": 62.48800003433229, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 70,
+      "kind": "tableCell",
+      "row": 4,
+      "column": 5,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [488.532, 176.29, 497.8679999542236, 184.29],
+      "text": "4b",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "4b ", "x": 488.532, "y": 176.29, "width": 11.559999965667714, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 71,
+      "kind": "tableCell",
+      "row": 5,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [100.8, 164.288, 105.392, 172.288],
+      "text": "c",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "c", "x": 100.8, "y": 164.288, "width": 4.592, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 72,
+      "kind": "tableCell",
+      "row": 5,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.2, 164.288, 278.048, 172.288],
+      "text": "Check if (see instructions) 1. . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "Check if (see instructions)  . . . . .", "x": 115.2, "y": 164.288, "width": 94.23199989700315, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "1", "x": 273.6, "y": 164.288, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 73,
+      "kind": "tableCell",
+      "row": 5,
+      "column": 3,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [296.2, 164.288, 325.3760000839233, 172.288],
+      "text": "Rollover",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "Rollover", "x": 296.2, "y": 164.288, "width": 29.176000083923327, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 74,
+      "kind": "tableCell",
+      "row": 5,
+      "column": 4,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [352.8, 164.288, 422.04799999999994, 172.288],
+      "text": "2 QCD 3",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "2", "x": 352.8, "y": 164.288, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "QCD", "x": 375.4, "y": 164.288, "width": 17.487999946594243, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "3", "x": 417.59999999999997, "y": 164.288, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 75,
+      "kind": "tableCell",
+      "row": 6,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [96.352, 152.289, 105.39199995422364, 160.289],
+      "text": "5a",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "5a", "x": 96.352, "y": 152.289, "width": 9.039999954223632, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 76,
+      "kind": "tableCell",
+      "row": 6,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.2, 152.289, 245.71999995422365, 160.289],
+      "text": "Pensions and annuities 5a. .",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "Pensions and annuities . .", "x": 115.2, "y": 152.289, "width": 91.02399999999999, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "5a", "x": 236.68, "y": 152.289, "width": 9.039999954223646, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 77,
+      "kind": "tableCell",
+      "row": 6,
+      "column": 4,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [338.4, 152.289, 410.224, 160.289],
+      "text": "b Taxable amount . . . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "b  ", "x": 338.4, "y": 152.289, "width": 9.335999988555898, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Taxable amount . . . . . .", "x": 347.7359999656677, "y": 152.289, "width": 62.48800003433229, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 78,
+      "kind": "tableCell",
+      "row": 6,
+      "column": 5,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [488.532, 152.289, 497.8679999542236, 160.289],
+      "text": "5b",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "5b", "x": 488.532, "y": 152.289, "width": 9.33599995422361, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 79,
+      "kind": "tableCell",
+      "row": 7,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [100.8, 140.29, 105.392, 148.29],
+      "text": "c",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "c", "x": 100.8, "y": 140.29, "width": 4.592, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 80,
+      "kind": "tableCell",
+      "row": 7,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.2, 140.29, 278.048, 148.29],
+      "text": "Check if (see instructions) 1. . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "Check if (see instructions)  . . . . .", "x": 115.2, "y": 140.29, "width": 94.23199989700315, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "1", "x": 273.6, "y": 140.29, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 81,
+      "kind": "tableCell",
+      "row": 7,
+      "column": 3,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [296.201, 140.29, 325.37700008392335, 148.29],
+      "text": "Rollover",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "Rollover", "x": 296.201, "y": 140.29, "width": 29.176000083923327, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 82,
+      "kind": "tableCell",
+      "row": 7,
+      "column": 4,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [352.80100000000004, 140.29, 422.04799999999994, 148.29],
+      "text": "2 PSO 3",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "2", "x": 352.80100000000004, "y": 140.29, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "PSO", "x": 375.4, "y": 140.29, "width": 16.448000030517562, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "3", "x": 417.59999999999997, "y": 140.29, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 83,
+      "kind": "tableCell",
+      "row": 8,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [96.352, 128.288, 105.39199995422364, 136.288],
+      "text": "6a",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "6a", "x": 96.352, "y": 128.288, "width": 9.039999954223632, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 84,
+      "kind": "tableCell",
+      "row": 8,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.2, 128.288, 245.71999995422365, 136.288],
+      "text": "Social security benefits 6a . .",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "Social security benefits . .", "x": 115.2, "y": 128.288, "width": 91.02399999999999, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "6a ", "x": 236.68, "y": 128.288, "width": 11.263999961853017, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 85,
+      "kind": "tableCell",
+      "row": 8,
+      "column": 4,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [338.4, 128.288, 410.224, 136.288],
+      "text": "b Taxable amount . . . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "b  ", "x": 338.4, "y": 128.288, "width": 9.335999988555898, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Taxable amount . . . . . .", "x": 347.7359999656677, "y": 128.288, "width": 62.48800003433229, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 86,
+      "kind": "tableCell",
+      "row": 8,
+      "column": 5,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [488.532, 128.288, 497.8679999542236, 136.288],
+      "text": "6b",
+      "continuesPrevious": false,
+      "confidence": 0.27746809561688124,
+      "spans": [
+        { "text": "6b ", "x": 488.532, "y": 128.288, "width": 11.559999965667714, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 87,
+      "kind": "listItem",
+      "level": 0,
+      "ordinal": null,
+      "page": 0,
+      "bbox": [100.8, 116.289, 401.35999891662595, 124.289],
+      "text": "c If you elect to use the lump-sum election method, check here (see instructions)   . . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.569284629793557,
+      "spans": [
+        { "text": "c", "x": 100.8, "y": 116.289, "width": 4.592, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "If you elect to use the lump-sum election method, check here (see instructions)   . . . . .", "x": 115.2, "y": 116.289, "width": 286.15999891662597, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 88,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [100.8, 104.29, 105.688, 112.29],
+      "text": "d",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "d", "x": 100.8, "y": 104.29, "width": 4.888, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 89,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 2,
+      "header": false,
+      "page": 0,
+      "bbox": [115.2, 104.29, 462.7507199999999, 111.97000000000001],
+      "text": "If you are married filing separately and lived apart from your spouse the entire year (see inst.), check here",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "If you are married filing separately and lived apart from your spouse the entire year (see inst.), check here", "x": 115.2, "y": 104.29, "width": 347.5507199999999, "height": 7.680000000000001, "fontSize": 7.680000000000001, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 90,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [96.352, 92.288, 105.39199995422364, 100.288],
+      "text": "7a",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "7a", "x": 96.352, "y": 92.288, "width": 9.039999954223632, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 91,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.2, 92.288, 301.88799974822996, 100.288],
+      "text": "Capital gain or (loss). Attach Schedule D if required . . . . . . . . . . . . . .",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "Capital gain or (loss). Attach Schedule D if required   . . . . . . . . . . . . . .", "x": 115.2, "y": 92.288, "width": 186.68799974822997, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 92,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [488.68, 92.288, 497.7199999542236, 100.288],
+      "text": "7a",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "7a", "x": 488.68, "y": 92.288, "width": 9.039999954223617, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 93,
+      "kind": "tableCell",
+      "row": 2,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 3,
+      "header": false,
+      "page": 0,
+      "bbox": [100.8, 80.289, 401.439, 88.289],
+      "text": "b Check if: Schedule D not required Includes child’s capital gain or (loss)",
+      "continuesPrevious": false,
+      "spans": [
+        { "text": "b", "x": 100.8, "y": 80.289, "width": 4.888, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Check if:", "x": 115.2, "y": 80.289, "width": 31.5599999656677, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Schedule D not required", "x": 165, "y": 80.289, "width": 86.80800000000005, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Includes child’s capital gain or (loss)", "x": 272.999, "y": 80.289, "width": 128.44, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 94,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [96.352, 68.29, 100.80000000000001, 76.29],
+      "text": "8",
+      "continuesPrevious": false,
+      "confidence": 0.3169675277089913,
+      "spans": [
+        { "text": "8", "x": 96.352, "y": 68.29, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 95,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.2, 68.29, 270.6559993972778, 76.29],
+      "text": "Additional income from Schedule 1, line 10 . . . . . . . . . . . . . . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.3169675277089913,
+      "spans": [
+        { "text": "Additional income from Schedule 1, line 10  . . . . . . . . . . . . . . . . .", "x": 115.2, "y": 68.29, "width": 155.45599939727782, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 96,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [490.976, 68.29, 495.424, 76.29],
+      "text": "8",
+      "continuesPrevious": false,
+      "confidence": 0.3169675277089913,
+      "spans": [
+        { "text": "8", "x": 490.976, "y": 68.29, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 97,
+      "kind": "tableCell",
+      "row": 4,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [96.352, 56.288, 100.80000000000001, 64.288],
+      "text": "9",
+      "continuesPrevious": false,
+      "confidence": 0.3169675277089913,
+      "spans": [
+        { "text": "9", "x": 96.352, "y": 56.288, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 98,
+      "kind": "tableCell",
+      "row": 4,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.2, 56.288, 362.07199857139585, 64.288],
+      "text": "Add lines 1z, 2b, 3b, 4b, 5b, 6b, 7a, and 8. This is your total income . . . . . . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.3169675277089913,
+      "spans": [
+        { "text": "Add lines 1z, 2b, 3b, 4b, 5b, 6b, 7a, and 8. This is your ", "x": 115.2, "y": 56.288, "width": 197.11999871635436, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "total income  . . . . . . . . .", "x": 312.3199986934662, "y": 56.288, "width": 49.75199987792968, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 99,
+      "kind": "tableCell",
+      "row": 4,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [490.976, 56.288, 495.424, 64.288],
+      "text": "9",
+      "continuesPrevious": false,
+      "confidence": 0.3169675277089913,
+      "spans": [
+        { "text": "9", "x": 490.976, "y": 56.288, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 100,
+      "kind": "tableCell",
+      "row": 5,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [91.904, 44.289, 100.79999995422364, 52.289],
+      "text": "10",
+      "continuesPrevious": false,
+      "confidence": 0.3169675277089913,
+      "spans": [
+        { "text": "10 ", "x": 91.904, "y": 44.289, "width": 11.11999990844727, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 101,
+      "kind": "tableCell",
+      "row": 5,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.19999999999999, 44.289, 288.895999168396, 52.289],
+      "text": "Adjustments to income from Schedule 1, line 26 . . . . . . . . . . . . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.3169675277089913,
+      "spans": [
+        { "text": "Adjustments to income from Schedule 1, line 26  . . . . . . . . . . . . . . .", "x": 115.19999999999999, "y": 44.289, "width": 173.69599916839599, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 102,
+      "kind": "tableCell",
+      "row": 5,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [488.752, 44.289, 497.6479999542236, 52.289],
+      "text": "10",
+      "continuesPrevious": false,
+      "confidence": 0.3169675277089913,
+      "spans": [
+        { "text": "10", "x": 488.752, "y": 44.289, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 103,
+      "kind": "tableCell",
+      "row": 6,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [91.904, 32.79, 105.39199990844726, 40.79],
+      "text": "11a",
+      "continuesPrevious": false,
+      "confidence": 0.3169675277089913,
+      "spans": [
+        { "text": "11a", "x": 91.904, "y": 32.79, "width": 13.487999908447264, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 104,
+      "kind": "tableCell",
+      "row": 6,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [115.19999999999999, 32.79, 348.1119994869232, 40.79],
+      "text": "Subtract line 10 from line 9. This is your adjusted gross income . . . . . . . . . .",
+      "continuesPrevious": false,
+      "confidence": 0.3169675277089913,
+      "spans": [
+        { "text": "Subtract line 10 from line 9. This is your ", "x": 115.19999999999999, "y": 32.79, "width": 143.5919995536804, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "adjusted gross income", "x": 258.7919995307922, "y": 32.79, "width": 87.09599994850157, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "  . . . . . . . . . .", "x": 345.8879994869232, "y": 32.79, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 105,
+      "kind": "tableCell",
+      "row": 6,
+      "column": 2,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 0,
+      "bbox": [486.456, 32.29, 499.94399990844727, 40.29],
+      "text": "11a",
+      "continuesPrevious": false,
+      "confidence": 0.3169675277089913,
+      "spans": [
+        { "text": "11a", "x": 486.456, "y": 32.29, "width": 13.48799990844725, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 106,
+      "kind": "paragraph",
+      "page": 0,
+      "bbox": [36, 19.86, 576.0009997730256, 29.86],
+      "text": "For Disclosure, Privacy Act, and Paperwork Reduction Act Notice, see separate instructions.  Cat. No. 11320B  Form 1040 (2025) Created 9/5/25",
+      "continuesPrevious": false,
+      "confidence": 0.004075924903263,
+      "spans": [
+        { "text": "For Disclosure, Privacy Act, and Paperwork Reduction Act Notice, see separate instructions. ", "x": 36, "y": 20.145, "width": 332.48999858558176, "height": 7.5, "fontSize": 7.5, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Cat. No. 11320B ", "x": 387.936, "y": 20.002, "width": 54.07499976968768, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Form ", "x": 465.197, "y": 19.86, "width": 18.283999939918544, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "1040 ", "x": 483.481, "y": 19.86, "width": 24.186000000000035, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "(2025) Created 9/5/25", "x": 507.66699997997284, "y": 19.86, "width": 68.33399979305273, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 107,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 759.942, 90.99199960279465, 766.942],
+      "text": "Form 1040 (2025)",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Form 1040 (2025)", "x": 36, "y": 759.942, "width": 54.99199960279465, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 108,
+      "kind": "tableCell",
+      "row": 0,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [552.422, 759.86, 576, 769.86],
+      "text": "Page 2",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Page ", "x": 552.422, "y": 759.86, "width": 18.018000026702907, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "2", "x": 570.44, "y": 759.86, "width": 5.5600000000000005, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 109,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 745.86, 105.68799990844727, 755.86],
+      "text": "Tax and  11b",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Tax and ", "x": 36, "y": 745.86, "width": 33.94000008702278, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "11b", "x": 91.904, "y": 746.289, "width": 13.78399990844727, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 110,
+      "kind": "tableCell",
+      "row": 1,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 746.289, 500.09199990844724, 754.289],
+      "text": "Amount from line 11a (adjusted gross income)  . . . . . . . . . . . . . . . . 11b",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Amount from line 11a (adjusted gross income)  . . . . . . . . . . . . . . . .", "x": 115.19999999999999, "y": 746.289, "width": 166.56799938583373, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "11b", "x": 486.308, "y": 746.289, "width": 13.783999908447242, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 111,
+      "kind": "tableCell",
+      "row": 2,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 734.29, 105.68799990844727, 745.86],
+      "text": "Credits  12a",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Credits ", "x": 36, "y": 735.86, "width": 30.630000084638596, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "12a", "x": 91.904, "y": 734.29, "width": 13.487999908447264, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 112,
+      "kind": "tableCell",
+      "row": 2,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 734.29, 500.09199990844724, 742.29],
+      "text": "Someone can claim You as a dependent Your spouse as a dependent",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Someone can claim", "x": 115.19999999999999, "y": 734.29, "width": 70.68799984359742, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "You as a dependent", "x": 216, "y": 734.29, "width": 72.02399971008299, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Your spouse as a dependent", "x": 316.8, "y": 734.29, "width": 102.99199964523314, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 113,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [100.8, 722.288, 105.688, 730.288],
+      "text": "b",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "b", "x": 100.8, "y": 722.288, "width": 4.888, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 114,
+      "kind": "tableCell",
+      "row": 3,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [127.599, 722.288, 418.286999961853, 730.288],
+      "text": "Spouse itemizes on a separate return c You were a dual-status alien",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Spouse itemizes on a separate return", "x": 127.599, "y": 722.288, "width": 133.1999996166229, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "c", "x": 292.903, "y": 722.288, "width": 4.592, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "You were a dual-status alien", "x": 316.799, "y": 722.288, "width": 101.487999961853, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 115,
+      "kind": "tableCell",
+      "row": 4,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [100.79899999999998, 710.288, 105.68699999999998, 718.288],
+      "text": "d",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "d", "x": 100.79899999999998, "y": 710.288, "width": 4.888, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 116,
+      "kind": "tableCell",
+      "row": 4,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19899999999998, 710.288, 355.85599998855594, 718.289],
+      "text": "You: Were born before January 2, 1961 Are blind",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "You:", "x": 115.19899999999998, "y": 710.288, "width": 17.191999935150136, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Were born before January 2, 1961", "x": 165.6, "y": 710.289, "width": 121.95999960708619, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Are blind", "x": 324, "y": 710.289, "width": 31.855999988555936, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 117,
+      "kind": "tableCell",
+      "row": 5,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [31.8, 686.053, 105.392, 700.802],
+      "text": "Standard deduction for— e",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Standard  ", "x": 31.8, "y": 693.802, "width": 34.362999876499174, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "deduction for—", "x": 31.8, "y": 686.053, "width": 51.715999871492386, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "e", "x": 100.8, "y": 686.288, "width": 4.592, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 118,
+      "kind": "tableCell",
+      "row": 5,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 686.288, 499.94399990844727, 706.29],
+      "text": "Spouse: Was born before January 2, 1961 Is blind Standard deduction or itemized deductions (from Schedule A) 12e . . . . . . . . . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Spouse:", "x": 115.19999999999999, "y": 698.289, "width": 30.823999904632558, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Was born before January 2, 1961", "x": 165.6, "y": 698.29, "width": 118.99999956893922, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Is blind", "x": 324, "y": 698.29, "width": 25.783999961853056, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Standard deduction", "x": 115.2, "y": 686.288, "width": 75.26399974250792, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": " ", "x": 190.46399970054625, "y": 686.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "or", "x": 192.68799967765807, "y": 686.288, "width": 8.000000011444087, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": " ", "x": 200.68799967765807, "y": 686.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "itemized deductions", "x": 202.9119996547699, "y": 686.288, "width": 77.15199970817565, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": " (from Schedule A) . . . . . . . . . . .", "x": 280.06399936676024, "y": 686.288, "width": 70.16000063323975, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "12e", "x": 486.456, "y": 686.288, "width": 13.48799990844725, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 119,
+      "kind": "tableCell",
+      "row": 6,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [31.3, 542.288, 105.688, 684.002],
+      "text": "• Single or 13a Married filing separately, b $15,750 14 • Married filing jointly or 15 Qualifying 16 surviving spouse, 17 $31,500 18 • Head of household, 19 $23,625 20 • If you checked a box on line 21 12a, 12b, 12c, 22 or 12d, see inst. 23",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "• Single or ", "x": 31.3, "y": 677.002, "width": 35.00000002002716, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "13a", "x": 91.904, "y": 674.289, "width": 13.487999908447264, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Married filing ", "x": 36.298, "y": 669.2529999999999, "width": 42.51800002670288, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "separately, ", "x": 36.298, "y": 661.5039999999999, "width": 36.16899998998642, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "b", "x": 100.8, "y": 662.29, "width": 4.888, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "$15,750", "x": 36.298, "y": 653.7549999999999, "width": 25.297999779701236, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "14", "x": 91.904, "y": 650.288, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "• Married filing  ", "x": 31.300000000000004, "y": 644.9069999999999, "width": 49.909999986648565, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "jointly or ", "x": 36.298, "y": 637.1579999999999, "width": 28.51800002670288, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "15", "x": 91.904, "y": 638.789, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Qualifying ", "x": 36.298, "y": 629.4089999999999, "width": 33.060999949932096, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "surviving ", "x": 36.298, "y": 621.6599999999999, "width": 29.686999996662138, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "16", "x": 91.904, "y": 626.29, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "spouse, ", "x": 36.298, "y": 613.9109999999998, "width": 26.711999913215635, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "17", "x": 91.904, "y": 614.288, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "$31,500", "x": 36.298, "y": 606.1619999999998, "width": 25.297999779701236, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "18", "x": 91.904, "y": 602.289, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "• Head of ", "x": 31.300000000000004, "y": 597.3139999999999, "width": 32.1509999833107, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "household, ", "x": 36.298, "y": 589.5649999999998, "width": 36.56799985980987, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "19", "x": 91.904, "y": 590.29, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "$23,625", "x": 36.298, "y": 581.8159999999998, "width": 25.297999779701236, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "20", "x": 91.904, "y": 578.288, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "• If you checked ", "x": 31.3, "y": 572.952, "width": 51.718589963650686, "height": 6.93, "fontSize": 6.93, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "a box on line ", "x": 36.296529999999976, "y": 565.203, "width": 40.75533000330448, "height": 6.93, "fontSize": 6.93, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "21", "x": 91.904, "y": 566.289, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "12a, 12b, 12c, ", "x": 36.29652999999997, "y": 557.454, "width": 45.32912998017313, "height": 6.93, "fontSize": 6.93, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "or 12d, see inst.", "x": 36.3, "y": 549.702, "width": 47.532940000000025, "height": 6.86, "fontSize": 6.86, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "22", "x": 91.904, "y": 554.29, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "23", "x": 91.904, "y": 542.288, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 120,
+      "kind": "tableCell",
+      "row": 6,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 542.288, 500.09199990844724, 682.289],
+      "text": "Qualified business income deduction from Form 8995 or Form 8995-A 13a. . . . . . . . . Additional deductions from Schedule 1-A, line 38 13b. . . . . . . . . . . . . . . Add lines 12e, 13a, and 13b 14. . . . . . . . . . . . . . . . . . . . . Subtract line 14 from line 11b. If zero or less, enter -0-. This is your taxable income 15 . . . . . Tax (see instructions). Check if any from Form(s): 1 8814 2 4972 3 16 Amount from Schedule 2, line 3 17. . . . . . . . . . . . . . . . . . . . Add lines 16 and 17 18. . . . . . . . . . . . . . . . . . . . . . . . Child tax credit or credit for other dependents from Schedule 8812 19. . . . . . . . . . Amount from Schedule 3, line 8 20. . . . . . . . . . . . . . . . . . . . Add lines 19 and 20 21. . . . . . . . . . . . . . . . . . . . . . . . Subtract line 21 from line 18. If zero or less, enter -0- 22. . . . . . . . . . . . . . Other taxes, including self-employment tax, from Schedule 2, line 21 23. . . . . . . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Qualified business income deduction from Form 8995 or Form 8995-A  . . . . . . . . .", "x": 115.19999999999999, "y": 674.289, "width": 252.53599884414672, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "13a", "x": 486.456, "y": 674.289, "width": 13.48799990844725, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Additional deductions from Schedule 1-A, line 38  . . . . . . . . . . . . . . .", "x": 115.2, "y": 662.29, "width": 177.38399937057494, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "13b", "x": 486.308, "y": 662.29, "width": 13.783999908447242, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Add lines 12e, 13a, and 13b  . . . . . . . . . . . . . . . . . . . . .", "x": 115.19999999999999, "y": 650.288, "width": 102.27199938201903, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "14", "x": 488.752, "y": 650.288, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Subtract line 14 from line 11b. If zero or less, enter -0-. This is your", "x": 115.2, "y": 638.789, "width": 233.639839257927, "height": 7.84, "fontSize": 7.84, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": " taxable income", "x": 348.83984, "y": 638.789, "width": 59.20767988410938, "height": 7.84, "fontSize": 7.84, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "  . . . . .", "x": 408.04751989158615, "y": 638.789, "width": 2.17952, "height": 7.84, "fontSize": 7.84, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "15", "x": 488.752, "y": 638.289, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Tax ", "x": 115.19999999999999, "y": 626.29, "width": 16.000000022888173, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "(see instructions). Check if any from Form(s): ", "x": 131.2, "y": 626.29, "width": 161.35999967956542, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "1", "x": 302.4, "y": 626.29, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "8814 ", "x": 325.001, "y": 626.29, "width": 20.01599981689452, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "2", "x": 360.001, "y": 626.29, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "4972", "x": 382.6, "y": 626.29, "width": 17.791999862670878, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "3", "x": 417.6, "y": 626.29, "width": 4.448, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "16", "x": 488.752, "y": 626.29, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Amount from Schedule 2, line 3  . . . . . . . . . . . . . . . . . . . .", "x": 115.19999999999999, "y": 614.288, "width": 114.71199943923949, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "17", "x": 488.752, "y": 614.288, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Add lines 16 and 17 . . . . . . . . . . . . . . . . . . . . . . . .", "x": 115.19999999999999, "y": 602.289, "width": 79.024, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "18", "x": 488.752, "y": 602.289, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Child tax credit or credit for other dependents from Schedule 8812  . . . . . . . . . .", "x": 115.19999999999999, "y": 590.29, "width": 240.19999935531615, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "19", "x": 488.752, "y": 590.29, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Amount from Schedule 3, line 8  . . . . . . . . . . . . . . . . . . . .", "x": 115.19999999999999, "y": 578.288, "width": 114.71199943923949, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "20", "x": 488.752, "y": 578.288, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Add lines 19 and 20 . . . . . . . . . . . . . . . . . . . . . . . .", "x": 115.19999999999999, "y": 566.289, "width": 79.024, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "21", "x": 488.752, "y": 566.289, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Subtract line 21 from line 18. If zero or less, enter -0-  . . . . . . . . . . . . . .", "x": 115.19999999999999, "y": 554.29, "width": 190.69599940681456, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "22", "x": 488.752, "y": 554.29, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Other taxes, including self-employment tax, from Schedule 2, line 21  . . . . . . . . .", "x": 115.19999999999999, "y": 542.288, "width": 246.88799908065795, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "23", "x": 488.752, "y": 542.288, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 121,
+      "kind": "tableCell",
+      "row": 7,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [91.904, 530.789, 100.79999995422364, 538.789],
+      "text": "24",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "24", "x": 91.904, "y": 530.789, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 122,
+      "kind": "tableCell",
+      "row": 7,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 530.289, 497.6479999542236, 538.789],
+      "text": "Add lines 22 and 23. This is your total tax 24 . . . . . . . . . . . . . . . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Add lines 22 and 23. This is your ", "x": 115.19999999999999, "y": 530.789, "width": 118.55999948883056, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "total tax", "x": 233.75999946594237, "y": 530.789, "width": 31.10399984931945, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "  . . . . . . . . . . . . . . . . .", "x": 264.8639993190765, "y": 530.789, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "24", "x": 488.752, "y": 530.289, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 123,
+      "kind": "tableCell",
+      "row": 8,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 482.29, 105.688, 526.861],
+      "text": "Payments 25 and a Refundable b Credits c",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Payments ", "x": 36, "y": 516.861, "width": 41.55000030994415, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "25", "x": 91.904, "y": 518.29, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "and ", "x": 36, "y": 506.861, "width": 17.31000006198883, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "a", "x": 100.8, "y": 506.288, "width": 4.592, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Refundable ", "x": 36, "y": 496.861, "width": 47.48999997973442, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "b ", "x": 100.8, "y": 494.289, "width": 7.1120000114440955, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Credits", "x": 36, "y": 486.861, "width": 28.130000027418134, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "c", "x": 100.8, "y": 482.29, "width": 4.592, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 124,
+      "kind": "tableCell",
+      "row": 8,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 482.29, 406.49199990844727, 526.29],
+      "text": "Federal income tax withheld from: Form(s) W-2 25a. . . . . . . . . . . . . . . . . . Form(s) 1099 25b. . . . . . . . . . . . . . . . . . Other forms (see instructions) 25c. . . . . . . . . . . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Federal income tax withheld from:", "x": 115.19999999999999, "y": 518.29, "width": 121.49599983596801, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Form(s) W-2  . . . . . . . . . . . . . . . . . .", "x": 115.2, "y": 506.288, "width": 46.23199989700315, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "25a", "x": 392.856, "y": 506.288, "width": 13.48799990844725, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Form(s) 1099 . . . . . . . . . . . . . . . . . .", "x": 115.2, "y": 494.289, "width": 55.02399999999999, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "25b", "x": 392.708, "y": 494.289, "width": 13.783999908447242, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Other forms (see instructions)  . . . . . . . . . . . . .", "x": 115.2, "y": 482.29, "width": 107.57599975967405, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "25c", "x": 392.856, "y": 482.29, "width": 13.48799990844725, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 125,
+      "kind": "tableCell",
+      "row": 9,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [100.8, 470.288, 105.688, 478.288],
+      "text": "d",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "d ", "x": 100.8, "y": 470.288, "width": 7.1120000114440955, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 126,
+      "kind": "tableCell",
+      "row": 9,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.2, 470.288, 500.09199990844724, 478.288],
+      "text": "Add lines 25a through 25c 25d. . . . . . . . . . . . . . . . . . . . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Add lines 25a through 25c  . . . . . . . . . . . . . . . . . . . . . .", "x": 115.2, "y": 470.288, "width": 96.18399956130979, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "25d", "x": 486.308, "y": 470.288, "width": 13.783999908447242, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 127,
+      "kind": "tableCell",
+      "row": 10,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [91.904, 458.789, 100.79999995422364, 466.789],
+      "text": "26",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "26", "x": 91.904, "y": 458.789, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 128,
+      "kind": "tableCell",
+      "row": 10,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 458.289, 497.6479999542236, 466.789],
+      "text": "2025 estimated tax payments and amount applied from 2024 return 26. . . . . . . . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "2025 estimated tax payments and amount applied from 2024 return . . . . . . . . . .", "x": 115.19999999999999, "y": 458.789, "width": 247.024, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "26", "x": 488.752, "y": 458.289, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 129,
+      "kind": "tableCell",
+      "row": 11,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [33.8, 410.29, 105.688, 442.301],
+      "text": "If you have a qualifying child, you may need to 27a attach Sch. EIC. b",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "If you have a ", "x": 33.8, "y": 435.301, "width": 41.747999926567076, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "qualifying child, ", "x": 33.8, "y": 427.55199999999996, "width": 50.693999906539915, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "you may need to ", "x": 33.8, "y": 419.801, "width": 51.683240006542235, "height": 6.86, "fontSize": 6.86, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "27a", "x": 91.904, "y": 422.289, "width": 13.488, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "attach Sch. EIC.", "x": 33.800000000000026, "y": 412.05199999999996, "width": 48.13661999999999, "height": 6.86, "fontSize": 6.86, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "b", "x": 100.8, "y": 410.29, "width": 4.888, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 130,
+      "kind": "tableCell",
+      "row": 11,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.2, 410.29, 458.224, 454.288],
+      "text": "If you made estimated tax payments with your former spouse in 2025, enter their SSN (see instructions): Earned income credit (EIC) 27a. . . . . . . . . . . . . . Clergy filing Schedule SE (see instructions) . . . . . . . . . . . . . . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "If you made estimated tax payments with your former spouse in 2025, ", "x": 115.2, "y": 446.288, "width": 268.64799979400635, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "enter their SSN (see instructions):", "x": 115.22400000000002, "y": 435.288, "width": 119.41599991226195, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Earned income credit (EIC) .", "x": 115.2, "y": 422.289, "width": 103.02399999999999, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 228, "y": 422.289, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 240, "y": 422.289, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 252, "y": 422.289, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 264, "y": 422.289, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 276, "y": 422.289, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 288, "y": 422.289, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 300, "y": 422.289, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 312, "y": 422.289, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 324, "y": 422.289, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 336, "y": 422.289, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 348, "y": 422.289, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 360, "y": 422.289, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 372, "y": 422.289, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "27a", "x": 392.856, "y": 422.289, "width": 13.48799990844725, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Clergy filing Schedule SE (see instructions)   .", "x": 115.2, "y": 410.29, "width": 163.024, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 288, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 300, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 312, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 324, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 336, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 348, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 360, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 372, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 384, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 396, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 408, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 420, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 432, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 444, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 456, "y": 410.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 131,
+      "kind": "tableCell",
+      "row": 12,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [100.8, 398.288, 105.392, 406.288],
+      "text": "c",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "c", "x": 100.8, "y": 398.288, "width": 4.592, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 132,
+      "kind": "tableCell",
+      "row": 12,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.2, 398.288, 458.224, 406.288],
+      "text": "If you do not want to claim the EIC, check here . . . . . . . . . . . . . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "If you do not want to claim the EIC, check here  .", "x": 115.2, "y": 398.288, "width": 175.024, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 300, "y": 398.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 312, "y": 398.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 324, "y": 398.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 336, "y": 398.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 348, "y": 398.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 360, "y": 398.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 372, "y": 398.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 384, "y": 398.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 396, "y": 398.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 408, "y": 398.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 420, "y": 398.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 432, "y": 398.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 444, "y": 398.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 456, "y": 398.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 133,
+      "kind": "tableCell",
+      "row": 13,
+      "column": 0,
+      "rowSpan": 2,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [91.904, 384.887, 100.79999995422364, 392.887],
+      "text": "28",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "28 ", "x": 91.904, "y": 384.887, "width": 11.11999990844727, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 134,
+      "kind": "tableCell",
+      "row": 13,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 384.887, 381.584000087738, 392.887],
+      "text": "Additional child tax credit (ACTC) from Schedule 8812. If you do not want",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Additional child tax credit (ACTC) from Schedule 8812. If you do not want ", "x": 115.19999999999999, "y": 384.887, "width": 268.6080000686645, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 135,
+      "kind": "tableCell",
+      "row": 14,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.18399999999997, 374.29, 404.0479999542236, 383.287],
+      "text": "to claim the ACTC, check here 28. . . . . . . . . . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "to claim the ACTC, check here . . . . . . . . . . . .", "x": 115.18399999999997, "y": 375.287, "width": 115.024, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "28", "x": 395.152, "y": 374.29, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 136,
+      "kind": "tableCell",
+      "row": 15,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [91.904, 362.288, 100.79999995422364, 370.288],
+      "text": "29",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "29", "x": 91.904, "y": 362.288, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 137,
+      "kind": "tableCell",
+      "row": 15,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 362.288, 404.0479999542236, 370.288],
+      "text": "American opportunity credit from Form 8863, line 8 29. . . . . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "American opportunity credit from Form 8863, line 8 . . . . . . .", "x": 115.19999999999999, "y": 362.288, "width": 187.02399923706054, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "29", "x": 395.152, "y": 362.288, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 138,
+      "kind": "tableCell",
+      "row": 16,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [91.904, 350.289, 100.79999995422364, 358.289],
+      "text": "30",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "30", "x": 91.904, "y": 350.289, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 139,
+      "kind": "tableCell",
+      "row": 16,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 350.289, 404.0479999542236, 358.289],
+      "text": "Refundable adoption credit from Form 8839, line 13 30. . . . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Refundable adoption credit from Form 8839, line 13  . . . . . .", "x": 115.19999999999999, "y": 350.289, "width": 187.02399923706054, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "30", "x": 395.152, "y": 350.289, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 140,
+      "kind": "tableCell",
+      "row": 17,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [91.904, 338.29, 100.79999995422364, 346.29],
+      "text": "31",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "31", "x": 91.904, "y": 338.29, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 141,
+      "kind": "tableCell",
+      "row": 17,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 338.29, 404.0479999542236, 346.29],
+      "text": "Amount from Schedule 3, line 15 31. . . . . . . . . . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Amount from Schedule 3, line 15  . . . . . . . . . . . .", "x": 115.19999999999999, "y": 338.29, "width": 119.15999939346312, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "31", "x": 395.152, "y": 338.29, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 142,
+      "kind": "tableCell",
+      "row": 18,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [91.904, 326.288, 100.79999995422364, 334.288],
+      "text": "32",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "32", "x": 91.904, "y": 326.288, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 143,
+      "kind": "tableCell",
+      "row": 18,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 326.288, 497.6479999542236, 334.288],
+      "text": "Add lines 27a, 28, 29, 30, and 31. These are your total other payments and refundable credits 32.",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Add lines 27a, 28, 29, 30, and 31. These are your ", "x": 115.19999999999999, "y": 326.288, "width": 177.40799906158446, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "total other payments and refundable credits", "x": 292.6079990386963, "y": 326.288, "width": 167.23999952888488, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": " ", "x": 459.84799857139586, "y": 326.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".  ", "x": 468, "y": 326.288, "width": 9.146000000000015, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "32", "x": 488.752, "y": 326.288, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 144,
+      "kind": "tableCell",
+      "row": 19,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [91.904, 314.789, 100.79999995422364, 322.789],
+      "text": "33",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "33", "x": 91.904, "y": 314.789, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 145,
+      "kind": "tableCell",
+      "row": 19,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 314.289, 497.6479999542236, 322.789],
+      "text": "Add lines 25d, 26, and 32. These are your total payments 33. . . . . . . . . . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Add lines 25d, 26, and 32. These are your ", "x": 115.19999999999999, "y": 314.789, "width": 151.1679992904663, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "total payments ", "x": 266.3679992675781, "y": 314.789, "width": 58.95199992561339, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": ".", "x": 336, "y": 314.789, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 348, "y": 314.789, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 360, "y": 314.789, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 372, "y": 314.789, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 384, "y": 314.789, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 396, "y": 314.789, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 408, "y": 314.789, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 420, "y": 314.789, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 432, "y": 314.789, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 444, "y": 314.789, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 456, "y": 314.789, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 468, "y": 314.789, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "33", "x": 488.752, "y": 314.289, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 146,
+      "kind": "tableCell",
+      "row": 20,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 300.721, 100.79999995422364, 310.721],
+      "text": "Refund 34",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Refund ", "x": 36, "y": 300.721, "width": 30.649999976158142, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "34", "x": 91.904, "y": 302.29, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 147,
+      "kind": "tableCell",
+      "row": 20,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 302.29, 497.6479999542236, 310.29],
+      "text": "If line 33 is more than line 24, subtract line 24 from line 33. This is the amount you overpaid 34. .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "If line 33 is more than line 24, subtract line 24 from line 33. This is the amount you ", "x": 115.19999999999999, "y": 302.29, "width": 293.73599865341185, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "overpaid ", "x": 408.936, "y": 302.29, "width": 35.4079997768402, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": ".", "x": 456, "y": 302.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 468, "y": 302.29, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "34", "x": 488.752, "y": 302.29, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 148,
+      "kind": "tableCell",
+      "row": 21,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [91.904, 290.288, 105.39199990844726, 298.288],
+      "text": "35a",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "35a", "x": 91.904, "y": 290.288, "width": 13.487999908447264, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 149,
+      "kind": "tableCell",
+      "row": 21,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 290.288, 499.94399990844727, 298.288],
+      "text": "Amount of line 34 you want refunded to you. If Form 8888 is attached, check here 35a. . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Amount of line 34 you want ", "x": 115.19999999999999, "y": 290.288, "width": 99.87999966049193, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "refunded to you", "x": 215.07999963760375, "y": 290.288, "width": 60.15999988937375, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": ". If Form 8888 is attached, check here ", "x": 275.23999948501586, "y": 290.288, "width": 137.5279994239807, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 420, "y": 290.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 432, "y": 290.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 444, "y": 290.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 456, "y": 290.288, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "35a", "x": 486.456, "y": 290.288, "width": 13.48799990844725, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 150,
+      "kind": "tableCell",
+      "row": 22,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 266.79, 105.688, 286.789],
+      "text": "Direct deposit? b See instructions. d",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Direct deposit?  ", "x": 36, "y": 279.502, "width": 51.603999873161314, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "b ", "x": 100.8, "y": 278.789, "width": 7.1120000114440955, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "See instructions.", "x": 36, "y": 271.753, "width": 50.792000000000016, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "d ", "x": 100.8, "y": 266.79, "width": 7.1120000114440955, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 151,
+      "kind": "tableCell",
+      "row": 22,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.2, 266.79, 474.6960000038147, 287.289],
+      "text": "Routing number c Type: Checking Savings Account number",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Routing number ", "x": 115.2, "y": 278.789, "width": 59.72799971008298, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "c  ", "x": 338.4, "y": 279.289, "width": 9.0399999847412, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Type:", "x": 347.439999961853, "y": 279.289, "width": 19.85599996948241, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Checking ", "x": 388.8, "y": 279.289, "width": 36.00799991989135, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Savings", "x": 446.4, "y": 279.289, "width": 28.296000003814697, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Account number", "x": 115.2, "y": 266.79, "width": 59.431999649047825, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 152,
+      "kind": "tableCell",
+      "row": 23,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [91.904, 254.788, 100.79999995422364, 262.788],
+      "text": "36",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "36", "x": 91.904, "y": 254.788, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 153,
+      "kind": "tableCell",
+      "row": 23,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.2, 254.288, 404.0479999542236, 262.788],
+      "text": "Amount of line 34 you want applied to your 2026 estimated tax 36 . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Amount of line 34 you want ", "x": 115.2, "y": 254.788, "width": 98.88119966388696, "height": 7.92, "fontSize": 7.92, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "applied to your 2026 estimated tax", "x": 214.08119964122764, "y": 254.788, "width": 129.78503948072424, "height": 7.92, "fontSize": 7.92, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": " .", "x": 343.863, "y": 254.788, "width": 6.360000000000014, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 359.999, "y": 254.788, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 371.999, "y": 254.788, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "36", "x": 395.152, "y": 254.288, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 154,
+      "kind": "tableCell",
+      "row": 24,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 240.86, 100.79999995422364, 250.86],
+      "text": "Amount   37 ",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Amount  ", "x": 36, "y": 240.86, "width": 35.79999998211861, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "37 ", "x": 91.904, "y": 240.887, "width": 11.11999990844727, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 155,
+      "kind": "tableCell",
+      "row": 24,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 240.887, 497.6479999542236, 248.887],
+      "text": "Subtract line 33 from line 24. This is the amount you owe. ",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Subtract line 33 from line 24. This is the ", "x": 115.19999999999999, "y": 240.887, "width": 143.59999945068358, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "amount you owe", "x": 258.7999994277954, "y": 240.887, "width": 63.25600003433226, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": ". ", "x": 322.05599946975707, "y": 240.887, "width": 4.447999977111806, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 156,
+      "kind": "tableCell",
+      "row": 25,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 230.86, 100.79999995422364, 240.86],
+      "text": "You Owe",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "You Owe", "x": 36, "y": 230.86, "width": 34.62999955296516, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 157,
+      "kind": "tableCell",
+      "row": 25,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 230.287, 497.6479999542236, 239.287],
+      "text": "For details on how to pay, go to www.irs.gov/Payments or see instructions . . . . . . . .  37",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "For details on how to pay, go to ", "x": 115.19999999999999, "y": 231.287, "width": 115.86399986648559, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "www.irs.gov/Payments", "x": 231.0639998435974, "y": 231.287, "width": 81.76000017929078, "height": 8, "fontSize": 8, "fontName": "Helvetica-Oblique", "isBold": false, "isItalic": true },
+        { "text": " or see instructions .", "x": 312.82400007247924, "y": 231.287, "width": 73.39999992752075, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 396, "y": 231.287, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 408, "y": 231.287, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 420, "y": 231.287, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 432, "y": 231.287, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 444, "y": 231.287, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 456, "y": 231.287, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ". ", "x": 468, "y": 231.287, "width": 8.199999999999989, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "37", "x": 488.752, "y": 230.287, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 158,
+      "kind": "tableCell",
+      "row": 26,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [91.904, 218.788, 100.79999995422364, 226.788],
+      "text": "38",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "38", "x": 91.904, "y": 218.788, "width": 8.89599995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 159,
+      "kind": "tableCell",
+      "row": 26,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [115.19999999999999, 218.288, 404.0479999542236, 226.788],
+      "text": "Estimated tax penalty (see instructions) 38. . . . . . . . . .",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Estimated tax penalty (see instructions) ", "x": 115.19999999999999, "y": 218.788, "width": 142.2479996910095, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 264, "y": 218.788, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 276, "y": 218.788, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 288, "y": 218.788, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 300, "y": 218.788, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 312, "y": 218.788, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 324, "y": 218.788, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 336, "y": 218.788, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 348, "y": 218.788, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 360, "y": 218.788, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": ".", "x": 372, "y": 218.788, "width": 2.224, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "38", "x": 395.152, "y": 218.288, "width": 8.895999954223612, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 160,
+      "kind": "tableCell",
+      "row": 27,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 182.60500000000002, 128.2149999499321, 215.289],
+      "text": "Third Party Do Designee Designee’s name",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Third Party  ", "x": 36, "y": 204.86, "width": 48.55999991297722, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Designee ", "x": 36, "y": 194.86, "width": 38.96999999880791, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Designee’s ", "x": 93.6, "y": 190.102, "width": 36.560999949932096, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "name  ", "x": 93.6, "y": 182.60500000000002, "width": 21.272999843120573, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 161,
+      "kind": "tableCell",
+      "row": 27,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [106.04799995422363, 182.60500000000002, 561.6159999732971, 215.289],
+      "text": "you want to allow another person to discuss this return with the IRS? See instructions. Yes. Complete below. No Phone Personal identification no. number (PIN)",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Do you want to allow another person to discuss this return with the IRS? See instructions. ", "x": 93.6, "y": 207.289, "width": 322.7039995422364, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Yes. ", "x": 442.8, "y": 207.289, "width": 18.671999954223622, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Complete below. ", "x": 461.47199993133546, "y": 207.289, "width": 62.96799995803832, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "No", "x": 550.8, "y": 207.289, "width": 10.815999973297153, "height": 8, "fontSize": 8, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Designee’s ", "x": 93.6, "y": 190.102, "width": 36.560999949932096, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Phone ", "x": 302.4, "y": 190.102, "width": 22.042999943256405, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Personal identification ", "x": 432, "y": 190.102, "width": 71.16899998998645, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "no.  ", "x": 302.4, "y": 182.60500000000002, "width": 13.747999926567104, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "number (PIN)  ", "x": 432, "y": 182.60500000000002, "width": 44.8629998764992, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 162,
+      "kind": "tableCell",
+      "row": 28,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 148.001, 112.54716244726181, 179.432],
+      "text": "Sign Under Here belief, Your",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Sign  ", "x": 36, "y": 167.432, "width": 26.98799979686737, "height": 12, "fontSize": 12, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Here ", "x": 36, "y": 155.432, "width": 24.77999997138977, "height": 12, "fontSize": 12, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 163,
+      "kind": "tableCell",
+      "row": 28,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [108.32199998998642, 131.50600000000003, 568.1845993209962, 177.8585],
+      "text": "penalties of perjury, I declare that I have examined this return and accompanying schedules and statements, and to the best of my knowledge and they are true, correct, and complete. Declaration of preparer (other than taxpayer) is based on all information of which preparer has any knowledge. signature Date Your occupation If the IRS sent you an Identity Protection PIN, enter it here (see inst.)",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Under penalties of perjury, I declare that I have examined this return and accompanying schedules and statements, and to the best of my knowledge and ", "x": 93.6, "y": 170.946, "width": 474.2735358815971, "height": 6.9125, "fontSize": 6.9125, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "belief, they are true, correct, and complete. Declaration of preparer (other than taxpayer) is based on all information of which preparer has any knowledge.", "x": 93.6, "y": 162.546, "width": 474.5845993209962, "height": 6.9125, "fontSize": 6.9125, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Your signature ", "x": 91.599, "y": 148.001, "width": 47.5789999566078, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Date ", "x": 277.6, "y": 148.001, "width": 16.596999963283565, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Your occupation ", "x": 328, "y": 148.001, "width": 53.67599989986422, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "If the IRS sent you an Identity ", "x": 464.8, "y": 148.502, "width": 94.00299974298474, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Protection PIN, enter it here ", "x": 464.8, "y": 140.00400000000002, "width": 88.80199994659421, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(see inst.) ", "x": 464.8, "y": 131.50600000000003, "width": 31.632999976635006, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 164,
+      "kind": "tableCell",
+      "row": 29,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 97.55500000000002, 120.90099992656708, 127.802],
+      "text": "Joint return? Spouse’s See instructions. Keep a copy for your records.",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Joint return?  ", "x": 36, "y": 120.802, "width": 43.44199981307983, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "See instructions.  ", "x": 36, "y": 113.05300000000001, "width": 54.683999959945695, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Keep a copy for ", "x": 36.00000000000002, "y": 105.30400000000002, "width": 49.28000003004076, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "your records. ", "x": 36.00000000000004, "y": 97.55500000000002, "width": 43.42799999332428, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 165,
+      "kind": "tableCell",
+      "row": 29,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [122.84699990653992, 101.25699999999999, 575.5621898612116, 125.18299999999999],
+      "text": "signature. If a joint return, both must sign. Date Spouse’s occupation If the IRS sent your spouse an Identity Protection PIN, enter it here (see inst.)",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Spouse’s signature. If a joint return, ", "x": 91.599, "y": 118.002, "width": 113.05699976301192, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "both ", "x": 204.65599974298476, "y": 118.002, "width": 17.114999969959257, "height": 7, "fontSize": 7, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "must sign. ", "x": 221.77099969291686, "y": 118.002, "width": 34.36999978637698, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Date ", "x": 277.6, "y": 118.002, "width": 16.596999963283565, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Spouse’s occupation", "x": 328, "y": 118.002, "width": 66.25499985647201, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "If the IRS sent your spouse an ", "x": 464.8, "y": 118.253, "width": 95.11424977199084, "height": 6.93, "fontSize": 6.93, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Identity Protection PIN, enter it here ", "x": 464.8, "y": 109.755, "width": 112.68872986451612, "height": 6.93, "fontSize": 6.93, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "(see inst.) ", "x": 464.8, "y": 101.25699999999999, "width": 31.31666997686858, "height": 6.93, "fontSize": 6.93, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 166,
+      "kind": "tableCell",
+      "row": 30,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [91.599, 87.004, 111.69599993991852, 94.004],
+      "text": "Phone",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Phone no. ", "x": 91.599, "y": 87.004, "width": 33.844999869823454, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 167,
+      "kind": "tableCell",
+      "row": 30,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [113.64199992322922, 87.004, 320.043519897461, 94.004],
+      "text": "no. Email address",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Email address ", "x": 277.6, "y": 87.004, "width": 44.31167989746098, "height": 6.720000000000001, "fontSize": 6.720000000000001, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 168,
+      "kind": "tableCell",
+      "row": 31,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 72.859, 124.00200005674363, 83.001],
+      "text": "Paid   Preparer’s name ",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Paid  ", "x": 36, "y": 72.859, "width": 22.29999989271164, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Preparer’s name ", "x": 91.599, "y": 76.001, "width": 53.67599989986418, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 169,
+      "kind": "tableCell",
+      "row": 31,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [112.86499991321564, 76.001, 574.7069999465942, 83.001],
+      "text": "Preparer’s name  Preparer’s signature  Date  PTIN Check if:",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Preparer’s name ", "x": 91.599, "y": 76.001, "width": 53.67599989986418, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Preparer’s signature ", "x": 227.2, "y": 76.001, "width": 65.20500000333789, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Date ", "x": 400, "y": 76.001, "width": 16.596999963283565, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "PTIN", "x": 457.6, "y": 76.001, "width": 15.421000043392155, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Check if:", "x": 515.2, "y": 76.001, "width": 27.614999969959285, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 170,
+      "kind": "tableCell",
+      "row": 32,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 62.858999999999995, 124.00200005674363, 72.859],
+      "text": "Preparer  ",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Preparer  ", "x": 36, "y": 62.858999999999995, "width": 39.15000006556511, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false }
+      ]
+    },
+    {
+      "index": 171,
+      "kind": "tableCell",
+      "row": 32,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [112.86499991321564, 65.003, 574.7069999465942, 72.003],
+      "text": "Self-employed",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Self-employed", "x": 529.2, "y": 65.003, "width": 45.50699994659419, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 172,
+      "kind": "tableCell",
+      "row": 33,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 51.004, 124.00200005674363, 62.858999999999995],
+      "text": "Use Only  Firm’s name ",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Use Only ", "x": 36, "y": 52.858999999999995, "width": 36.749999821186066, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "Firm’s name ", "x": 91.599, "y": 51.004, "width": 40.59299977636336, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 173,
+      "kind": "tableCell",
+      "row": 33,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [112.86499991321564, 51.004, 574.7069999465942, 58.004],
+      "text": "Phone no. ",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Phone no. ", "x": 457.6, "y": 51.004, "width": 33.84499986982348, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 174,
+      "kind": "tableCell",
+      "row": 34,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [91.599, 39.002, 110.9189999332428, 46.002],
+      "text": "Firm’s",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Firm’s", "x": 91.599, "y": 39.002, "width": 19.319999933242798, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 175,
+      "kind": "tableCell",
+      "row": 34,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [112.86499991321564, 39.002, 490.00999994659423, 46.002],
+      "text": "address Firm’s EIN",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Firm’s address  ", "x": 91.599, "y": 39.002, "width": 50.308999856472, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Firm’s EIN  ", "x": 457.6, "y": 39.002, "width": 36.301999946594265, "height": 7, "fontSize": 7, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    },
+    {
+      "index": 176,
+      "kind": "tableCell",
+      "row": 35,
+      "column": 0,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [36, 26.289, 141.32800011444093, 34.289],
+      "text": "Go to www.irs.gov/Form1040",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": "Go to ", "x": 36, "y": 26.289, "width": 22.224000000000004, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "www.irs.gov/Form1040", "x": 58.223999977111816, "y": 26.289, "width": 83.10400013732911, "height": 8, "fontSize": 8, "fontName": "Helvetica-Oblique", "isBold": false, "isItalic": true }
+      ]
+    },
+    {
+      "index": 177,
+      "kind": "tableCell",
+      "row": 35,
+      "column": 1,
+      "rowSpan": 1,
+      "columnSpan": 1,
+      "header": false,
+      "page": 1,
+      "bbox": [143.55200004577637, 25.861, 575.9999998207093, 35.861000000000004],
+      "text": "for instructions and the latest information. Form 1040 (2025)",
+      "continuesPrevious": false,
+      "grid": {"thinRows": 2, "fill": 0.828125, "retriedFrom": 0, "fullRows": 9, "columns": 4},
+      "spans": [
+        { "text": " for instructions and the latest information.", "x": 141.32800006866455, "y": 26.289, "width": 151.14399959945678, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "Form ", "x": 508.704, "y": 25.861, "width": 20.89599993133544, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false },
+        { "text": "1040 ", "x": 529.6, "y": 25.861, "width": 24.464000000000055, "height": 10, "fontSize": 10, "fontName": "Helvetica-Bold", "isBold": true, "isItalic": false },
+        { "text": "(2025) ", "x": 554.0639999771118, "y": 25.861, "width": 24.15999987030034, "height": 8, "fontSize": 8, "fontName": "Helvetica", "isBold": false, "isItalic": false }
+      ]
+    }
+  ]
+}

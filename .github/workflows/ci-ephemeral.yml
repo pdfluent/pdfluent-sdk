@@ -1,4 +1,4 @@
-# The workspace build for a push to master, on a throwaway instance.
+# The heavy work on master, in waves, on a throwaway instance.
 #
 # `check`, `test`, `clippy` and `fmt` used to run on [self-hosted, xfa-fast] for
 # a push. That is the desktop: four cores, and it also carries the corpus, the
@@ -10,47 +10,124 @@
 #
 # The four jobs are one job here, on one instance. Four instances would spend
 # more on boot and cache restore than the parallelism buys back, and they would
-# each pay the same snapshot download.
+# each pay the same snapshot download. The four heavy SUITES below join it for
+# the same reason: Hetzner bills a started hour in full, so the wave that has
+# already paid for a machine is where the next expensive thing should run.
 #
-# WHY THIS IS NOT THE `--ref master` DANCE THE OTHER EPHEMERAL WORKFLOWS DO
+# Changes to master start a wave. The running wave finishes; GitHub keeps only
+# one pending wave and replaces it with the latest push. No timer buys servers
+# while development is idle. The pre-purchase guard refuses duplicate verdicts
+# and fails closed if GitHub cannot supply the history.
 #
-# Those are dispatched, and a dispatch lets the caller choose the ref -- so the
-# workflow body itself could come from a branch. This one triggers on a push to
-# master, so the body is master's by construction. There is no ref to choose.
+# WHY A DISPATCH IS SAFE HERE
 #
-# scripts/ci/orchestration_stays_hosted.py knows the difference: it treats
-# `push` with a `branches: [master]` filter as pinned, and `workflow_dispatch`
-# as not.
+# A dispatch lets the caller choose the ref, so the workflow body could come
+# from a branch -- and `create-runner` and `reap` run on the desktop, because
+# creating and deleting instances is host work and cannot move. Both are pinned
+# to `github.ref == 'refs/heads/master'`: a dispatch from a feature branch
+# skips them, and skips everything that needs them.
+#
+# scripts/ci/orchestration_stays_hosted.py reads that pin, and
+# scripts/ci/heavy_work_leaves_the_desktop.py reads the other half -- that no
+# workflow triggered by a push to master compiles on the desktop.
 
 name: CI (ephemeral Hetzner)
 
+# Paid compute is disabled by owner decision. No timer/push may provision.
 on:
-  # NO pull_request trigger, since 02-09-2026.
-  #
-  # It had one from 28-08: a cpx42 has eight cores against a hosted runner's two
-  # to four, so the heavy PR build was cheaper and quicker there. Then the
-  # Hetzner VPS was cancelled on 24-08 and nobody removed the trigger. Measured
-  # 02-09: of the last forty ephemeral runs, nineteen cancelled, four failed,
-  # five pending, eleven queued, one in progress -- and NONE succeeded, while
-  # `create-runner` kept reporting success. So it was still provisioning
-  # instances, per pull request, and producing nothing usable. Every push queued
-  # another.
-  #
-  # The workflow stays: it is the only route to an isolated runner if a provider
-  # returns, and #311 keeps create-runner/reap pinned to the base revision for
-  # when it does. What is removed is the trigger that made it run by itself.
-  # (#311)
-  push:
-    branches: [master]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'CHANGELOG.md'
-      - '.github/**.md'
+  workflow_dispatch:
+    inputs:
+      fidelity:
+        description: >-
+          Also measure the PDF/A fidelity axis on the 300 (#380). Off by
+          default and unavailable to the schedule on purpose: it converts three
+          hundred documents and renders the source and the candidate, which is
+          most of an hour of the instance, and the two-hourly wave must not
+          spend that unasked.
+        type: boolean
+        default: false
+      remetric_off_arm:
+        description: >-
+          Measure the substituted-width question BOTH ways on one instance
+          (#380). The DEFAULT corrects the widths towards the substituted face
+          and undoes the difference with a horizontal scale; this adds a second
+          pass with PDFA_REMETRIC_SUBSTITUTES, which instead re-metrics the
+          program to the widths the author declared. Both keep the next glyph in
+          place and they do not look the same.
+          Run 34521732841 measured it on the pinned 300 and the scale won --
+          render diff p95 0.008432 against 0.010641, output 96.7% against
+          101.6%, 29 documents closer to source against 9. That is why the scale
+          is the default and re-metricking is the arm. A new run is for a change
+          to either mechanism, not to settle the same question again.
+          Doubles the measurement step, roughly 35 minutes to 70.
+        type: boolean
+        default: false
+      join_all_fragments:
+        description: >-
+          Run the fidelity measurement with PDFA_JOIN_ALL_FRAGMENTS set, so a
+          well-formed split page is joined before the repairs read it (#380).
+          The experiment arm: dispatch once without it for the baseline, once
+          with it, and compare. Nothing ships on this.
+        type: boolean
+        default: false
+      perf:
+        description: >-
+          Also measure the PDF/A performance axis on the chosen set (#384):
+          conversion time per document and per megabyte, peak resident memory,
+          and every document that does not come back inside the ceiling. Off by
+          default for the same reason `fidelity` is -- it converts the whole set
+          ONE DOCUMENT AT A TIME, which is the only way a clock means anything,
+          and the schedule must not spend that unasked.
+        type: boolean
+        default: false
+      baseline_run_id:
+        description: >-
+          Optional: the run id of an earlier fidelity run on the SAME set,
+          whose candidate becomes this run's `before` without being rendered
+          again (#454). Its `all-pages.json` is downloaded from that run's
+          artifact and matched per document on the source digest and the dpi,
+          so a document the two runs did not measure identically is simply
+          rendered. Leave empty for a plain single-candidate run.
+        type: string
+        default: ''
+      set:
+        description: >-
+          Which set the fidelity measurement runs on (#461). `pdfa-300` is the
+          three hundred the published series stands on; `tuning1000` is the set
+          debugging is allowed to look at; `test300` is the rotating test set,
+          which is measured here and judged ONLY in aggregate by
+          scripts/ci/loop/overfitting_gate.py -- reading a per-document row of
+          it burns the document (benchmarks/HOLDOUTS.md). `holdout1000` is the
+          sealed thousand of #365, run ONCE at the end of the rounds and
+          reported per document; a change made because of something found in it
+          burns the holdout and a fresh one is drawn. Budget from #385: about an
+          hour of instance time per three hundred documents on the four axes, so
+          the two thousand-document sets are roughly three and a half.
+        type: choice
+        default: pdfa-300
+        options: [pdfa-300, tuning1000, test300, holdout1000]
+      converter:
+        description: >-
+          Which side of the comparison this run measures (#365). `shipped` is
+          ours -- `pdfa_convert_real`, the `convert_bytes` route the SDK ships,
+          which is what every published PDF/A number was measured with.
+          `ghostscript` is the independent side: Ghostscript 10.07.1, built and
+          pinned by scripts/pdfa/install_ghostscript.sh, on the SAME documents
+          with the SAME readers, driven through
+          benchmarks/pdfa/reproduce/run_matrix.py so that the recipe and the
+          licence verdict come from benchmarks/pdfa/comparison/CONVERTERS.toml
+          and not from this file. Two dispatches, one per side; a run measures
+          one converter, because a job that measured both would report an hour
+          of one and an hour of the other under a single run id.
+        type: choice
+        default: shipped
+        options: [shipped, ghostscript]
 
 concurrency:
-  group: ci-ephemeral-${{ github.ref }}
-  cancel-in-progress: true
+  # Default GitHub queue: one running wave finishes, one pending slot retains
+  # the latest push. Do not use cancel-in-progress: true for paid work.
+  group: ci-ephemeral
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -64,36 +141,102 @@ jobs:
     # queues behind it. Fifteen minutes of that is what a wedged
     # provisioning looked like (#274).
     timeout-minutes: 35
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: [self-hosted, xfa-local-checks]
+    # A dispatch chooses the ref, and this job runs on the desktop out of that
+    # ref's checkout. Pinned to master, so a dispatch from a feature branch
+    # skips it -- and every job below needs it, so the whole wave skips with it.
+    # scripts/ci/orchestration_stays_hosted.py reads exactly this shape.
+    if: github.event_name == 'workflow_dispatch' && vars.PAID_COMPUTE_ENABLED == 'true' && (github.ref == 'refs/heads/master')
+    # `actions: read` is for the wave check below and nothing else. Set on the
+    # job rather than on the workflow: a workflow-level block would cap what the
+    # called suites may ask for, and security-audit's check-run needs more than
+    # this job does.
+    permissions:
+      contents: read
+      actions: read
     outputs:
-      label: ${{ steps.hergebruik.outputs.label || steps.create.outputs.label }}
-      server_id: ${{ steps.create.outputs.server_id }}
+      label: ${{ steps.hergebruik.outputs.label || steps.create.outputs.label || steps.cpx62.outputs.label || steps.cpx52.outputs.label || steps.cpx42.outputs.label }}
+      server_id: ${{ steps.create.outputs.server_id || steps.cpx62.outputs.server_id || steps.cpx52.outputs.server_id || steps.cpx42.outputs.server_id }}
       reused: ${{ steps.hergebruik.outputs.reused }}
+      # WHICH TYPE THIS WAVE IS ON, and not as a courtesy. #350 costs the wave
+      # per hour of a specific machine and the types differ by a factor of
+      # three; #384 measures a clock, and a millisecond that does not name its
+      # machine class is the defect benchmarks/BASELINE_HARDWARE.toml exists
+      # for. Derived from whichever step actually bought (or found) a machine,
+      # never written down twice.
+      server_type: ${{ steps.hergebruik.outputs.server_type || steps.soort.outputs.soort }}
+      overslaan: ${{ steps.golf.outputs.overslaan }}
     steps:
+      - uses: actions/checkout@v4
+      - name: Paid compute requires a new owner authorization
+        run: python3 scripts/ci/require_paid_compute_permission.py
       # Reuse before buying. Hetzner bills a started hour in full, so an
       # instance already up and idle is free for the rest of that hour, and the
       # runner is registered without --ephemeral so it takes more than one job.
       # A forty-second delay was the earlier answer; this is the better one,
       # because it costs nothing and saves a whole machine (#274).
-      # On a pull_request this job runs on the persistent desktop, because
-      # creating and reaping instances IS host work and cannot move. So the code
-      # it executes must not be the pull request's: `scripts/ci/*.sh` and
-      # `*.py` here are run directly, and on a PR the checkout would be whatever
-      # the PR says they are. Pinning the base revision means only merged code
-      # ever runs as the runner user. (#311)
+      # This job runs on the persistent desktop, because creating and reaping
+      # instances IS host work and cannot move. So the code it executes must be
+      # merged code: `scripts/ci/*.sh` and `*.py` here are run directly out of
+      # the checkout, and the `if:` above is what keeps that checkout master's.
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
+
+      # Check history before reuse or purchase. A failed verdict on unchanged
+      # code needs a manual retry; a timer cannot repair it. API errors stop
+      # this job, so unavailable history never authorizes a new instance.
+      - name: Decide whether this wave needs an instance
+        id: golf
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/ci/wave_needs_instance.py
+
       - name: Reuse an idle instance if one is already up
         id: hergebruik
+        if: steps.golf.outputs.overslaan != 'true'
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
           RUNNER_PAT: ${{ secrets.GH_RUNNER_PAT }}
         run: bash scripts/ci/reuse_an_idle_instance.sh
 
-      - name: Create ephemeral Hetzner runner
+      # FOUR TYPES AND A HARD STOP, because one type and no stop cost
+      # thirty-five minutes of the desktop for nothing. Measured on runs
+      # 34064845725 and 34066673480, identically:
+      #
+      #   curl: (22) The requested URL returned error: 412
+      #   Resource limitation detected.
+      #   Failed to create Server. Wait 10 seconds... (Attempt 207/360)
+      #
+      # 412 from the Hetzner API is a refusal, not a hang and not a bad token: a
+      # malformed request or a wrong snapshot answers 400 or 404. The action's
+      # own answer to it is 360 retries at ten-second intervals -- an hour of
+      # asking a question that has already been answered, on the one runner
+      # everything else queues behind.
+      #
+      # WHY THE FALLBACK IS BY TYPE AND NOT BY LOCATION. Read with `hcloud` on
+      # 07-09-2026 against the project: cx53 is "supported but NOT available" in
+      # fsn1, nbg1 AND hel1 -- a supply problem, not a project limit, and not
+      # one another location fixes. Available in all three, x86 and eight cores
+      # or more: cpx62 (16c/32G, the closest to cx53), cpx52 (12c/24G) and cpx42
+      # (8c/16G). The cax types are ARM and cannot run this x86 snapshot at all.
+      #
+      # cx53 is still asked for first and on a short leash. It is the cheapest
+      # of the four and the type the snapshot was built for, so the day supply
+      # returns this lane picks it up without an edit; while it does not, three
+      # minutes is what that costs per wave. A create that would succeed needs
+      # roughly that long -- the action waits for the runner to register -- so
+      # the honest description of the trade is: if supply returns AND
+      # registration is slower than three minutes, the wave pays for a cpx
+      # instead. `timeout-minutes` bounds each attempt where it happens rather
+      # than at the job's 35.
+      #
+      # No core count in a comment anywhere here: benchmarks/BASELINE_HARDWARE.toml
+      # records that this repository contradicts itself about cx53 -- 8 in two
+      # docs, 16 in #283 -- and refuses to guess. The numbers above are hcloud's.
+      - name: Create ephemeral Hetzner runner (cx53)
         id: create
-        if: steps.hergebruik.outputs.reused != 'true'
+        if: steps.golf.outputs.overslaan != 'true' && steps.hergebruik.outputs.reused != 'true'
+        continue-on-error: true
+        timeout-minutes: 3
         uses: Cyclenerd/hcloud-github-runner@v1
         with:
           mode: create
@@ -103,11 +246,148 @@ jobs:
           location: fsn1
           image: ${{ env.HCLOUD_SNAPSHOT_ID }}
 
+      # BY PRICE SINCE #494, and the two that left were not cheap: cpx62 is
+      # EUR 0.29 an hour and cpx52 EUR 0.20, against cx53 at EUR 0.0473 and cx43
+      # at EUR 0.0256 (hcloud, fsn1, 09-09-2026). A fallback that quadruples the
+      # bill is not a fallback, it is a surprise; if neither cx type can be had,
+      # cpx42 at EUR 0.1114 is the last one under the ceiling and the wave waits
+      # for the next slot rather than paying more.
+      - name: Fall back to cx43
+        id: cpx62
+        if: steps.golf.outputs.overslaan != 'true' && steps.hergebruik.outputs.reused != 'true' && steps.create.outputs.label == ''
+        continue-on-error: true
+        timeout-minutes: 8
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: create
+          github_token: ${{ secrets.GH_RUNNER_PAT }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          server_type: cx43
+          location: fsn1
+          image: ${{ env.HCLOUD_SNAPSHOT_ID }}
+
+      - name: Fall back to cx43 in nbg1
+        id: cpx52
+        if: steps.golf.outputs.overslaan != 'true' && steps.hergebruik.outputs.reused != 'true' && steps.create.outputs.label == '' && steps.cpx62.outputs.label == ''
+        continue-on-error: true
+        timeout-minutes: 8
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: create
+          github_token: ${{ secrets.GH_RUNNER_PAT }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          server_type: cx43
+          location: nbg1
+          image: ${{ env.HCLOUD_SNAPSHOT_ID }}
+
+      - name: Fall back to cpx42
+        id: cpx42
+        if: steps.golf.outputs.overslaan != 'true' && steps.hergebruik.outputs.reused != 'true' && steps.create.outputs.label == '' && steps.cpx62.outputs.label == '' && steps.cpx52.outputs.label == ''
+        continue-on-error: true
+        timeout-minutes: 8
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: create
+          github_token: ${{ secrets.GH_RUNNER_PAT }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          server_type: cpx42
+          location: fsn1
+          image: ${{ env.HCLOUD_SNAPSHOT_ID }}
+
+      # Every create above carries continue-on-error, so without this the wave
+      # would go on to five jobs with an empty `runs-on` and queue them against
+      # a label that does not exist -- which is how a lane goes quiet rather
+      # than red.
+      #
+      # It also NAMES the type that won, because the cost line on #350 is
+      # computed per hour of a specific machine and the four differ by a factor
+      # of three. A wave whose cost cannot be attributed is a wave nobody can
+      # budget.
+      - name: A wave without a machine says so, and one with a machine says which
+        id: soort
+        if: steps.golf.outputs.overslaan != 'true' && steps.hergebruik.outputs.reused != 'true'
+        run: |
+          set -uo pipefail
+          gekocht=""
+          for paar in \
+            "cx53:${{ steps.create.outputs.label }}" \
+            "cpx62:${{ steps.cpx62.outputs.label }}" \
+            "cpx52:${{ steps.cpx52.outputs.label }}" \
+            "cpx42:${{ steps.cpx42.outputs.label }}"; do
+            soort="${paar%%:*}"; label="${paar#*:}"
+            [ -n "$label" ] || continue
+            gekocht="$soort"
+            echo "::notice::This wave runs on a $soort (label $label). Hetzner bills a started hour in full; the cost of the wave is its wall time rounded up, times that type's hourly price. (#350)"
+            break
+          done
+          echo "soort=${gekocht}" >> "$GITHUB_OUTPUT"
+          [ -n "$gekocht" ] && exit 0
+          echo "::error::No instance could be bought: cx53, cpx62, cpx52 and cpx42 were all refused in fsn1. The Hetzner API answers 412 'resource limitation' to a well-formed create, so this is supply or a project limit rather than a token or a bad snapshot -- measured 07-09-2026, cx53 was unavailable in all three EU locations while the cpx types were not. Read the four steps above for which said what. Nothing was created and nothing is orphaned. (#350)" >&2
+          exit 1
+
+
+  # Build the public snapshot once per wave on the same paid runner. The cheap
+  # publication scans remain in publication-guards.yml on each master push.
+  public-snapshot-build:
+    needs: create-runner
+    if: needs.create-runner.outputs.overslaan != 'true'
+    runs-on: ${{ needs.create-runner.outputs.label }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        with:
+          toolchain: stable
+      - name: Cargo on PATH
+        run: bash scripts/ci/cargo_on_path.sh
+      - name: Assemble and build the public snapshot
+        run: bash scripts/ci/public_snapshot_audit.sh --with-build
+
+  clitest:
+    name: The CLI suite ran (zero tests is red)
+    # The guarded CLI run lives HERE and in the local gate's landing lane
+    # (`crate_gate clitest`): the scoped `test` gate there proves the suite
+    # passes, this one proves it ran. It stood in ci.yml on the desktop until
+    # it turned three guards red at once -- desktoplast, orchhost, builddir3 --
+    # for compiling on the persistent runner. A single crate, not the
+    # workspace: minutes, not an hour. But #350 does not grade by size: heavy
+    # cargo suites run on the bought-and-thrown-away instance, and this one
+    # compiles there with the rest of the wave.
+    needs: create-runner
+    if: needs.create-runner.outputs.overslaan != 'true'
+    runs-on: ${{ needs.create-runner.outputs.label }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        with:
+          toolchain: stable
+      - name: Put cargo on PATH
+        run: bash scripts/ci/cargo_on_path.sh
+      - name: CLI tests ran (zero is red)
+        run: python3 scripts/ci/tests_actually_ran.py cargo -- cargo test -q -p pdfluent-cli
 
   workspace:
     needs: create-runner
+    if: needs.create-runner.outputs.overslaan != 'true'
     runs-on: ${{ needs.create-runner.outputs.label }}
-    timeout-minutes: 60
+    # 60 until 08-09-2026, and never once tested: `test` had failed on every
+    # wave, so the eleven steps after it were skipped and the job finished in
+    # ten minutes on the way to a red. With the formcalc stack overflow and the
+    # dpkg lock out of the way this job runs end to end for the first time --
+    # veraPDF over the corpus fixtures, 500 documents of extraction, the xfa
+    # release suite, the wasm build. 90 so the first complete run reports what
+    # it measured instead of the timeout, and it is still a bound: Hetzner bills
+    # a started hour whole, so the second hour of a hung job costs one. (#448)
+    timeout-minutes: 90
+    env:
+      # Tesseract is installed below for the OCR suites, and where it is
+      # missing the suites must FAIL, not skip, so a broken install cannot
+      # hide: the ocr-cli Rust tests and the parity OCR rows read this (#636).
+      PDFLUENT_REQUIRE_TESSERACT: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -123,10 +403,17 @@ jobs:
       #
       # `rustup component add` with no toolchain argument acts on the active
       # one, which is the pinned one, which is the one that will run.
+      # `!cancelled()`, like the steps that use it (#516). Every gate below is
+      # written to run after an earlier one has failed -- a red test must not
+      # hide a red tree -- and a toolchain step with no condition of its own is
+      # skipped the moment anything above it fails, leaving those steps to meet
+      # `cargo: command not found` instead of the finding they were looking for.
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        if: ${{ !cancelled() }}
         with:
           toolchain: stable
       - name: Add rustfmt and clippy to the pinned toolchain
+        if: ${{ !cancelled() }}
         run: rustup component add rustfmt clippy
 
       # `/usr/local/bin/cargo` on this image is a plain binary, not a rustup
@@ -142,7 +429,13 @@ jobs:
       # `dirname "$(rustup which cargo)"` is that directory. Earlier attempts
       # pointed at $CARGO_HOME/bin, which on this image is /.cargo/bin and does
       # not exist at all.
+      # The same condition as the two steps above it and the gates below it
+      # (#516): this is the step that makes the toolchain reachable, so if it is
+      # skipped after an earlier failure the `!cancelled()` gates fall back to
+      # the image's `/usr/local/bin/cargo`, which shadows rustup's shims -- and
+      # then the run reports a second, misleading failure on top of the first.
       - name: Put the pinned toolchain's bin directory on PATH
+        if: ${{ !cancelled() }}
         run: |
           toolchain_bin="$(dirname "$(rustup which cargo)")"
           echo "$toolchain_bin" >> "$GITHUB_PATH"
@@ -168,7 +461,10 @@ jobs:
             [ -d "$d" ] && { echo "--- $d"; ls "$d" | head -12; }
           done
 
+      # Never clean ~/.cargo/bin: it is shared on the self-hosted runners (#636).
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       # Ordered cheapest-first so an obvious break reports in seconds rather
       # than after the test suite. `--no-fail-fast` on the tests, because one
@@ -177,10 +473,93 @@ jobs:
         run: cargo fmt --all --check
       - name: check
         run: cargo check --workspace --exclude pdf-desktop
+      # `--workspace` cannot reach the Python binding: crates/pdf-python is
+      # excluded from the workspace on purpose (PyO3 pins a Python), and the
+      # only workflow that compiles it, bindings.yml, runs on tags and dispatch.
+      # So nothing between a merge and a release build reads that file at all.
+      # On 06-09-2026 f9ae3a1d7 landed with four `#[pyfunction]`s defined four
+      # times each -- 77 compiler errors, every one of them E0428 -- and for
+      # three days the only visible symptom was that no wheel could be built.
+      # It is one crate and its own lockfile, so it costs a few minutes on an
+      # instance that is already up, and it is the only thing that looks.
+      - name: The Python binding compiles
+        run: cargo check --manifest-path crates/pdf-python/Cargo.toml --locked
+      # `--workspace` builds pdf-engine with its default features only, and the
+      # test suites add `image` as a dev-dependency, so a cloud OCR feature that
+      # forgets `dep:image` compiles in every job and fails for every user who
+      # enables it (14-10-2026: ocr.rs imports image, no feature pulled it in).
+      - name: The cloud OCR features compile
+        run: cargo check -p pdf-engine --lib --features ocr-cloud --locked
       - name: clippy
         run: cargo clippy --workspace --exclude pdf-desktop -- -D warnings
+      # Tesseract for the OCR suites below, which recognize through the system
+      # binary (#636): with `PDFLUENT_REQUIRE_TESSERACT=1` on this job the
+      # suites fail loudly without one instead of skipping. Through the
+      # lock-waiting wrapper, like every other apt-get on this instance;
+      # `tesseract-ocr-eng` is named even though the engine package recommends
+      # it, because a recommends-chain is not a promise. Before `test` so the
+      # binary is there for everything after it.
+      - name: Install Tesseract for the OCR suites
+        run: bash scripts/ci/apt_get.sh install -y -qq tesseract-ocr tesseract-ocr-eng
       - name: test
         run: cargo test --workspace --exclude pdf-desktop --no-fail-fast
+
+      # AND THE PYTHON BINDING'S OWN TESTS, which compiling does not tell you
+      # (#510, #515).
+      #
+      # `crates/pdf-python/tests/` is six files and fifty-one test functions --
+      # multi-select, Office export, typing, signatures, smoke -- reached only
+      # through a built wheel, so `cargo test --workspace` cannot see them and
+      # the `cargo check` above only proves the crate compiles. They ran in
+      # bindings.yml, which fired on tags and dispatch and had not run for 126
+      # days when anybody looked (c46fc77f8).
+      #
+      # AFTER the workspace, and `!cancelled()`, because of what happened the
+      # first time it ran. It sat between `check` and `clippy`, the image had no
+      # pip -- `/usr/bin/python3: No module named pip`, the very first line --
+      # and the job stopped there: `cargo clippy --workspace` and `cargo test
+      # --workspace` did not run at all in wave 34442111533. A Python
+      # environment on a rented machine must never be able to decide whether
+      # this repository's own tests run.
+      #
+      # In a virtualenv because `maturin develop` installs into the active one
+      # and refuses without it, and `ensurepip` because this image ships a
+      # python3 with no pip module at all. Both are bootstrapped here rather
+      # than assumed: the step reports what it found before it needs it.
+      - name: The Python binding's own tests
+        if: ${{ !cancelled() }}
+        working-directory: crates/pdf-python
+        run: |
+          set -euo pipefail
+          python3 -m ensurepip --upgrade 2>/dev/null || true
+          if ! python3 -m venv .venv 2>/dev/null; then
+            bash ../../scripts/ci/apt_get.sh install -y -qq python3-venv python3-pip
+            python3 -m venv .venv
+          fi
+          . .venv/bin/activate
+          python -m pip install --quiet --upgrade pip "maturin==1.15.0" pytest
+          # The judge of tests/test_docling_document.py (#629), pinned to the
+          # release crates/pdf-engine/src/docling.rs names. Test-only: docling-core
+          # (MIT) and jsonschema (MIT) are never dependencies of the wheel.
+          python -m pip install --quiet docling-core==2.98.1 jsonschema
+          maturin develop
+          pytest tests/ -q
+          # The RAG loaders over this binding (#630): installed the way their
+          # READMEs say, without deps (they name pdfluent>=1.1.0, which is the
+          # tree just built), against pinned framework releases (both MIT).
+          python -m pip install --quiet langchain-core==1.6.5 llama-index-core==0.14.25
+          python -m pip install --quiet --no-deps ../../integrations/langchain-pdfluent ../../integrations/llama-index-readers-pdfluent
+          pytest ../../integrations/langchain-pdfluent/tests ../../integrations/llama-index-readers-pdfluent/tests -q
+          # The MCP server over this binding (#625): the smoke test starts it
+          # over stdio, as Claude Code and Codex do, and calls every tool on a
+          # fixture. Installed without deps, like the loaders, against a pinned
+          # mcp release (MIT; mcp 2.x needs Python 3.10).
+          python -m pip install --quiet mcp==2.2.0
+          python -m pip install --quiet --no-deps ../../integrations/pdfluent-mcp
+          pytest ../../integrations/pdfluent-mcp/tests -q
+          # 1.1.0 ships without the front door (#636): the parity matrix
+          # over the wheel just built stood here. Suite and tests stay in
+          # the tree, run by hand.
 
       # `--workspace` compiles every crate with its DEFAULT features, so a test
       # behind a non-default flag is not in the line above -- it does not fail
@@ -212,6 +591,163 @@ jobs:
       - name: the tests behind the xfa feature
         if: ${{ !cancelled() }}
         run: cargo test -p pdf-engine --features xfa --locked
+
+      # Same shape, same reason: `crates/pdf-engine/tests/
+      # vision_identity_runs_on_a_raster.rs` gates its whole file on `vision`,
+      # a non-default feature, so `--workspace` above never compiles it. Six
+      # tests, and what they hold is the vision infrastructure: the identity
+      # fixture runs, the raster is the right size, and a bbox in page points
+      # maps to the right pixels. (#636)
+      - name: the tests behind the vision feature
+        if: ${{ !cancelled() }}
+        run: cargo test -p pdf-engine --features vision --locked
+      # The stripe-corridor grid override and its tests compile only with the
+      # non-default `corridor-grid` feature, so the default test run never
+      # sees them. (#574)
+      - name: the tests behind the corridor-grid feature
+        if: ${{ !cancelled() }}
+        run: cargo test -p pdf-engine --features corridor-grid --locked --lib corridor
+
+      # Same shape, same reason: `crates/pdf-engine/tests/
+      # render_all_nested_in_a_small_pool.rs` gates its test on `parallel`, a
+      # non-default feature, so `--workspace` above never compiles it. What it
+      # holds is that rendering every page from inside a rayon pool does not
+      # overflow the stack (vello's own pool nested in ours). (#636)
+      - name: the tests behind the parallel feature
+        if: ${{ !cancelled() }}
+        run: cargo test -p pdf-engine --features parallel --locked --test render_all_nested_in_a_small_pool
+
+      # Same shape, same reason: `crates/pdf-engine/tests/
+      # an_ocr_layer_makes_a_scan_readable.rs` gates its whole file on
+      # `ocr-cli`, a non-default feature, so `--workspace` above never
+      # compiles it. What it holds is OCR on the markdown path through the
+      # system Tesseract: a scan reads its words under Auto and nothing under
+      # Never, Force replaces born-digital text rather than doubling it, and
+      # without a binary Auto reads on while Force names it. The Tesseract
+      # install step above is what lets the recognition tests run rather than
+      # fail under `PDFLUENT_REQUIRE_TESSERACT=1`. (#636)
+      - name: the tests behind the ocr-cli feature
+        if: ${{ !cancelled() }}
+        run: cargo test -p pdf-engine --features ocr-cli --locked --test an_ocr_layer_makes_a_scan_readable
+
+      # Same shape, same reason: `crates/pdf-ocr/tests/ort_runtime.rs` gates
+      # its whole file on `onnx-runtime`, a non-default feature, so
+      # `--workspace` above never compiles it. What it holds is the shared
+      # ONNX Runtime layer: the failure kinds without a library, and -- only
+      # when `PDFLUENT_ORT_TEST_DYLIB` names a real ONNX Runtime 1.23.2, which
+      # no CI machine does -- init idempotence, the cached Arc, the Add
+      # fixture's tensor, and the pool's concurrency. (#641)
+      - name: the tests behind the onnx-runtime feature
+        if: ${{ !cancelled() }}
+        run: cargo test -p pdf-ocr --features onnx-runtime --locked --test ort_runtime
+
+      # Same shape, same reason: the `ModelError` round trip in
+      # `crates/pdf-engine/src/error.rs` is gated on `ort`, a non-default
+      # feature, so `--workspace` above never compiles it. What it holds is
+      # that a model failure rides `EngineError::Io` and downcasts back to
+      # the same kind. (#641)
+      - name: the tests behind the ort feature
+        if: ${{ !cancelled() }}
+        run: cargo test -p pdf-engine --features ort --locked --lib error::tests::a_model_error_round_trips
+
+      # Same shape, same reason: release artefacts build with
+      # `--cfg pdfluent_release` (scripts/release/release_rustflags.sh), which
+      # drops pdf-manip's checkout-only CMap and font-pack lookups so the
+      # runner's path never ships. `--workspace` above never sets it, so this
+      # compiles that variant and runs its unit tests (80 s cold on the Mac,
+      # 387 tests). RUSTFLAGS replaces the job's, so -D warnings is repeated.
+      - name: the pdf-manip tests under the release cfg
+        if: ${{ !cancelled() }}
+        env:
+          RUSTFLAGS: -D warnings --cfg pdfluent_release
+        run: python3 scripts/ci/tests_actually_ran.py cargo -- cargo test -q -p pdf-manip --locked --lib
+
+      # Same shape, same reason: `crates/pdf-engine/tests/layout_parity.rs`,
+      # `crates/pdf-engine/tests/balanced_parity.rs` and
+      # `crates/pdf-engine/tests/balanced_tatr.rs`,
+      # `crates/pdf-engine/tests/a_region_fragment_grid_in_a_balanced_box.rs` and
+      # `crates/pdf-engine/tests/rule_a_balanced.rs` gate their whole files on
+      # `ort-layout`, a non-default feature, and
+      # `crates/pdf-engine/tests/quality.rs` gates its missing-model test
+      # the same way, so `--workspace` above never compiles them. What they
+      # hold is the layout model tier: the unit tests pin the HF
+      # post-processing, the PIL resampler and the balanced page assembly,
+      # and the parity tests run Heron-ft ep03 against the HF reference and
+      # the assembly against the Python adapter -- only when their
+      # `PDFLUENT_*_PARITY_DIR` (and for the model, `PDFLUENT_MODEL_DIR`)
+      # are set, which no CI machine does, so in CI those tests skip aloud
+      # and the unit tests are the verdict. The quality test needs no model:
+      # it points the tier at a scratch dir and asserts the refusal; the
+      # TATR-hook test needs none either (the fake seam), and runs under
+      # this feature with and without `ort-tables`. (#641)
+      - name: the tests behind the ort-layout feature
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test -p pdf-engine --features ort-layout --locked --lib layout::
+          cargo test -p pdf-engine --features ort-layout --locked --test layout_parity
+          cargo test -p pdf-engine --features ort-layout --locked --lib balanced::
+          cargo test -p pdf-engine --features ort-layout --locked --test balanced_parity
+          cargo test -p pdf-engine --features ort-layout --locked --test quality
+          cargo test -p pdf-engine --features ort-layout --locked --test balanced_tatr
+          cargo test -p pdf-engine --features ort-layout --locked --test a_region_fragment_grid_in_a_balanced_box
+          cargo test -p pdf-engine --features ort-layout --locked --test rule_a_balanced
+
+      # Same shape, same reason: `crates/pdfluent-cli/src/cmd_models.rs` gates
+      # the install machinery and `crates/pdfluent-cli/tests/cmd_models.rs` and
+      # one test in `tests/cmd_extract.rs` gate their assertions on
+      # `ort-layout`, a non-default feature, so `--workspace` above never
+      # compiles them. What they hold is the CLI half of the balanced tier:
+      # the install verifies bytes against pins without a socket, `models
+      # status` reports a scratch dir, the install refuses on TODO pins, and
+      # `--quality balanced` names the missing path. No model, no library, no
+      # network. (#641)
+      - name: the CLI tests behind the ort-layout feature
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test -p pdfluent-cli --features ort-layout --locked --lib cmd_models::
+          cargo test -p pdfluent-cli --features ort-layout --locked --test cmd_models
+          cargo test -p pdfluent-cli --features ort-layout --locked --test cmd_extract
+
+      # Same shape, same reason: one test in
+      # `crates/pdfluent-cli/tests/cmd_extract.rs` gates its assertion on
+      # `ort-tables`, a non-default feature, so `--workspace` above never
+      # compiles it. What it holds is the CLI half of TATR in the balanced
+      # tier: `--table-model-dir` reaches the TATR loader, and a missing
+      # model refuses naming the package. No model, no library, no network.
+      # (#636)
+      # And the models end-to-end in `crates/pdfluent-cli/tests/cmd_models.rs`
+      # gates on both features: an install out of local copies, then
+      # `balanced` (and TATR) with no flags -- skipped loudly without the
+      # local weights and library, which no CI machine holds. (#636)
+      - name: the CLI tests behind the ort-layout,ort-tables features
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test -p pdfluent-cli --features ort-layout,ort-tables --locked --test cmd_extract
+          cargo test -p pdfluent-cli --features ort-layout,ort-tables --locked --test cmd_models
+
+      # Same shape, same reason: `crates/pdf-engine/tests/
+      # tatr_postprocess_matches_python.rs` gates its whole file on
+      # `ort-tables`, a non-default feature, so `--workspace` above never
+      # compiles it. What it holds is the TATR port's parity with the
+      # vendored Python on the committed fixtures (no model, no dylib),
+      # and -- only when `PDFLUENT_ORT_TEST_DYLIB` names a real ONNX
+      # Runtime 1.23.2 and `PDFLUENT_TATR_TEST_MODEL_DIR` the pinned
+      # package, which no CI machine does -- real inference within 1e-3
+      # of the fixture logits. `tatr_engine_hook.rs` rides the same run
+      # for its own `ort-tables` half (the model-missing refusal and the
+      # three-page end-to-end, skipped loudly without a dylib); its fake
+      # seam runs on every build under the plain suite. The `tables_tatr`
+      # unit tests ride the same feature through the module gate in
+      # `learned/mod.rs` -- the pin, the spec, the preprocess, the decode
+      # and the fires rule -- so the `--lib` line runs them. No test needs
+      # `ort-layout` and `ort-tables` together: `balanced_tatr.rs` runs
+      # under `ort-layout` with and without this feature. (#636)
+      - name: the tests behind the ort-tables feature
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test -p pdf-engine --features ort-tables --locked --lib learned::tables_tatr::
+          cargo test -p pdf-engine --features ort-tables --locked --test tatr_postprocess_matches_python
+          cargo test -p pdf-engine --features ort-tables --locked --test tatr_engine_hook
 
       # PDF/A, on the pipeline that blocks a merge (#286).
       #
@@ -250,12 +786,33 @@ jobs:
           # mutool reads the converted text back. An independent extractor on
           # purpose: grading our own output with our own parser measures the
           # parser. No `|| true` on either -- see scripts/ci/install_verapdf.sh.
-          $SUDO apt-get update -qq
-          $SUDO apt-get install -y -qq mupdf-tools unzip
+          #
+          # Through the wrapper, because this instance is minutes old and
+          # unattended-upgrades still holds dpkg's lock. That is what killed this
+          # step, and the two below it, on wave 34163246411. (#448)
+          bash scripts/ci/apt_get.sh update -qq
+          bash scripts/ci/apt_get.sh install -y -qq mupdf-tools unzip
           $SUDO env "JAVA_HOME=${JAVA_HOME}" "PATH=${PATH}" \
             bash scripts/ci/install_verapdf.sh /opt/verapdf
           echo "/opt/verapdf" >> "$GITHUB_PATH"
           mutool -v
+
+      # THE INDEPENDENT SIDE, AND ONLY WHEN IT IS THE ONE BEING MEASURED (#365).
+      # Pinned to 10.07.1 and built from a verified tarball rather than taken
+      # from apt: Ghostscript is the column every published PDF/A comparison
+      # stands next to, and a distribution's 10.02 under a table that says
+      # 10.07.1 is a number attributed to software that never ran. Four minutes
+      # of an instance that is about to spend three hours.
+      - name: Install the Ghostscript the comparison names
+        if: ${{ inputs.converter == 'ghostscript' }}
+        run: |
+          set -euo pipefail
+          SUDO=""
+          [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+          bash scripts/ci/apt_get.sh install -y -qq build-essential libfontconfig1-dev \
+            libfreetype6-dev libjpeg-dev libpng-dev zlib1g-dev
+          $SUDO bash scripts/pdfa/install_ghostscript.sh /opt/ghostscript
+          echo "/opt/ghostscript/bin" >> "$GITHUB_PATH"
       - name: PDF/A conversion output conforms and keeps its text
         if: ${{ !cancelled() }}
         run: |
@@ -283,6 +840,47 @@ jobs:
             *) exit "$rc" ;;
           esac
 
+      - name: Text extraction measures its four axes
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          # poppler is the second foreign reader. Two of them, because a single
+          # oracle that is wrong makes every document agree with it, and the
+          # rig takes whichever found more -- the largest claim a free tool
+          # supports about what the document contains.
+          bash scripts/ci/apt_get.sh install -y -qq poppler-utils
+          pdftotext -v
+          cargo build --release -p pdfluent-cli
+          python3 scripts/ci/fetch_gate_corpus.py \
+            --manifest corpus/GATE_CORPUS_MANIFEST.json \
+            --out "${RUNNER_TEMP}/gate-corpus"
+          # Measures and reports; it does not yet judge. The baseline committed
+          # with #367 is macOS, and this is the run that produces the Linux one.
+          # The ratchet that turns these numbers into a verdict arrives with the
+          # shared comparison core (#366).
+          #
+          # What this step needs on the instance, checked rather than assumed
+          # after it died here on wave 34163246411 (#448): both scripts import
+          # the standard library only, so there is nothing to pip-install; the
+          # extraction manifest and the gate corpus manifest name the same 500
+          # documents, which scripts/ci/the_extraction_set_names_the_corpus_it_is_given.py
+          # now keeps true before the push; and the fetcher writes the corpus
+          # flat, which is the layout `--corpus-dir` is read with. The only
+          # thing missing was the apt above being able to take the lock.
+          #
+          # --quiet-machine: this instance is created for this wave and runs one
+          # job. That is the condition under which a wall clock may be compared
+          # with another run's at all -- on a shared machine the same build
+          # measured 3x slower and would have turned 441 of 500 documents red.
+          python3 scripts/extraction/extraction_axes.py \
+            --set gate --corpus-dir "${RUNNER_TEMP}/gate-corpus" \
+            --binary target/release/pdfluent-cli \
+            --machine-class runner-hetzner-ephemeral \
+            --commit "${GITHUB_SHA}" \
+            --quiet-machine \
+            --out "${RUNNER_TEMP}/extraction-run.json"
+          echo "::notice::Extraction axes measured on linux. The numbers to record as the linux baseline are in the log."
+
       # What used to be four workflows, each creating its own instance. One push
       # fired them together and Hetzner made five cpx42s inside five minutes
       # (#275). They are steps on the one instance now; the workflows they came
@@ -292,15 +890,18 @@ jobs:
           cargo test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver --release
           cargo test -p pdf-xfa --test '*' --release
 
+      # THE SAME SCRIPT THE PRE-PUSH LANE RUNS, and that is the point of it
+      # being a script at all (#483). These two lines lived here as a command,
+      # nothing local compiled for wasm32, and a dependency cfg'd out on wasm32
+      # by #383 left a dead enum variant that only this step could see: it
+      # passed every gate, landed, and turned master red here two hours later.
+      # The lane runs it now as well, so what breaks the browser build is red
+      # before the push -- and one file rather than two spellings, because two
+      # spellings of one compile drift and the lane's would be the one nobody
+      # re-derives. The `rustup target add` trap of #1539/#1547 lives in it.
       - name: wasm surface
         run: |
-          # Not plain `rustup target add`: that lands on the default toolchain,
-          # which is `stable` here, while rust-toolchain.toml pins 1.94.0 and
-          # that is what cargo will use. Same trap as #1539 -- a target on the
-          # wrong toolchain gives "can't find crate for `core`". Codex, #1547.
-          rustup target add wasm32-unknown-unknown \
-            --toolchain "$(rustup show active-toolchain | cut -d" " -f1)"
-          cargo check --target wasm32-unknown-unknown -p pdfluent --tests
+          bash scripts/ci/run_wasm_check.sh
           cargo test -p pdfluent --test wasm_surface
 
       # This step built the extractor and stopped there, which measures
@@ -331,7 +932,16 @@ jobs:
       #
       # No `continue-on-error`. A gate that cannot fail is the thing this
       # replaced.
+      #
+      # `!cancelled()`, like the ratchet below it and for the ratchet's sake: the
+      # ratchet runs whatever happened above it, and on 09-09-2026 an earlier
+      # step failed, this one was skipped with it, and the ratchet reported
+      # "500 document(s) in the manifest are not in corpus/gate" -- a red about
+      # a missing corpus standing in front of the red that actually happened
+      # (#483). A step the ratchet needs has to run exactly when the ratchet
+      # does.
       - name: Fetch the gate corpus and prove it is the pinned set
+        if: ${{ !cancelled() }}
         run: |
           python3 scripts/ci/fetch_gate_corpus.py \
             --manifest corpus/GATE_CORPUS_MANIFEST.json \
@@ -339,12 +949,68 @@ jobs:
 
       - name: Nothing in the gate corpus crashes or hangs the renderer
         run: |
-          cargo build --release -p xfa-cli --bin pdfluent
+          cargo build --release -p xfa-cli --bin xfa-runner
           python3 scripts/ci/gate_corpus_no_crash.py \
-            --binary target/release/pdfluent \
+            --binary target/release/xfa-runner \
             --corpus corpus/gate \
             --known corpus/GATE_CORPUS_KNOWN_CRASHES.json \
             --workers 8
+
+      # The PDF/A improvement loop (#366, epic #376). One verdict over the four
+      # axes -- conformance, cost, fidelity, retention -- per document, against
+      # benchmarks/pdfa/baseline.json. Here and not in the landing lane for the
+      # dull reason: this is where veraPDF, mutool and the pinned corpus already
+      # are, and a ratchet on a machine with no corpus can only exit 2.
+      #
+      # Node is for benchmarks/pdfa/reproduce/compare.mjs, which is the harness
+      # a stranger runs to check the claim. The ratchet calls it rather than
+      # measuring the four axes a second time: two implementations of one
+      # measurement is two sets of numbers to reconcile.
+      - name: Set up Node for the PDF/A comparison harness
+        if: ${{ !cancelled() }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: No document got worse on any of the four PDF/A axes
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          RATCHET=scripts/ci/loop/pdfa_ratchet.py
+          CONVERTER="$PWD/target/release/examples/pdfa_convert_real"
+          # `--has-baseline` measures nothing and answers one question, so that
+          # "there is no baseline for linux yet" and "the baseline says a
+          # document got worse" cannot arrive as the same exit code. The first
+          # run on a platform records; every run after it judges. Committing
+          # what it records goes through
+          # scripts/ci/loop/a_baseline_only_moves_with_a_ticket.py, like every
+          # other baseline move -- a gate does not write what it judges against.
+          if python3 "$RATCHET" --has-baseline; then
+            python3 "$RATCHET" \
+              --manifest corpus/GATE_CORPUS_MANIFEST.json \
+              --corpus-dir corpus/gate \
+              --converter "$CONVERTER {in} {out}" \
+              --workdir "${RUNNER_TEMP}/pdfa-ratchet"
+          else
+            echo "::notice::No PDF/A baseline for this platform yet. Recording one; \
+            it judges nothing until the recorded file is committed (see \
+            docs/PDFA_ROUND_PROTOCOL.md, step 9)."
+            python3 "$RATCHET" \
+              --manifest corpus/GATE_CORPUS_MANIFEST.json \
+              --corpus-dir corpus/gate \
+              --converter "$CONVERTER {in} {out}" \
+              --workdir "${RUNNER_TEMP}/pdfa-ratchet" \
+              --record "${RUNNER_TEMP}/pdfa-baseline-recorded.json"
+          fi
+      - name: Keep what the ratchet measured
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdfa-ratchet
+          path: |
+            ${{ runner.temp }}/pdfa-ratchet/compare.json
+            ${{ runner.temp }}/pdfa-baseline-recorded.json
+          if-no-files-found: warn
+          retention-days: 1
       # SSIM regression, from #1349 -- opened 25-04-2026, never merged, and its
       # own workflow ran once and failed. It is not resurrected as a workflow:
       # `ssim-gate.yml` was `runs-on: ubuntu-latest` and compiles the CLI, so it
@@ -361,79 +1027,40 @@ jobs:
       - name: SSIM regression against the pinned fifty
         if: ${{ !cancelled() }}
         run: |
+          # Exit 3 is "measured nothing, did not judge" -- the same convention
+          # the PDF/A step above uses, and the reason this step needed changing.
+          # The presence check has always said SKIPPED (not a pass) and exited
+          # 3, but the body ran under `set -euo pipefail`, so the step turned
+          # that verdict into a red job. Measured on run 34088643890
+          # (07-09-2026): the wave was red on a corpus that is simply not on the
+          # machine, in the same colour a real SSIM regression would have used,
+          # which is the one distinction the exit-3 branch exists to draw.
+          # (#361)
+          #
+          # `set +e` around the call rather than `continue-on-error` on the
+          # step: continue-on-error would swallow a real regression too. 0 and 3
+          # pass, anything else fails -- and 3 is unambiguous here, because
+          # check_ssim_gate.py returns only 0, 1 or 2, and the presence check
+          # answers 2 when the manifest itself cannot be read.
           set -euo pipefail
-          # The pinned fifty are IRS and USCIS forms named in
-          # corpus/SSIM_GATE_MANIFEST.json as paths inside the repository. Those
-          # files left the repository on 26-05-2026 in 2e3d2052 ("M9-A release
-          # hygiene"), and the gate stayed pinned to them: 48 of the 50 have been
-          # missing ever since. `prepare_ci_corpus.py` does fail on that -- "too
-          # many failures (48/50)" -- so this was never a silent pass. But it has
-          # been failing on its INPUT rather than on rendering quality for three
-          # months, and from the outside that is indistinguishable from a real
-          # SSIM regression.
-          #
-          # The fetch step above does not supply them either: it writes the 500
-          # pdfjs/pdfbox/veraPDF documents into corpus/gate, and none of the fifty
-          # pinned names appears among them. Checked on name and on path: 0 of 50.
-          #
-          # So the step says what is missing and stops, in the shape the rest of
-          # this repository uses for a measurement that could not be made. It is
-          # NOT re-pinned to whatever the fetch happens to provide: the 0.94 mean
-          # and the 35% fully-correct floor are calibrated against these fifty
-          # documents, and a threshold carried over to a different corpus is a
-          # number that has stopped meaning anything. The gate returns with its
-          # own corpus, in the ephemeral snapshot. (#276)
-          staat=$(python3 - <<'PY'
-          import json, pathlib, hashlib
-          e = json.load(open("corpus/SSIM_GATE_MANIFEST.json"))["entries"]
-          weg, verkeerd = [], []
-          for x in e:
-              p = pathlib.Path(x["source"])
-              if not p.is_file():
-                  weg.append(x["file"]); continue
-              # Presence is not identity. These are IRS and USCIS forms and they are
-              # reissued every year, so a runner carrying THIS year's f1040.pdf would
-              # otherwise satisfy a file-count check and be scored against thresholds
-              # calibrated on a different document. The sha256 comes from the bytes
-              # the 0.94/35% numbers were measured on, recovered from git history.
-              h = hashlib.sha256(p.read_bytes()).hexdigest()
-              if x.get("sha256") and h != x["sha256"]:
-                  verkeerd.append(x["file"])
-          print(len(weg), len(verkeerd), len(e))
-          print(" ".join(weg[:5]))
-          print(" ".join(verkeerd[:5]))
-          PY
-          )
-          aantal=$(printf '%s\n' "$staat" | sed -n 1p)
-          weg_namen=$(printf '%s\n' "$staat" | sed -n 2p)
-          verkeerd_namen=$(printf '%s\n' "$staat" | sed -n 3p)
-          set -- $aantal
-          if [ "$1" -gt 0 ]; then
-            echo "SKIPPED (not a pass): $1/$3 pinned forms not on this runner." >&2
-            echo "  first missing: $weg_namen" >&2
-            echo "  corpus/SSIM_GATE_MANIFEST.json names them as paths inside the" >&2
-            echo "  repository; they were removed in 2e3d2052 on 26-05-2026 and the" >&2
-            echo "  gate corpus fetched above contains none of them. No page was" >&2
-            echo "  rendered and no SSIM was computed, so this is not a regression" >&2
-            echo "  and not a pass. The 0.94/35% thresholds return with the corpus," >&2
-            echo "  not as lower numbers. (#276)" >&2
-            exit 3
-          fi
-          if [ "$2" -gt 0 ]; then
-            echo "SKIPPED (not a pass): $2/$3 pinned forms are present but are not the" >&2
-            echo "  documents these thresholds were calibrated on: $verkeerd_namen" >&2
-            echo "  IRS and USCIS reissue their forms, so a runner can carry a file of" >&2
-            echo "  the right name and the wrong year. Scoring 0.94 mean and 35% fully" >&2
-            echo "  correct against a different document is a number that has stopped" >&2
-            echo "  meaning anything. Rebuild the snapshot from the pinned bytes. (#276)" >&2
-            exit 3
-          fi
-          cargo build --release -p xfa-cli --bin pdfluent
+          set +e
+          python3 scripts/ci/ssim_gate_corpus_is_present.py \
+            --manifest corpus/SSIM_GATE_MANIFEST.json
+          rc=$?
+          set -e
+          case "$rc" in
+            0) ;;
+            3) echo "::notice::SSIM gate SKIPPED (not a pass): the pinned fifty are not on this runner, so no page was rendered and no SSIM was computed. See the log for which are missing."
+               exit 0 ;;
+            *) exit "$rc" ;;
+          esac
+
+          cargo build --release -p xfa-cli --bin xfa-runner
           python3 scripts/prepare_ci_corpus.py \
             --manifest corpus/SSIM_GATE_MANIFEST.json \
             --out corpus/ssim-gate-50
           python3 scripts/run_gate_ssim.py \
-            --binary target/release/pdfluent \
+            --binary target/release/xfa-runner \
             --corpus corpus/ssim-gate-50 \
             --out "${RUNNER_TEMP}/ssim_gate_result.json" \
             --threshold 0.94 --dpi 150 --workers 2
@@ -531,8 +1158,21 @@ jobs:
             exit 1
           fi
 
+      # The native suites cannot see what only happens on wasm32: signing read
+      # the clock with SystemTime::now(), which compiles there and traps, so
+      # every browser signature died while everything native stayed green
+      # (#617). This calls each 1.1.0 browser tool once through the .wasm that
+      # was just built. Node comes from the PDF/A step above.
+      - name: The browser tools survive the crossing into JavaScript
+        run: node crates/xfa-wasm/tests/browser_tools_node.mjs crates/xfa-wasm/pkg
+
+      # `github.event_name == 'push'` stood here and there is no push trigger
+      # any more (#350), so the condition could only ever be false and the
+      # website would have stopped being rebuilt silently. Every wave runs
+      # against master, which is the state the site should reflect, so the
+      # remaining condition is the one that was doing work: is there a token.
       - name: Trigger website rebuild
-        if: github.event_name == 'push' && env.WEBSITE_DEPLOY_TOKEN != ''
+        if: env.WEBSITE_DEPLOY_TOKEN != ''
         env:
           WEBSITE_DEPLOY_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
         uses: peter-evans/repository-dispatch@v3
@@ -540,6 +1180,727 @@ jobs:
           token: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
           repository: pdfluent/pdfluent-playground
           event-type: wasm-updated
+
+  # THE FOUR SUITES THAT USED TO RUN ON THE DESKTOP, ONE PER LANDING (#350).
+  #
+  # They keep their own files -- each carries a page of measured reasoning about
+  # what it checks and what it once got wrong, and folding four workflows into
+  # one file would put that page where nobody looking for it would think to
+  # read. What changed is where they run: `workflow_call` with the label of the
+  # instance this wave bought, so the boot and the snapshot download are paid
+  # once for all five jobs.
+  #
+  # They run one after another, not beside each other. A self-hosted runner
+  # takes one job at a time and this wave has exactly one runner, so `needs:
+  # create-runner` on each of them means "queue behind whatever is on the
+  # instance", which is what makes the two-hourly cadence the right one.
+  #
+  # `secrets: inherit`, because a called workflow gets no secrets otherwise and
+  # three of the four need one: the runner PAT is not among them, but
+  # PDFREST_API_KEYS_JSON and GITHUB_TOKEN are.
+  visual-regression:
+    needs: create-runner
+    if: needs.create-runner.outputs.overslaan != 'true'
+    uses: ./.github/workflows/visual-regression.yml
+    with:
+      runner_label: ${{ needs.create-runner.outputs.label }}
+    secrets: inherit
+
+  java-bindings:
+    needs: create-runner
+    if: needs.create-runner.outputs.overslaan != 'true'
+    uses: ./.github/workflows/java-bindings.yml
+    with:
+      runner_label: ${{ needs.create-runner.outputs.label }}
+    secrets: inherit
+
+  enterprise-acceptance:
+    needs: create-runner
+    if: needs.create-runner.outputs.overslaan != 'true'
+    uses: ./.github/workflows/enterprise-acceptance.yml
+    with:
+      runner_label: ${{ needs.create-runner.outputs.label }}
+    secrets: inherit
+
+  security-audit:
+    needs: create-runner
+    if: needs.create-runner.outputs.overslaan != 'true'
+    # THE ONE CALL THAT NEEDS A PERMISSIONS BLOCK, and it is not decoration:
+    # without it the whole workflow is refused before a job starts. Measured on
+    # run 34050078405, the first dispatch after #350 landed --
+    #
+    #   Invalid workflow file: ci-ephemeral.yml#L684. Error calling workflow
+    #   security-audit.yml. The workflow is requesting 'issues: write,
+    #   pull-requests: write', but is only allowed 'issues: none,
+    #   pull-requests: none'.
+    #
+    # A called workflow may ask for no more than the CALLING JOB holds, and a
+    # job that names no permissions gets this repository's default, which is
+    # read-only. So the scopes security-audit.yml declares are granted here and
+    # nowhere else: on this job rather than on the workflow, so the other four
+    # jobs of the wave keep the read-only token they need and no more.
+    #
+    # The list is a copy of another file's `permissions:` block, which is the
+    # one thing about it worth watching. `checks: write` arrived in
+    # security-audit.yml on 09-09-2026 and not here, and every wave from that
+    # landing until this one -- the two-hourly schedule included -- was refused
+    # before a job started, with the same "requesting ... but is only allowed"
+    # message as above. scripts/ci/a_caller_grants_what_it_calls.py compares
+    # the two so the next addition cannot cost a day of waves.
+    #
+    # `contents: read` is written out because naming any scope drops every
+    # scope not named, and the checkout would go with it.
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      checks: write
+    uses: ./.github/workflows/security-audit.yml
+    with:
+      runner_label: ${{ needs.create-runner.outputs.label }}
+    secrets: inherit
+
+  # THE FIDELITY AXIS OF #380, AND WHY IT IS DISPATCH-ONLY.
+  #
+  # #1781 measured 24 -> 11 visibly changed documents on Linux. The eleven names
+  # did not survive: the instance was reaped and the count reached the tracker
+  # as prose, so #380 opens by paying for the same measurement again to learn
+  # which eleven. That is the whole reason this job writes an evidence bundle
+  # and uploads it before it can be reaped, and the reason `--evidence` is not
+  # optional here.
+  #
+  # `inputs.fidelity` is false on a schedule (a scheduled run has no inputs at
+  # all), so the two-hourly wave is unaffected and this costs nothing until
+  # somebody asks for it.
+  pdfa-fidelity:
+    needs: create-runner
+    if: >-
+      needs.create-runner.outputs.overslaan != 'true' &&
+      inputs.fidelity
+    runs-on: ${{ needs.create-runner.outputs.label }}
+    # Three hundred documents on the four axes plus Ghostscript is about an hour
+    # (#385), so the thousand of #461 needs a ceiling that is not the same
+    # number. Measured and not guessed: the ceiling is the budget the ticket
+    # states, four hours per capability per round.
+    # The second arm is a whole extra conversion-and-render pass, so a two-arm
+    # thousand-document round is two of them: about seven hours against a
+    # seven-hour ceiling, which the checkout and the compile alone would push
+    # over. The ceiling follows the number of passes rather than being a number
+    # that used to be right. Found by review on #1880.
+    timeout-minutes: >-
+      ${{ (inputs.set == 'tuning1000' || inputs.set == 'holdout1000')
+          && (inputs.remetric_off_arm && 780 || 420)
+          || (inputs.remetric_off_arm && 330 || 180) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        with:
+          toolchain: stable
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install the readers this is measured with
+        run: |
+          set -euo pipefail
+          SUDO=""
+          [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+          bash scripts/ci/apt_get.sh update -qq
+          bash scripts/ci/apt_get.sh install -y -qq mupdf-tools poppler-utils unzip \
+            python3-numpy python3-pil python3-skimage
+          $SUDO env "JAVA_HOME=${JAVA_HOME}" "PATH=${PATH}" \
+            bash scripts/ci/install_verapdf.sh /opt/verapdf
+          echo "/opt/verapdf" >> "$GITHUB_PATH"
+          mutool -v
+
+      # THE INDEPENDENT SIDE, AND ONLY WHEN IT IS THE ONE BEING MEASURED (#365).
+      # Pinned to 10.07.1 and built from a verified tarball rather than taken
+      # from apt: Ghostscript is the column every published PDF/A comparison
+      # stands next to, and a distribution's 10.02 under a table that says
+      # 10.07.1 is a number attributed to software that never ran. Four minutes
+      # of an instance that is about to spend three hours.
+      - name: Install the Ghostscript the comparison names
+        if: ${{ inputs.converter == 'ghostscript' }}
+        run: |
+          set -euo pipefail
+          SUDO=""
+          [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+          bash scripts/ci/apt_get.sh install -y -qq build-essential libfontconfig1-dev \
+            libfreetype6-dev libjpeg-dev libpng-dev zlib1g-dev
+          $SUDO bash scripts/pdfa/install_ghostscript.sh /opt/ghostscript
+          echo "/opt/ghostscript/bin" >> "$GITHUB_PATH"
+
+      # The set comes from scripts/pdfa/fetch_the_set.sh, which is the same
+      # thirty-five lines this step used to carry inline and which the
+      # performance axis below needs too. One reader of the manifest cannot
+      # drift from itself; two copies of it can, and the rule they carry --
+      # derive the zip list from the manifest -- is one this job has already
+      # got wrong once.
+      - name: Fetch the chosen set and the converter under test
+        env:
+          PDFA_SOURCE: ${{ runner.temp }}/pdfa-300
+          SET: ${{ inputs.set || 'pdfa-300' }}
+        run: |
+          set -euo pipefail
+          cargo build --release -p pdf-manip --example pdfa_convert_real
+          bash scripts/pdfa/fetch_the_set.sh "$SET" "$PDFA_SOURCE" \
+            "${RUNNER_TEMP}/set-documents.txt"
+
+      # A PRIOR CANDIDATE, WITHOUT RENDERING IT AGAIN (#454).
+      #
+      # Only when a run id was given, and only ever additive: the eval matches
+      # the downloaded rows per document on the source digest and renders any
+      # document it cannot match. A download that fails is a run without a
+      # `before`, which is the ordinary case, so it does not stop the wave.
+      - name: Fetch the baseline this run compares against
+        if: ${{ inputs.baseline_run_id != '' }}
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          # The converter too, and not only the set: a `before` borrowed from
+          # the other side of the comparison would put Ghostscript's pages in
+          # our own regression columns.
+          name: pdfa-fidelity-${{ inputs.baseline_run_id }}-${{ inputs.set || 'pdfa-300' }}-${{ inputs.converter || 'shipped' }}
+          run-id: ${{ inputs.baseline_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/pdfa-baseline
+
+      # compare.mjs and pdfa_round2_eval.py are the engines; the axis reads what
+      # they wrote. Two implementations of one comparison would be two sets of
+      # numbers to reconcile, not a check on the first.
+      #
+      # CONVERTING AND MEASURING ARE TWO STEPS, AND THE SECOND ARM CONVERTS
+      # BETWEEN THEM (#547). They were one step, and the second arm converted
+      # AND measured in a step of its own -- so the eval ran twice and rendered
+      # the source twice: four sets of the corpus for two candidates. One call
+      # measures both arms now. It also makes the eval's wall clock readable in
+      # the log instead of something to subtract compare.mjs from, which is how
+      # #454 had to arrive at its figure.
+      - name: Convert the set
+        id: convert
+        env:
+          PDFA_SOURCE: ${{ runner.temp }}/pdfa-300
+          PDFA_AFTER: ${{ runner.temp }}/pdfa-after
+          # Named here because a step does not inherit the env of the step
+          # before it. The refusal branch below used to read `$SET` without
+          # this, so `set -u` took the step down on the one path that was meant
+          # to keep it up.
+          SET: ${{ inputs.set || 'pdfa-300' }}
+          CONVERTER: ${{ inputs.converter || 'shipped' }}
+          # Empty unless the experiment arm was asked for. The converter reads
+          # the variable's presence, so an empty value must not be exported --
+          # hence the conditional below rather than a plain env entry.
+          JOIN_ALL: ${{ inputs.join_all_fragments && '1' || '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$PDFA_AFTER"
+          if [ -n "$JOIN_ALL" ]; then
+            export PDFA_JOIN_ALL_FRAGMENTS=1
+            echo "::notice::experiment arm: joining every split page"
+          fi
+          # THE INDEPENDENT SIDE GOES THROUGH THE REGISTER, NOT THROUGH THIS FILE.
+          #
+          # `run_matrix.py` is the one reader of CONVERTERS.toml: it resolves the
+          # recipe, asks the binary its version, and copies the licence verdict
+          # into the run file beside the numbers. A `gs -dPDFA=2 ...` command
+          # line written out here would be a second copy of the recipe, in a
+          # file no guard reads, under a claim that says the run used the
+          # documented one. It writes into <workdir>/<converter id>, which is
+          # then MOVED to $PDFA_AFTER -- a rename on the same filesystem, so the
+          # steps below need to know nothing about which arm ran.
+          if [ "$CONVERTER" = "ghostscript" ]; then
+            gs --version
+            rmdir "$PDFA_AFTER"
+            python3 benchmarks/pdfa/reproduce/run_matrix.py \
+              --only ghostscript \
+              --corpus-dir "$PDFA_SOURCE" \
+              --list "${RUNNER_TEMP}/set-documents.txt" \
+              --workdir "${RUNNER_TEMP}/pdfa-matrix" \
+              --out "${RUNNER_TEMP}/pdfa-comparison" --tag "$SET"
+            mv "${RUNNER_TEMP}/pdfa-matrix/ghostscript" "$PDFA_AFTER"
+          else
+            node benchmarks/pdfa/reproduce/compare.mjs \
+              --corpus-dir "$PDFA_SOURCE" \
+              --list "${RUNNER_TEMP}/set-documents.txt" \
+              --converter "target/release/examples/pdfa_convert_real {in} {out}" \
+              --name candidate --workdir "$PDFA_AFTER"
+          fi
+
+      # THE SECOND ARM CONVERTS HERE AND IS MEASURED BY THE STEP BELOW.
+      #
+      # Two arms measured in two runs are two measurements of two trees: master
+      # moves, and a difference between them can come from anything that landed
+      # in between. That already cost #380 one comparison. Here the only thing
+      # that differs between the two conversions is the environment variable --
+      # and, since #547, the two candidates are measured against ONE render of
+      # the source, in one call, so not even the reader's mood differs.
+      - name: The other way of keeping the geometry, for comparison
+        # The shipped converter only. This arm runs `pdfa_convert_real`
+        # unconditionally, so pairing it with `converter=ghostscript` would put
+        # two DIFFERENT converters in one bundle and call the difference between
+        # them a width-fitting comparison. The whole point of measuring both
+        # arms on one instance is that nothing but the variable differs.
+        if: ${{ inputs.remetric_off_arm && (inputs.converter || 'shipped') == 'shipped' }}
+        env:
+          PDFA_SOURCE: ${{ runner.temp }}/pdfa-300
+          PDFA_OTHER: ${{ runner.temp }}/pdfa-other
+          # A step does not inherit the environment of the step before it, so
+          # the join-all arm has to be named again here. Without it a dispatch
+          # asking for both inputs produced two arms differing in TWO things,
+          # and no difference between them could be attributed to the width
+          # fitting -- which is the only thing this arm exists to measure.
+          # Found by review on #1880.
+          JOIN_ALL: ${{ inputs.join_all_fragments && '1' || '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$PDFA_OTHER"
+          export PDFA_REMETRIC_SUBSTITUTES=1
+          if [ -n "$JOIN_ALL" ]; then
+            export PDFA_JOIN_ALL_FRAGMENTS=1
+          fi
+          echo "::notice::second arm: the substitute program re-metricked to the declared widths"
+          node benchmarks/pdfa/reproduce/compare.mjs \
+            --corpus-dir "$PDFA_SOURCE" \
+            --list "${RUNNER_TEMP}/set-documents.txt" \
+            --converter "target/release/examples/pdfa_convert_real {in} {out}" \
+            --name candidate --workdir "$PDFA_OTHER"
+
+      # A SECOND ARM THAT FELL OVER MUST NOT COST THE FIRST ITS MEASUREMENT.
+      # The conversions are the expensive half of this job, and they are behind
+      # us by the time this step runs. When the eval measured each arm inside
+      # its own step, a failure in the second arm's step left the first arm
+      # measured; now that one call measures both, that only stays true if this
+      # step runs on a failed second conversion. It does not run on a failed
+      # FIRST one: there would be nothing to measure, and a file full of
+      # refusals is worse than no file.
+      - name: Measure the four axes and every page
+        if: ${{ !cancelled() && steps.convert.outcome == 'success' }}
+        env:
+          PDFA_SOURCE: ${{ runner.temp }}/pdfa-300
+          PDFA_AFTER: ${{ runner.temp }}/pdfa-after
+          PDFA_OTHER: ${{ runner.temp }}/pdfa-other
+          SET: ${{ inputs.set || 'pdfa-300' }}
+          # A dispatch input, so the caller writes it. Interpolated into the
+          # `run:` block below it was not a value but a fragment of the script
+          # itself: `${{ }}` is substituted before bash ever sees the line, so a
+          # run id containing a quote and a semicolon runs as a command on the
+          # instance. Read as a variable it arrives as data.
+          # `scripts/ci/workflow_inputs_are_not_shell.py` refuses the other
+          # spelling, and was refusing this one -- unseen, because its only job
+          # is the hosted guards job and hosted Actions have been stopped since
+          # the budget went to EUR 1 (#333).
+          BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
+        run: |
+          set -euo pipefail
+          # ONE CANDIDATE, TWO SETS (#454); TWO CANDIDATES, THREE (#547).
+          #
+          # `--before` used to be required and was given "$PDFA_AFTER" -- the
+          # directory `--after` already named. The eval renders source, before
+          # and after, so every page of the corpus was rendered a third time
+          # for columns that came out copies, and the summary reported
+          # `output_pixels_identical` for the whole corpus: a comparison of the
+          # candidate with itself, true for any converter including a broken
+          # one. There is one candidate here, so it is named once.
+          #
+          # The second arm is named as `--also-after` rather than measured by a
+          # second call, because a second call would render the source a second
+          # time. It gets its own file, in which its columns are `after_*` --
+          # the axis below reads one candidate per file and is told nothing
+          # about a second arm. `scripts/ci/the_wave_renders_the_source_once.py`
+          # refuses the two-call shape.
+          #
+          # A REFUSED DOCUMENT IS A DOCUMENT, AND ON A DRAWN SET THERE WILL BE ONE.
+          #
+          # A document the converter refuses has no output PDF to render, so it
+          # carries errors and no pages. That used to be the eval's exit 1 and
+          # therefore this step's red -- run 34344290509 measured a thousand
+          # documents, wrote every file it was asked for, and reported failure
+          # over one of them. The count now travels in the summary and is judged
+          # where refusals are judged: per document by
+          # scripts/ci/loop/pdfa_ratchet.py, where a document that converted
+          # last round and refuses this one is exit 1. The eval's own exit code
+          # answers whether the measurement happened at all, and that stays fatal.
+          BASELINE="${RUNNER_TEMP}/pdfa-baseline/measurement/all-pages.json"
+          if [ -f "$BASELINE" ]; then
+            echo "::notice::borrowing the before columns from run $BASELINE_RUN_ID"
+          else
+            BASELINE=""
+          fi
+          # The directory exists only when the step above ran, so the second
+          # arm is asked for exactly when it was converted.
+          OTHER=""
+          if [ -d "$PDFA_OTHER" ]; then
+            OTHER="$PDFA_OTHER"
+            echo "::notice::measuring both arms against one render of the source"
+          fi
+          python3 crates/pdf-manip/examples/pdfa_round2_eval.py \
+            --source "$PDFA_SOURCE" --after "$PDFA_AFTER" \
+            ${BASELINE:+--baseline-result "$BASELINE"} \
+            ${OTHER:+--also-after "$PDFA_OTHER" --also-out "$PDFA_OTHER/all-pages.json"} \
+            --list "${RUNNER_TEMP}/set-documents.txt" \
+            --dpi 72 --workers 4 --out "$PDFA_AFTER/all-pages.json"
+          [ -f "$PDFA_AFTER/all-pages.jsonl" ] || {
+            echo "::error::the page evaluation wrote no all-pages.jsonl"; exit 1; }
+          [ -z "$OTHER" ] || [ -f "$PDFA_OTHER/all-pages.jsonl" ] || {
+            echo "::error::the second arm was converted and not measured"; exit 1; }
+          WITH_ERRORS=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['documents_with_errors'])" \
+            "$PDFA_AFTER/all-pages.json" 2>/dev/null || echo "?")
+          [ "$WITH_ERRORS" = "0" ] || echo "::notice::${WITH_ERRORS} document(s) of \
+          ${SET} produced no output to render (a refusal is in the denominator; \
+          the ratchet judges it per document)"
+
+      # The measurement is behind us; this is the verdict on the second arm's
+      # half of it. Its numbers came out of the one call above, in a file of
+      # its own in which its candidate is `after` -- so the axis runs here
+      # exactly as it runs for the first arm, and does not know there were two.
+      - name: The fidelity axis for the second arm
+        if: ${{ inputs.remetric_off_arm && (inputs.converter || 'shipped') == 'shipped' }}
+        env:
+          PDFA_OTHER: ${{ runner.temp }}/pdfa-other
+          # Read as a variable, never interpolated into the script: a `${{ }}`
+          # is substituted before bash sees the line, so a value carrying a
+          # quote and a semicolon would run as a command on the instance.
+          # `scripts/ci/workflow_inputs_are_not_shell.py` refuses the other
+          # spelling and refused this step's first draft.
+          SET: ${{ inputs.set || 'pdfa-300' }}
+        run: |
+          set -euo pipefail
+          # The role follows the set, exactly as the primary arm's does. Pinned
+          # to `tuning`, a `test300` or `holdout1000` run would file its
+          # per-document evidence under the wrong publication policy -- and the
+          # two arms of one round would disagree about what they measured.
+          case "$SET" in
+            test300)     ROLE=test ;;
+            holdout1000) ROLE=holdout ;;
+            *)           ROLE=tuning ;;
+          esac
+          python3 scripts/pdfa/pdfa_fidelity_axis.py \
+            --compare "$PDFA_OTHER/compare.json" \
+            --pages "$PDFA_OTHER/all-pages.jsonl" \
+            --set "$SET" --tuning-or-holdout "$ROLE" \
+            --machine-class runner-hetzner-ephemeral \
+            --commit "${GITHUB_SHA}" \
+            --run-id "${GITHUB_RUN_ID}-${SET}-remetricked" \
+            --out "$PDFA_OTHER/fidelity-run.json" \
+            --evidence "${RUNNER_TEMP}/pdfa-evidence/remetricked-arm"
+
+      - name: The fidelity axis, and the bundle that outlives the instance
+        env:
+          PDFA_AFTER: ${{ runner.temp }}/pdfa-after
+          # The arm is in the run id because two arms produce two bundles that
+          # are otherwise indistinguishable, and a comparison of the wrong two
+          # is worse than no comparison. The converter is in it for the same
+          # reason and one more: on the holdout both sides are measured, and two
+          # run files that differ only in a number nobody remembers are two run
+          # files that get read as one (#365).
+          ARM: ${{ inputs.join_all_fragments && 'joined' || 'baseline' }}
+          SET: ${{ inputs.set || 'pdfa-300' }}
+          CONVERTER: ${{ inputs.converter || 'shipped' }}
+        run: |
+          set -euo pipefail
+          # Which half the number may be published under is a property of the
+          # set, not of the person reading it, so it is derived here rather than
+          # passed as a second input somebody can get wrong.
+          case "$SET" in
+            test300)     ROLE=test ;;
+            holdout1000) ROLE=holdout ;;
+            *)           ROLE=tuning ;;
+          esac
+          python3 scripts/pdfa/pdfa_fidelity_axis.py \
+            --compare "$PDFA_AFTER/compare.json" \
+            --pages "$PDFA_AFTER/all-pages.jsonl" \
+            --set "$SET" --tuning-or-holdout "$ROLE" \
+            --converter "$CONVERTER" \
+            --machine-class runner-hetzner-ephemeral \
+            --commit "${GITHUB_SHA}" \
+            --run-id "${GITHUB_RUN_ID}-${SET}-${CONVERTER}-${ARM}" \
+            --out "$PDFA_AFTER/fidelity-run.json" \
+            --evidence "${RUNNER_TEMP}/pdfa-evidence"
+
+      # THE MEASUREMENT IS THE EXPENSIVE PART; THE VERDICT IS CHEAP.
+      # Run 34194029831 measured three hundred documents for an hour, and then
+      # the axis crashed on a compare.json whose shape it had guessed. Nothing
+      # was uploaded, the instance was reaped, and the hour bought two numbers
+      # scraped back out of a log. The two files the measurement wrote are now
+      # kept whatever the verdict did, so a defect in the judging costs minutes
+      # to fix and re-derive rather than another hour of instance time.
+      - name: Keep the measurement even when the verdict failed
+        if: ${{ !cancelled() }}
+        env:
+          PDFA_AFTER: ${{ runner.temp }}/pdfa-after
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/pdfa-evidence/measurement"
+          if [ -d "${RUNNER_TEMP}/pdfa-other" ]; then
+            mkdir -p "${RUNNER_TEMP}/pdfa-evidence/remetricked-arm/measurement"
+            for f in compare.json all-pages.json all-pages.jsonl fidelity-run.json; do
+              [ -f "${RUNNER_TEMP}/pdfa-other/$f" ] \
+                && cp "${RUNNER_TEMP}/pdfa-other/$f" \
+                     "${RUNNER_TEMP}/pdfa-evidence/remetricked-arm/measurement/" || true
+            done
+          fi
+          for f in compare.json all-pages.json all-pages.jsonl; do
+            [ -f "$PDFA_AFTER/$f" ] \
+              && cp "$PDFA_AFTER/$f" "${RUNNER_TEMP}/pdfa-evidence/measurement/" \
+              || echo "::notice::$f was not written"
+          done
+          ls -l "${RUNNER_TEMP}/pdfa-evidence/measurement/"
+
+      # THE TRANSPORT, AND WHY IT IS NOT INSIDE THE SCRIPT. The bundle is built
+      # by the measurement itself, digests and all, because a step after the
+      # measurement is a step a cancelled job never reaches. Getting it OFF a
+      # throwaway box is a different problem: it would need a credential on a
+      # machine that is deleted within the hour. An artifact needs none, and the
+      # job below copies it to the desktop, which keeps.
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          # THE SET IS IN THE NAME, AND IT IS NOT A TIDINESS PREFERENCE.
+          #
+          # This artifact was `pdfa-fidelity-<run-id>` whatever set it measured,
+          # so telling a run of the tuning 300 from a run of the test 300 meant
+          # opening its compare.json and reading document names -- which is
+          # exactly what burns a test document. One was burnt that way on
+          # 09-09-2026 (`0004594.pdf`, benchmarks/HOLDOUTS.md), by somebody doing
+          # nothing worse than working out which file they had.
+          #
+          # A name that carries the set removes the reason to look. It cannot
+          # remove the ability to, and does not try: the rule stays a rule, this
+          # just stops it costing a document to follow.
+          #
+          # The converter is in it for the same reason once the holdout run puts
+          # two sides on the same set: `-shipped` and `-ghostscript` are two
+          # measurements, and a reader who has to open a bundle to find out
+          # which one it is has been sent back to the file the name exists to
+          # keep them out of.
+          name: pdfa-fidelity-${{ github.run_id }}-${{ inputs.set || 'pdfa-300' }}-${{ inputs.converter || 'shipped' }}
+          path: ${{ runner.temp }}/pdfa-evidence
+          retention-days: 1
+          if-no-files-found: error
+
+  # The evidence lands where a later round can read it without a cloud account:
+  # /opt/pdfa-evidence on the desktop, one directory per run.
+  #
+  # IT RUNS WHEN THE MEASUREMENT FAILED TOO, AND SAYS SO RATHER THAN GOING RED.
+  # The first dispatched run failed its corpus check, so no bundle was written
+  # and this job went red on "artifact not found" -- a true statement about the
+  # wrong thing. A measurement that did not happen leaves nothing to keep, and
+  # that is not a failure of keeping it. The measurement's own red is where the
+  # failure belongs; a second one here only makes the first harder to find.
+  pdfa-fidelity-evidence:
+    needs: pdfa-fidelity
+    # Pinned to the default branch. This job keeps the bundle on the
+    # persistent desktop, and `gh workflow run --ref <branch>` would run
+    # this branch's steps there -- on the machine holding the corpus, the
+    # warm cache and the runner registration token.
+    # `scripts/ci/orchestration_stays_hosted.py` refuses that, and it was
+    # refusing it: red on master since the #365 arms arrived, seen by
+    # nobody because the guards job it runs in is hosted and the Actions
+    # budget is spent. A schedule and a dispatch against master both carry
+    # `refs/heads/master`, so this loses neither of the ways it is used.
+    if: always() && needs.pdfa-fidelity.result != 'skipped' && github.ref == 'refs/heads/master'
+    runs-on: [self-hosted, xfa-local-checks]
+    timeout-minutes: 10
+    steps:
+      - name: There is nothing to keep, and that is the measurement's news
+        if: needs.pdfa-fidelity.result != 'success'
+        run: |
+          echo "::notice::the fidelity measurement did not succeed \
+          (${{ needs.pdfa-fidelity.result }}), so it wrote no bundle. \
+          Nothing to keep; see the pdfa-fidelity job for why."
+      - uses: actions/download-artifact@v4
+        if: needs.pdfa-fidelity.result == 'success'
+        with:
+          name: pdfa-fidelity-${{ github.run_id }}-${{ inputs.set || 'pdfa-300' }}-${{ inputs.converter || 'shipped' }}
+          path: ${{ runner.temp }}/pdfa-evidence
+      # THE VERDICT IS PRINTED FIRST, AND FROM THE DOWNLOAD.
+      # It used to be printed from the copy under /opt, so `mkdir: Permission
+      # denied` there took the names down with it (run 34255047940) even though
+      # the artifact had uploaded cleanly seconds earlier. The names are the
+      # point of this job; where the bytes are additionally parked is not.
+      - name: Say what the measurement found
+        if: needs.pdfa-fidelity.result == 'success'
+        run: |
+          set -euo pipefail
+          python3 scripts/pdfa/pdfa_fidelity_axis.py --show \
+            "${RUNNER_TEMP}/pdfa-evidence/fidelity-run.json"
+
+      # A convenience copy, not the record. The record is the artifact, which is
+      # retained for ninety days and needs no credential to read. If /opt is not
+      # writable by the runner user, that is worth a warning and nothing more --
+      # going red here would report a failed measurement, which is a lie.
+      - name: Park a copy on the desktop, if it will have one
+        if: needs.pdfa-fidelity.result == 'success'
+        env:
+          # This job never chose a set, so it has to be told which one it is
+          # holding. Without this the directory below is named `<run-id>-` and
+          # is exactly as unidentifiable as the name it replaced.
+          SET: ${{ inputs.set || 'pdfa-300' }}
+          CONVERTER: ${{ inputs.converter || 'shipped' }}
+        run: |
+          set -uo pipefail
+          # Same reason as the artifact name: a directory called `-pdfa-300`
+          # holding a run of the test 300 is a file nobody can identify without
+          # opening it -- and on the holdout, ours and Ghostscript's are two
+          # bundles of the same set (#365).
+          DEST="/opt/pdfa-evidence/${GITHUB_RUN_ID}-${SET}-${CONVERTER}"
+          if mkdir -p "$DEST" 2>/dev/null \
+             && cp -a "${RUNNER_TEMP}/pdfa-evidence/." "$DEST/" 2>/dev/null; then
+            echo "::notice::fidelity evidence kept at ${DEST}"
+          else
+            echo "::warning::/opt/pdfa-evidence is not writable by \
+            $(id -un); the evidence is the run artifact \
+            pdfa-fidelity-${GITHUB_RUN_ID}-${SET} (90 days), not this copy."
+          fi
+
+  # THE PERFORMANCE AXIS OF #384, AND WHY IT IS A JOB OF ITS OWN.
+  #
+  # The other three axes count documents. None of them notices a converter that
+  # takes four minutes over a ten megabyte file, and #313 recorded exactly that.
+  # This measures the clock, the peak memory and the documents that do not come
+  # back -- one document at a time, because a duration measured next to three
+  # other conversions is not the duration of that conversion.
+  #
+  # IT NAMES THE MACHINE IT RAN ON, AND REFUSES WHEN IT CANNOT. Every absolute
+  # millisecond in this repository has to name a class in
+  # benchmarks/BASELINE_HARDWARE.toml, and the class has to be checked against
+  # the machine underneath -- the rule that file exists for, after the April
+  # 2026 SLA targets outlived the Xeon they were measured on and kept passing.
+  # The wave buys whichever of four types Hetzner will sell it, so the class is
+  # derived from `create-runner`'s output rather than written here. Timings from
+  # different types are not comparable with each other, and the run file says
+  # which one produced them so that nobody has to guess afterwards.
+  pdfa-performance:
+    needs: create-runner
+    if: >-
+      needs.create-runner.outputs.overslaan != 'true' &&
+      inputs.perf
+    runs-on: ${{ needs.create-runner.outputs.label }}
+    # A thousand conversions in series, with a two-minute ceiling each. The
+    # worst case is arithmetic rather than a guess: even a set where every
+    # document hangs cannot exceed the ceiling times the set, and the measured
+    # case is far under it. Same shape as the fidelity job's ceiling.
+    timeout-minutes: ${{ (inputs.set == 'tuning1000' || inputs.set == 'holdout1000') && 300 || 120 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
+        with:
+          toolchain: stable
+
+      - name: Fetch the chosen set and the converter under test
+        env:
+          PDFA_SOURCE: ${{ runner.temp }}/pdfa-perf-source
+          SET: ${{ inputs.set || 'pdfa-300' }}
+        run: |
+          set -euo pipefail
+          cargo build --release -p pdf-manip --example pdfa_convert_real
+          bash scripts/pdfa/fetch_the_set.sh "$SET" "$PDFA_SOURCE" \
+            "${RUNNER_TEMP}/perf-documents.txt"
+
+      # NOTHING ELSE RUNS WHILE THIS DOES, which is why it is its own job on the
+      # instance rather than a step inside the fidelity one: that job renders
+      # three hundred documents with four workers, and a clock measured beside
+      # it is a clock of the machine, not of the converter.
+      - name: Measure time, memory and hangs, one document at a time
+        env:
+          PDFA_SOURCE: ${{ runner.temp }}/pdfa-perf-source
+          SET: ${{ inputs.set || 'pdfa-300' }}
+          SERVER_TYPE: ${{ needs.create-runner.outputs.server_type }}
+        run: |
+          set -euo pipefail
+          # The class is the type the wave actually got. An empty type means
+          # nobody recorded which machine this is, and a timing on an
+          # unidentified machine is a number that cannot be compared with
+          # anything -- so it stops here rather than publishing under a guess.
+          if [ -z "$SERVER_TYPE" ]; then
+            echo "::error::create-runner recorded no server type, so this run \
+            cannot name the machine class its milliseconds were measured on. \
+            Refusing to measure (#283)."
+            exit 1
+          fi
+          ROLE=tuning
+          [ "$SET" = "test300" ] && ROLE=test
+          python3 scripts/pdfa/pdfa_performance_axis.py \
+            --corpus-dir "$PDFA_SOURCE" \
+            --list "${RUNNER_TEMP}/perf-documents.txt" \
+            --converter "target/release/examples/pdfa_convert_real {in} {out}" \
+            --workdir "${RUNNER_TEMP}/pdfa-perf-out" \
+            --timeout 120 \
+            --set "$SET" --tuning-or-holdout "$ROLE" \
+            --machine-class "hetzner-${SERVER_TYPE}" \
+            --commit "${GITHUB_SHA}" \
+            --run-id "${GITHUB_RUN_ID}-${SET}-perf" \
+            --out "${RUNNER_TEMP}/pdfa-perf-evidence/performance-run.json" \
+            --evidence "${RUNNER_TEMP}/pdfa-perf-evidence"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          # The set is in the name for the reason the fidelity artifact carries
+          # it: telling a run of the tuning set from a run of the test set by
+          # opening it and reading document names is what burnt a test document
+          # on 09-09-2026.
+          name: pdfa-performance-${{ github.run_id }}-${{ inputs.set || 'pdfa-300' }}
+          path: ${{ runner.temp }}/pdfa-perf-evidence
+          retention-days: 1
+          if-no-files-found: error
+
+  # Same shape and same reason as pdfa-fidelity-evidence: the bundle lands where
+  # a later round can read it without a cloud account, and a measurement that
+  # did not happen leaves nothing to keep -- which is the measurement's news,
+  # not a second failure of its own.
+  pdfa-performance-evidence:
+    needs: pdfa-performance
+    # Pinned to the default branch. This job keeps the bundle on the
+    # persistent desktop, and `gh workflow run --ref <branch>` would run
+    # this branch's steps there -- on the machine holding the corpus, the
+    # warm cache and the runner registration token.
+    # `scripts/ci/orchestration_stays_hosted.py` refuses that, and it was
+    # refusing it: red on master since the #365 arms arrived, seen by
+    # nobody because the guards job it runs in is hosted and the Actions
+    # budget is spent. A schedule and a dispatch against master both carry
+    # `refs/heads/master`, so this loses neither of the ways it is used.
+    if: always() && needs.pdfa-performance.result != 'skipped' && github.ref == 'refs/heads/master'
+    runs-on: [self-hosted, xfa-local-checks]
+    timeout-minutes: 10
+    steps:
+      - name: There is nothing to keep, and that is the measurement's news
+        if: needs.pdfa-performance.result != 'success'
+        run: |
+          echo "::notice::the performance measurement did not succeed \
+          (${{ needs.pdfa-performance.result }}), so it wrote no bundle. \
+          Nothing to keep; see the pdfa-performance job for why."
+      - uses: actions/checkout@v4
+        if: needs.pdfa-performance.result == 'success'
+      - uses: actions/download-artifact@v4
+        if: needs.pdfa-performance.result == 'success'
+        with:
+          name: pdfa-performance-${{ github.run_id }}-${{ inputs.set || 'pdfa-300' }}
+          path: ${{ runner.temp }}/pdfa-perf-evidence
+      - name: Say what the measurement found
+        if: needs.pdfa-performance.result == 'success'
+        run: |
+          set -euo pipefail
+          python3 scripts/pdfa/pdfa_performance_axis.py --show \
+            "${RUNNER_TEMP}/pdfa-perf-evidence/performance-run.json"
+      - name: Park a copy on the desktop, if it will have one
+        if: needs.pdfa-performance.result == 'success'
+        env:
+          SET: ${{ inputs.set || 'pdfa-300' }}
+        run: |
+          set -uo pipefail
+          DEST="/opt/pdfa-evidence/${GITHUB_RUN_ID}-${SET}-perf"
+          if mkdir -p "$DEST" 2>/dev/null \
+             && cp -a "${RUNNER_TEMP}/pdfa-perf-evidence/." "$DEST/" 2>/dev/null; then
+            echo "::notice::performance evidence kept at ${DEST}"
+          else
+            echo "::warning::/opt/pdfa-evidence is not writable by \
+            $(id -un); the evidence is the run artifact \
+            pdfa-performance-${GITHUB_RUN_ID}-${SET} (90 days), not this copy."
+          fi
 
   # No delete-runner. Deleting after every run threw away an hour that was
   # already paid for and made the next push buy another. hetzner-orphan-sweep
@@ -554,21 +1915,27 @@ jobs:
   #
   # On the push because the */30 schedule fired twice in a day (#279). The
   # schedule stays as a backstop.
+  #
+  # It waits on the four suites as well as on `workspace`,
+  # `public-snapshot-build` and `clitest`, and that is the whole point of
+  # listing them: reaping while a suite is still on the instance would
+  # delete the machine out from under it. `always()` so a red suite is still
+  # tidied up after.
   reap:
-    needs: [create-runner, workspace]
-    if: always()
-    runs-on: [self-hosted, xfa-fast]
+    needs: [create-runner, workspace, public-snapshot-build, clitest, visual-regression,
+            java-bindings, enterprise-acceptance, security-audit, pdfa-fidelity,
+            pdfa-performance]
+    # `always()`, and pinned to master for the same reason create-runner is:
+    # this runs on the desktop out of the ref's checkout.
+    if: always() && github.ref == 'refs/heads/master'
+    runs-on: [self-hosted, xfa-local-checks]
     timeout-minutes: 5
     steps:
-      # On a pull_request this job runs on the persistent desktop, because
-      # creating and reaping instances IS host work and cannot move. So the code
-      # it executes must not be the pull request's: `scripts/ci/*.sh` and
-      # `*.py` here are run directly, and on a PR the checkout would be whatever
-      # the PR says they are. Pinning the base revision means only merged code
-      # ever runs as the runner user. (#311)
+      # This job runs on the persistent desktop, because creating and reaping
+      # instances IS host work and cannot move. So the code it executes must be
+      # merged code: `scripts/ci/*.sh` and `*.py` here are run directly out of
+      # the checkout, and the `if:` above is what keeps that checkout master's.
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
       - name: Delete instances that are idle and past their billed hour
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}

@@ -3926,41 +3926,58 @@ mod tests {
     fn debug_all_failing() {
         let pdfs: &[(&str, &str)] = &[
             (
-                "/tmp/cs-veraPDF_test_suite_6-2-10-4-1-t02-fail-a.pdf",
+                "cs-veraPDF_test_suite_6-2-10-4-1-t02-fail-a.pdf",
                 "6-2-10-4-1-a",
             ),
             (
-                "/tmp/cs-veraPDF_test_suite_6-2-10-4-1-t02-fail-b.pdf",
+                "cs-veraPDF_test_suite_6-2-10-4-1-t02-fail-b.pdf",
                 "6-2-10-4-1-b",
             ),
             (
-                "/tmp/cs-veraPDF_test_suite_6-2-11-4-1-t02-fail-a.pdf",
+                "cs-veraPDF_test_suite_6-2-11-4-1-t02-fail-a.pdf",
                 "6-2-11-4-1-a",
             ),
             (
-                "/tmp/cs-veraPDF_test_suite_6-2-11-4-1-t02-fail-b.pdf",
+                "cs-veraPDF_test_suite_6-2-11-4-1-t02-fail-b.pdf",
                 "6-2-11-4-1-b",
             ),
-            ("/tmp/cs-isartor-6-3-5-t01-fail-c.pdf", "isartor-635-c"),
-            ("/tmp/cs-isartor-6-3-5-t01-fail-d.pdf", "isartor-635-d"),
+            ("cs-isartor-6-3-5-t01-fail-c.pdf", "isartor-635-c"),
+            ("cs-isartor-6-3-5-t01-fail-d.pdf", "isartor-635-d"),
             (
-                "/tmp/cs-veraPDF_test_suite_6-2-11-7-3-t01-fail-c.pdf",
+                "cs-veraPDF_test_suite_6-2-11-7-3-t01-fail-c.pdf",
                 "6-2-11-7-3-c",
             ),
-            ("/tmp/c4k-GHOSTSCRIPT-688790-4.pdf", "GS-688790-4"),
-            ("/tmp/c4k-PDFIUM-610-0.pdf", "PDFIUM-610"),
-            ("/tmp/c4k-poppler-106863-0.pdf", "poppler-106863"),
-            ("/tmp/cs-pdfa2-6-1-7-2-bfo-t01-fail.pdf", "pdfa2-617-bfo"),
-            ("/tmp/cs-pdfa2-6-8-bfo-t03-fail.pdf", "pdfa2-68-bfo"),
+            ("c4k-GHOSTSCRIPT-688790-4.pdf", "GS-688790-4"),
+            ("c4k-PDFIUM-610-0.pdf", "PDFIUM-610"),
+            ("c4k-poppler-106863-0.pdf", "poppler-106863"),
+            ("cs-pdfa2-6-1-7-2-bfo-t01-fail.pdf", "pdfa2-617-bfo"),
+            ("cs-pdfa2-6-8-bfo-t03-fail.pdf", "pdfa2-68-bfo"),
         ];
-        for (path, name) in pdfs {
-            let data = match std::fs::read(path) {
-                Ok(d) => d,
-                Err(_) => {
-                    println!("{name}: MISSING");
-                    continue;
-                }
-            };
+        // Every sample must be there before any is read: a partial corpus
+        // would print a partial table and pass.
+        let env = crate::pdfa::COMPLIANCE_FIXTURES_ENV;
+        let expected: Vec<&str> = pdfs.iter().map(|(file, _)| *file).collect();
+        let Some(dir) = std::env::var_os(env).map(std::path::PathBuf::from) else {
+            panic!(
+                "{env} is not set; point it at a directory holding: {}",
+                expected.join(", ")
+            );
+        };
+        let missing: Vec<&str> = expected
+            .iter()
+            .copied()
+            .filter(|file| !dir.join(file).is_file())
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "{env}={} lacks {} of {} fixture(s): {}",
+            dir.display(),
+            missing.len(),
+            expected.len(),
+            missing.join(", ")
+        );
+        for (file, name) in pdfs {
+            let data = std::fs::read(dir.join(file)).unwrap();
             let pdf = match pdf_syntax::Pdf::new(data.clone()) {
                 Ok(p) => p,
                 Err(e) => {

@@ -1,0 +1,78 @@
+{
+ "documents": [
+  {
+   "document": "25eceb9230bfb2a20923c8301102f6d17868e2a80af6f2112a4ff2e2667047ef",
+   "page_id": "25eceb9230bfb2a20923c8301102f6d17868e2a80af6f2112a4ff2e2667047ef",
+   "sha256": "25eceb9230bfb2a20923c8301102f6d17868e2a80af6f2112a4ff2e2667047ef",
+   "source": "fixtures/*.pdf"
+  },
+  {
+   "document": "6c8d62e7cb0ece25769a709e2dc9c864660f624c27f2bf6c7e1264ba6983ae64",
+   "page_id": "6c8d62e7cb0ece25769a709e2dc9c864660f624c27f2bf6c7e1264ba6983ae64",
+   "sha256": "6c8d62e7cb0ece25769a709e2dc9c864660f624c27f2bf6c7e1264ba6983ae64",
+   "source": "fixtures/*.pdf"
+  },
+  {
+   "document": "848aba7cb5a8cc5339993c1ef9b99bd37ac4888f5daa18aaea85424ec09321f4",
+   "page_id": "848aba7cb5a8cc5339993c1ef9b99bd37ac4888f5daa18aaea85424ec09321f4",
+   "sha256": "848aba7cb5a8cc5339993c1ef9b99bd37ac4888f5daa18aaea85424ec09321f4",
+   "source": "fixtures/*.pdf"
+  },
+  {
+   "document": "a03f707f8414baee00457877cdb530494f2fa45b45f4c23b46764b4dfc31c228",
+   "page_id": "a03f707f8414baee00457877cdb530494f2fa45b45f4c23b46764b4dfc31c228",
+   "sha256": "a03f707f8414baee00457877cdb530494f2fa45b45f4c23b46764b4dfc31c228",
+   "source": "fixtures/*.pdf"
+  },
+  {
+   "document": "ef570776de3c76a69037b37094cdec7aa905ecc8437e44f278efe5bd46b20f91",
+   "page_id": "ef570776de3c76a69037b37094cdec7aa905ecc8437e44f278efe5bd46b20f91",
+   "sha256": "ef570776de3c76a69037b37094cdec7aa905ecc8437e44f278efe5bd46b20f91",
+   "source": "fixtures/*.pdf"
+  }
+ ],
+ "features": [
+  "size_ratio",
+  "bold",
+  "italic",
+  "all_caps",
+  "n_chars",
+  "n_words",
+  "n_lines",
+  "x_frac",
+  "width_frac",
+  "y_frac",
+  "gap_above_em",
+  "gap_below_em",
+  "ends_terminal",
+  "ends_colon",
+  "section_number",
+  "has_marker",
+  "has_caption",
+  "first_on_page",
+  "last_on_page",
+  "prev_ends_terminal",
+  "prev_size_ratio",
+  "next_x_frac",
+  "next_size_ratio",
+  "repeats_in_document"
+ ],
+ "lightgbm": "4.3.0",
+ "params": {
+  "deterministic": true,
+  "learning_rate": 0.3,
+  "min_data_in_leaf": 1,
+  "num_leaves": 4,
+  "num_threads": 1,
+  "objective": "binary",
+  "seed": 598,
+  "verbosity": -1
+ },
+ "positives": 2,
+ "rows": 70,
+ "rust": "crates/pdf-learned/src/models/toy_heading.rs",
+ "schema": "pdfluent.features/1",
+ "seed": 598,
+ "task": "toy_heading",
+ "trees": 8
+}
