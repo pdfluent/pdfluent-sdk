@@ -166,21 +166,17 @@ Extraction runs in one of two tiers:
   Balanced/tables: glibc Linux, macOS, Windows; not on musl Linux
   (loading returns a typed ModelError).
 
-`balanced` scored higher than Docling on FinTabNet and PubTables-1M, level with
-it on ParseBench, and ahead of pymupdf4llm on FinTabNet and ParseBench
-[A38, A39, A40, 2026-10-14]. On PubTables-1M against pymupdf4llm our score is
-higher, but not above our pre-set threshold of 0.05. The margin is +0.081
-[+0.046; +0.127] on 120 pages from 55 documents, from the development (tuning)
-split [A39, 2026-10-14]. Docling had more fully perfect ParseBench tables in an
-earlier round [A37, 2026-10-08]. All three come from the development (tuning)
-split, which we used while building the table work. Our side is an upper bound,
-not a held-out result. The table-structure model we ship is Microsoft's Table
-Transformer v1.1-all, trained on PubTables-1M and FinTabNet.c. We have not
-checked whether our sample pages fall inside that training data, so the
-FinTabNet and PubTables-1M results may favour us for that reason too. Table
-structure only. Numbers, sample sizes and intervals: [1.1.0 release
-notes](https://github.com/pdfluent/pdfluent-sdk/releases/tag/v1.1.0),
-<EVIDENCE_BUNDLE_URL>.
+On the held-out test set (claim A41, measured 2026-10-17), `balanced` with the
+table model has the highest average of the three tools across 19 extraction
+measures: 0.721, against 0.693 for pymupdf4llm 1.28.2 and 0.672 for Docling
+2.126.0 (claim A41). It scores higher than Docling on 16 of the 19 measures and
+higher than pymupdf4llm on 13 (claim A41). On table structure (TEDS) it is ahead
+of both on FinTabNet and PubTables-1M, with every 95% confidence interval above
+zero (claim A42, measured 2026-10-17). The held-out half was not used while
+building the table work. The table-structure model we ship is Microsoft's Table
+Transformer v1.1-all, trained on PubTables-1M and FinTabNet.c; we have not
+checked whether our sample pages fall inside that training data. Per-measure
+numbers, sample sizes and intervals: <https://pdfluent.com/benchmarks/>.
 
 The Python wheel, the Node addon and the CLI archives ship with the model
 features (`ort-layout`, `ort-tables`) already built in. The `pdfluent` command
