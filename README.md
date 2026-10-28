@@ -337,3 +337,7 @@ entitled to read the terms they agreed to.
 From 1 September 2026 `LICENSE` carried the two-licence explanation above and
 the AGPL text sat beside it in `LICENSE-AGPL`. Since 7 September 2026 there is
 one AGPL text, in `LICENSE`, and this section is the explanation.
+
+---
+
+PyMuPDF and MuPDF are trademarks of Artifex Software, Inc. PDFluent is an independent product of Innovation Trigger B.V. and is not affiliated with or endorsed by Artifex.
