@@ -1,6 +1,6 @@
 # PDFluent
 
-**A pure-Rust PDF SDK: render, extract, edit, sign, redact, and validate PDF/A — from Rust, Python, Node.js, .NET, Java, C, or the browser.**
+**A PDF SDK written in Rust: render, extract, edit, sign, redact, and validate PDF/A, from Rust, Python, Node.js, .NET, Java, C, or the browser.**
 
 [![crates.io](https://img.shields.io/crates/v/pdfluent?label=crates.io&color=111111)](https://crates.io/crates/pdfluent)
 [![PyPI](https://img.shields.io/pypi/v/pdfluent?label=PyPI&color=111111)](https://pypi.org/project/pdfluent/)
@@ -11,7 +11,7 @@
 [![Discussions](https://img.shields.io/badge/discussions-ask%20a%20question-111111?logo=github)](https://github.com/pdfluent/pdfluent-sdk/discussions)
 [![Public pull request](https://img.shields.io/github/actions/workflow/status/pdfluent/pdfluent-sdk/public-pull-request.yml?branch=main&label=checks&color=111111)](https://github.com/pdfluent/pdfluent-sdk/actions/workflows/public-pull-request.yml)
 
-[Share on X](https://x.com/intent/tweet?text=PDFluent%20%E2%80%94%20a%20pure-Rust%20PDF%20SDK%20with%20bindings%20for%20Python%2C%20Node.js%2C%20.NET%2C%20Java%2C%20C%20and%20WebAssembly&url=https%3A%2F%2Fgithub.com%2Fpdfluent%2Fpdfluent-sdk) ·
+[Share on X](https://x.com/intent/tweet?text=PDFluent%20%3A%20a%20PDF%20SDK%20written%20in%20Rust%20with%20bindings%20for%20Python%2C%20Node.js%2C%20.NET%2C%20Java%2C%20C%20and%20WebAssembly&url=https%3A%2F%2Fgithub.com%2Fpdfluent%2Fpdfluent-sdk) ·
 [Share on LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fgithub.com%2Fpdfluent%2Fpdfluent-sdk)
 
 ![A statement printed to PDF, and the same statement after PDFluent redacted the
@@ -160,7 +160,7 @@ and XMP metadata repair.
 
 Extraction runs in one of two tiers:
 
-- `fast` (default): the engine alone — pure Rust, no models, everywhere
+- `fast` (default): the engine alone — no models, everywhere
   including WASM.
 - `balanced` (preview): the layout model regions each page — headings,
   lists, tables, page furniture — and the table-structure model
