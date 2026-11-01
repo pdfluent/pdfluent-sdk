@@ -26,7 +26,7 @@ text is still extractable or `validate_pdfa()` disagrees.</sup>
 
 ```bash
 cargo add pdfluent                  # Rust
-pip install pdfluent                # Python
+pip install pdfluent                # Python and the pdfluent command
 npm install @pdfluent/node          # Node.js
 npm install @pdfluent/sdk-wasm      # Browser (WebAssembly)
 dotnet add package PDFluent         # .NET
@@ -71,17 +71,21 @@ build flags.
 
 ### Command-line tool
 
-The `pdfluent` CLI ships as archives on the [v1.1.0 release
-page](https://github.com/pdfluent/pdfluent-sdk/releases/tag/v1.1.0), built with
-the model features. The `pdfluent` command comes from those archives. `pip
-install pdfluent` and `npm install @pdfluent/node` do not install it, and no
-Python or Node function installs models. Install the models once:
+`pip install pdfluent` installs the `pdfluent` command with the Python package.
+Standalone CLI archives are also available on the [release
+page](https://github.com/pdfluent/pdfluent-sdk/releases), built with the model
+features. `npm install @pdfluent/node` does not install the command. No Python
+or Node function installs models. Install the models once:
 
 ```sh
 pdfluent models install layout tables
 ```
 
-`pdfluent-cli` is an alias for the same binary.
+`pdfluent-cli` is an alias for the standalone binary.
+
+PDF/A conversion is a preview in 1.3.0. Conversion success means the file was
+written, not that it conforms to PDF/A. We make no conformance, fidelity or size
+claim for this release. Validate the output separately and inspect its appearance.
 
 ## In thirty seconds
 
@@ -180,7 +184,8 @@ numbers, sample sizes and intervals: <https://pdfluent.com/benchmarks/>.
 
 The Python wheel, the Node addon and the CLI archives ship with the model
 features (`ort-layout`, `ort-tables`) already built in. The `pdfluent` command
-comes from the CLI archives on the release page, not from pip or npm.
+is installed by pip or supplied in the standalone CLI archives; npm does not
+install it.
 
 | Tier | Needs | Runs | Status |
 |---|---|---|---|
