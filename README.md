@@ -1,28 +1,103 @@
-# PDFluent
+<p align="center">
+  <a href="https://pdfluent.com/">
+    <img src="https://pdfluent.com/favicon.svg" width="72" alt="PDFluent logo"/>
+  </a>
+</p>
 
-**A PDF SDK written in Rust: render, extract, edit, sign, redact, and validate PDF/A, from Rust, Python, Node.js, .NET, Java, C, or the browser.**
+<h1 align="center">PDFluent SDK</h1>
 
-[![crates.io](https://img.shields.io/crates/v/pdfluent?label=crates.io&color=111111)](https://crates.io/crates/pdfluent)
-[![PyPI](https://img.shields.io/pypi/v/pdfluent?label=PyPI&color=111111)](https://pypi.org/project/pdfluent/)
-[![npm](https://img.shields.io/npm/v/%40pdfluent%2Fnode?label=npm&color=111111)](https://www.npmjs.com/package/@pdfluent/node)
-[![NuGet](https://img.shields.io/nuget/v/PDFluent?label=NuGet&color=111111)](https://www.nuget.org/packages/PDFluent)
-[![Maven Central](https://img.shields.io/maven-central/v/com.pdfluent/pdfluent?label=Maven&color=111111)](https://central.sonatype.com/artifact/com.pdfluent/pdfluent)
-[![Licence](https://img.shields.io/badge/licence-AGPL--3.0--only%20OR%20Commercial-111111)](LICENSE)
-[![Discussions](https://img.shields.io/badge/discussions-ask%20a%20question-111111?logo=github)](https://github.com/pdfluent/pdfluent-sdk/discussions)
-[![Public pull request](https://img.shields.io/github/actions/workflow/status/pdfluent/pdfluent-sdk/public-pull-request.yml?branch=main&label=checks&color=111111)](https://github.com/pdfluent/pdfluent-sdk/actions/workflows/public-pull-request.yml)
+<p align="center"><strong>A PDF SDK written in Rust: render, extract, edit, sign, redact, and validate PDF/A, from Rust, Python, Node.js, .NET, Java, C, or the browser.</strong></p>
 
-[Share on X](https://x.com/intent/tweet?text=PDFluent%20%3A%20a%20PDF%20SDK%20written%20in%20Rust%20with%20bindings%20for%20Python%2C%20Node.js%2C%20.NET%2C%20Java%2C%20C%20and%20WebAssembly&url=https%3A%2F%2Fgithub.com%2Fpdfluent%2Fpdfluent-sdk) ·
-[Share on LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fgithub.com%2Fpdfluent%2Fpdfluent-sdk)
+<p align="center">
+  <a href="https://crates.io/crates/pdfluent"><img src="https://img.shields.io/crates/v/pdfluent?label=crates.io&color=111111" alt="crates.io"/></a>
+  <a href="https://pypi.org/project/pdfluent/"><img src="https://img.shields.io/pypi/v/pdfluent?label=PyPI&color=111111" alt="PyPI"/></a>
+  <a href="https://www.npmjs.com/package/@pdfluent/node"><img src="https://img.shields.io/npm/v/%40pdfluent%2Fnode?label=npm&color=111111" alt="npm"/></a>
+  <a href="https://www.nuget.org/packages/PDFluent"><img src="https://img.shields.io/nuget/v/PDFluent?label=NuGet&color=111111" alt="NuGet"/></a>
+  <a href="https://central.sonatype.com/artifact/com.pdfluent/pdfluent"><img src="https://img.shields.io/maven-central/v/com.pdfluent/pdfluent?label=Maven&color=111111" alt="Maven Central"/></a>
+  <br/>
+  <a href="https://pdfluent.com/docs/"><img src="https://img.shields.io/badge/docs-pdfluent.com-111111" alt="Documentation"/></a>
+  <a href="https://github.com/pdfluent/pdfluent-sdk/discussions"><img src="https://img.shields.io/badge/discussions-ask%20a%20question-111111?logo=github" alt="GitHub Discussions"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0--only%20OR%20Commercial-111111" alt="Licence: AGPL-3.0-only or commercial"/></a>
+  <a href="https://github.com/pdfluent/pdfluent-sdk/actions/workflows/public-pull-request.yml"><img src="https://img.shields.io/github/actions/workflow/status/pdfluent/pdfluent-sdk/public-pull-request.yml?branch=main&label=checks&color=111111" alt="Public pull request checks"/></a>
+</p>
+
+```bash
+cargo add pdfluent                  # Rust
+pip install pdfluent                # Python and the pdfluent command
+npm install @pdfluent/node          # Node.js
+```
+
+<p align="center"><a href="#install">.NET, Java, C and the browser</a> · <a href="QUICKSTART.md">Quickstart</a> · <a href="https://pdfluent.com/docs/">Documentation</a> · <a href="https://pdfluent.com/cookbook/">Cookbook</a> · <a href="https://pdfluent.com/sdk/pricing">Commercial licence</a></p>
+
+<table>
+<tr>
+<td width="33%" valign="top"><b>Extraction (Preview)</b><br/>Markdown, blocks and Docling JSON from every binding, with words, boxes and chunks where listed below.</td>
+<td width="33%" valign="top"><b>Rendering</b><br/>A pure-Rust rasterizer (vello_cpu) to PNG, JPEG or a rasterized PDF.</td>
+<td width="33%" valign="top"><b>Text and data</b><br/>Extraction with position information, find-and-replace in content streams, OCR over scanned pages.</td>
+</tr>
+<tr>
+<td valign="top"><b>Forms</b><br/>AcroForm fill, flatten and read-back across every binding. XFA is experimental.</td>
+<td valign="top"><b>Documents</b><br/>Merge, split, insert, delete and rearrange pages; AES-256 encryption; watermarks; redaction that removes the content.</td>
+<td valign="top"><b>PDF/A and signatures</b><br/>Validation and conversion for A-1, A-2 and A-3, including ZUGFeRD and Factur-X; PAdES signing and verification.</td>
+</tr>
+</table>
 
 ![A statement printed to PDF, and the same statement after PDFluent redacted the
 bank line, watermarked it and converted it to PDF/A-1B](docs/readme-hero.png)
 
 <sup>Not a mock-up: `cargo run --example readme_hero` rebuilds this image from
-[`docs/hero/`](docs/hero/), and both panels — and the picture itself — come out
+[`docs/hero/`](docs/hero/), and both panels, and the picture itself, come out
 of PDFluent's own rasterizer. The generator refuses to write it if the redacted
 text is still extractable or `validate_pdfa()` disagrees.</sup>
 
+## How it scores
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/pdfluent/.github/main/profile/assets/odl-overall-dark.svg">
+    <img src="https://raw.githubusercontent.com/pdfluent/.github/main/profile/assets/odl-overall-light.svg" alt="opendataloader-bench overall score: PDFluent 1.3.0 auto 0.9168, opendataloader hybrid 0.907, nutrient 0.885, docling 0.882, marker 0.861, PDFluent 1.3.0 fast 0.8577" width="760"/>
+  </picture>
+</p>
+
+PDFluent 1.3.0 ranks above every engine on the published opendataloader-bench leaderboard (as of 3 November 2026)*.
+
+<sub>*Overall score 0.9168 (quality="auto", keep_furniture=True, Linux) against the engines listed in the benchmark README on 3 November 2026; submitted as pull request #37. Other engines have submissions open that are not yet on the leaderboard.</sub>
+
+[Full tables, all four measures and how to reproduce](https://pdfluent.com/benchmarks/opendataloader-bench)
+
+---
+
+## In thirty seconds
+
+```rust
+use pdfluent::prelude::*;
+
+fn main() -> Result<()> {
+    let doc = PdfDocument::open("input.pdf")?;
+
+    for page in doc.pages() {
+        println!("{}", page.text()?);
+    }
+
+    let report = doc.validate_pdfa(PdfAProfile::A2b)?;
+    if report.is_compliant() {
+        println!("PDF/A-2B ✓");
+    }
+    Ok(())
+}
+```
+
+[QUICKSTART.md](QUICKSTART.md) is the same five minutes in each language, and
+<https://pdfluent.com/cookbook/> has ten recipes with the explanation around
+them. Every block on that page is a `// site:<name>` marker in
+[`crates/pdfluent/examples/site_snippets.rs`](crates/pdfluent/examples/site_snippets.rs),
+which CI compiles: an example that stops building breaks the build rather than
+a reader's first attempt.
+
 ## Install
+
+<details>
+<summary>All install commands: .NET, Java (Maven and Gradle), C and C++, browser, command-line tool</summary>
 
 ```bash
 cargo add pdfluent                  # Rust
@@ -81,45 +156,20 @@ or Node function installs models. Install the models once:
 pdfluent models install layout tables
 ```
 
+
+</details>
+
 `pdfluent-cli` is an alias for the standalone binary.
 
 PDF/A conversion is a preview in 1.3.0. Conversion success means the file was
 written, not that it conforms to PDF/A. We make no conformance, fidelity or size
 claim for this release. Validate the output separately and inspect its appearance.
 
-## In thirty seconds
-
-```rust
-use pdfluent::prelude::*;
-
-fn main() -> Result<()> {
-    let doc = PdfDocument::open("input.pdf")?;
-
-    for page in doc.pages() {
-        println!("{}", page.text()?);
-    }
-
-    let report = doc.validate_pdfa(PdfAProfile::A2b)?;
-    if report.is_compliant() {
-        println!("PDF/A-2B ✓");
-    }
-    Ok(())
-}
-```
-
-[QUICKSTART.md](QUICKSTART.md) is the same five minutes in each language, and
-<https://pdfluent.com/cookbook/> has ten recipes with the explanation around
-them. Every block on that page is a `// site:<name>` marker in
-[`crates/pdfluent/examples/site_snippets.rs`](crates/pdfluent/examples/site_snippets.rs),
-which CI compiles — an example that stops building breaks the build rather than
-a reader's first attempt.
-
 ## How it compares
 
 Every figure in this README carries a claim ID. The figures, their method and
 their limits are in the [1.1.0 release
-notes](https://github.com/pdfluent/pdfluent-sdk/releases/tag/v1.1.0) and the
-evidence bundle (<EVIDENCE_BUNDLE_URL>).
+notes](https://github.com/pdfluent/pdfluent-sdk/releases/tag/v1.1.0).
 
 ## What is in here
 
@@ -158,12 +208,15 @@ and XMP metadata repair.
 
 ## Quality tiers
 
+<details>
+<summary>Extraction tiers, models and measured results</summary>
+
 Extraction runs in one of two tiers:
 
-- `fast` (default): the engine alone — no models, everywhere
+- `fast` (default): the engine alone: no models, everywhere
   including WASM.
-- `balanced` (preview): the layout model regions each page — headings,
-  lists, tables, page furniture — and the table-structure model
+- `balanced` (preview): the layout model regions each page (headings,
+  lists, tables, page furniture) and the table-structure model
   structures tables, all run locally through ONNX Runtime 1.23.2.
   Needs the model files (`pdfluent models install layout tables`) and
   does more work per page than `fast`. Native only, never WASM.
@@ -200,6 +253,8 @@ pdfluent models status
 [Quality tiers](docs/STRUCTURED_EXTRACTION.md#quality-tiers) has the
 whole story: enabling, per-language options, errors and licences.
 
+</details>
+
 ## Build and test
 
 Rust 1.94.0, pinned in [`rust-toolchain.toml`](rust-toolchain.toml) so `rustup`
@@ -222,13 +277,16 @@ Default features: `signing`, `pdfa`, `redaction`, `font-subset`.
 
 Ask questions in [GitHub Discussions](https://github.com/pdfluent/pdfluent-sdk/discussions/categories/q-a), in the Q&A category. Report bugs in [this repository's issue tracker](https://github.com/pdfluent/pdfluent-sdk/issues/new/choose). Report security problems by email to [hello@pdfluent.com](mailto:hello@pdfluent.com), never in a public issue.
 
+[Share on X](https://x.com/intent/tweet?text=PDFluent%20%3A%20a%20PDF%20SDK%20written%20in%20Rust%20with%20bindings%20for%20Python%2C%20Node.js%2C%20.NET%2C%20Java%2C%20C%20and%20WebAssembly&url=https%3A%2F%2Fgithub.com%2Fpdfluent%2Fpdfluent-sdk) ·
+[Share on LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fgithub.com%2Fpdfluent%2Fpdfluent-sdk)
+
 ## Contributing
 
 Issues labelled [`good first issue`](https://github.com/pdfluent/pdfluent-sdk/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 and [`help wanted`](https://github.com/pdfluent/pdfluent-sdk/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
 are the ones we would most like a hand with.
 
-Sign off every commit — `git commit -s` — and read
+Sign off every commit (`git commit -s`) and read
 [CONTRIBUTING.md](CONTRIBUTING.md) before the first one: it says what the
 sign-off certifies, what it does not, and which contributions need a CLA that
 does not exist yet. A pull request here runs two checks and both must pass: no
@@ -253,8 +311,8 @@ nothing in your clone, and it can be removed without touching the build. It is
 listed here so nobody has to wonder later where an image in our README comes
 from.
 
-The two images that are not external — `docs/readme-hero.png` and
-`docs/social-preview.png` — are ours outright. The hero is generated by
+The two images that are not external, `docs/readme-hero.png` and
+`docs/social-preview.png`, are ours outright. The hero is generated by
 `cargo run --example readme_hero` from the HTML in `docs/hero/`; the document on
 it is invented, and no customer document or test corpus appears in either.
 
@@ -264,7 +322,7 @@ it is invented, and no customer document or test corpus appears in either.
 
 | file | what it is |
 |---|---|
-| [LICENSE](LICENSE) | the GNU Affero General Public License, version 3 — the FSF's text, verbatim |
+| [LICENSE](LICENSE) | the GNU Affero General Public License, version 3, the FSF's text, verbatim |
 | [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL) | the PDFluent Commercial Licence |
 
 `SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-PDFluent-Commercial`
@@ -288,9 +346,9 @@ It asks something in return: if you convey the software, or let users interact
 with a modified version over a network, you must offer those users the
 corresponding source under the same licence.
 
-If that is impossible for you — a closed surrounding product, a customer
+If that is impossible for you (a closed surrounding product, a customer
 contract, a legal department that will not accept copyleft in a shipped
-binary — the commercial licence is the alternative. Under it you are not buying
+binary), the commercial licence is the alternative. Under it you are not buying
 features. You are buying the right not to publish your own source. It is what
 [pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing) sells, yearly and
 self-service, in four options: Commercial (per organisation), OEM Startup and
@@ -321,7 +379,7 @@ relicense and need no licence from PDFluent.
 the side of that boundary it is recorded on.
 
 The rendering path is built on [`hayro`](https://github.com/pdfluent/hayro),
-Laurenz Stampfl's pure-Rust PDF interpreter — mirrored under the PDFluent
+Laurenz Stampfl's pure-Rust PDF interpreter, mirrored under the PDFluent
 org, unmodified license terms as recorded in NOTICE above.
 
 **Is the SDK covered by the free PDFluent editor licence?** No. The PDFluent
