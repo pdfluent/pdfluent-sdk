@@ -1,0 +1,23 @@
+name: provenance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Provenance table is up to date
+        run: python3 scripts/ci/herkomsttabel.py --check
+
+      - name: Provenance tool tests
+        run: python3 scripts/ci/test_herkomsttabel.py
