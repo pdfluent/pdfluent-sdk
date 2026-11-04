@@ -1,0 +1,55 @@
+name: no-tool-attribution
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject tool attribution in commit messages
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -u
+          pattern='^Co-Authored-By:.*(claude|anthropic)|noreply@anthropic\.com|Generated with \[?Claude|🤖 Generated with'
+          zero=0000000000000000000000000000000000000000
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            range="$PR_BASE..$PR_HEAD"
+          elif [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "$zero" ] && git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
+            range="$PUSH_BEFORE..$SHA"
+          else
+            range="-1 $SHA"
+          fi
+          bad=0
+          for c in $(git log --format=%H $range); do
+            if git log -1 --format=%B "$c" | grep -qiE "$pattern"; then
+              echo "::error::Commit $c carries tool attribution (Co-Authored-By Claude/Anthropic, noreply@anthropic.com or a 'Generated with Claude' line). Remove it from the commit message."
+              bad=1
+            fi
+          done
+          exit $bad
+
+      - name: Reject tool attribution in the pull request title and body
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          pattern='^Co-Authored-By:.*(claude|anthropic)|noreply@anthropic\.com|Generated with \[?Claude|🤖 Generated with'
+          if printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" | grep -qiE "$pattern"; then
+            echo "::error::The pull request title or body carries tool attribution. Remove it."
+            exit 1
+          fi
