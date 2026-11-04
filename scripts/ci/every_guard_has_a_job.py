@@ -440,10 +440,6 @@ ALLOWED: dict[str, str] = {
     ),
     "geen_interne_zaken.py": "wired with the other publication guards after #1543",
     "simulate_public_tree.py": "wired with the other publication guards after #1543",
-    "herkomsttabel.py": (
-        "generates docs/HERKOMST.md and is imported by header_sweep for the list "
-        "of forked crates; wired with the set after #1543"
-    ),
     "header_sweep.py": (
         "red on master on purpose: 18 of 630 own source files carry the old "
         "proprietary header and the rest carry none, which the flip (#257) and "

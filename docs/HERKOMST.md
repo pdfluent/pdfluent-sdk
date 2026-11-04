@@ -1,122 +1,108 @@
-# Herkomst per crate
+# Provenance per crate
 
-**Gegenereerd** door `scripts/ci/herkomsttabel.py`. Niet met de hand bewerken —
-een tabel die je overschrijft is op de dag van publicatie al oud.
+**Generated** by `scripts/ci/herkomsttabel.py`. Do not edit by hand:
+a table you overwrite is out of date on the day of publication.
 
-Dit beantwoordt één vraag: *wie is de rechthebbende, en waaruit blijkt dat?*
-Zonder dat antwoord is herlicentiëren weggeven wat misschien niet van jou is.
+This answers one question: *who holds the rights, and what shows it?*
+Without that answer, relicensing gives away what may not be yours.
 
-## Wat vaststaat
+## What is established
 
-**Eigen code is schoon.** 3.274 commits in deze repo, van één persoon plus een
-CI-bot. Geen enkele externe menselijke bijdrager, dus herlicentiëren vereist
-niemands toestemming.
+**Own code is clean.** No external human contributor appears in the history of
+this repository, so relicensing the own code needs nobody's permission.
 
-De `Co-Authored-By`-trailers waren geen auteursrechtclaim — een assistent is geen
-rechthebbende. Ze zijn uit de historie geschreven (#229).
+**The Foxit fonts are in order.** `crates/pdf-interpret/assets/*.pfb` carries
+BSD-3-Clause from the PDFium Authors and is fully redistributable. That is the
+classic stumbling block in open source; here it is already settled.
 
-**Correctie, 02-09-2026.** Hier stond dat ze er sinds 26-08-2026 niet meer in
-kunnen komen, "`scripts/ci/no_ai_attribution.py` plus een `commit-msg`-haak".
-Dat was niet waar toen het werd opgeschreven en het is vier maanden lang niet
-waar geweest. Gemeten op 02-09: `core.hooksPath` wees naar `.githooks`, die map
-bevatte `pre-commit` en `pre-push` en géén `commit-msg`, en het genoemde script
-stond op een tak die nooit gemerged is — geschreven op 31-08, vijf dagen ná de
-datum die deze zin claimde.
+## Own crates
 
-Sinds 02-09-2026 klopt de zin wel, en hij is nu ook controleerbaar:
+45 crates, 581 `.rs` files, of which **581**
+carry the PDFluent licence header.
 
-- `.githooks/commit-msg` roept beide boodschapwachten aan;
-- `scripts/ci/the_commit_msg_hook_is_wired.py` faalt als die haak ontbreekt, als
-  hij een van de twee niet aanroept, of als `core.hooksPath` in déze kloon niet
-  naar `.githooks` wijst — die laatste laag is per kloon en is precies de laag
-  die niemand controleerde;
-- de wacht draait in de lokale poort én in CI.
-
-Wie deze alinea in de toekomst wil aanpassen: laat die wacht meeveranderen, of
-laat de alinea weg. Een afspraak die alleen in een document staat is geen
-afspraak, en dit document heeft er vier maanden een beschreven die er niet was.
-
-**De Foxit-fonts zijn in orde.** `crates/pdf-interpret/assets/*.pfb` draagt
-BSD-3-Clause van de PDFium Authors, volledig herdistribueerbaar. Dat is het
-klassieke struikelpunt bij open source; hier is het al geregeld.
-
-## Eigen crates
-
-39 crates, 389 `.rs`-bestanden, waarvan **5**
-de proprietary header dragen.
-
-| crate | licentie | .rs | met header |
+| crate | licence | .rs | with header |
 |---|---|---:|---:|
-| `formcalc-interpreter` | AGPL-3.0-or-later | 9 | 0 |
-| `pdf-annot` | AGPL-3.0-or-later | 16 | 0 |
-| `pdf-bench` | — | 7 | 0 |
-| `pdf-capi` | AGPL-3.0-or-later | 5 | 0 |
-| `pdf-compliance` | AGPL-3.0-or-later | 11 | 0 |
-| `pdf-content-stream` | AGPL-3.0-or-later | 12 | 0 |
-| `pdf-desktop` | — | 5 | 0 |
-| `pdf-diff` | AGPL-3.0-or-later | 4 | 0 |
-| `pdf-docx` | AGPL-3.0-or-later | 4 | 0 |
-| `pdf-engine` | AGPL-3.0-or-later | 15 | 0 |
-| `pdf-extract` | AGPL-3.0-or-later | 5 | 0 |
-| `pdf-forms` | AGPL-3.0-or-later | 15 | 0 |
-| `pdf-invoice` | AGPL-3.0-or-later | 9 | 0 |
-| `pdf-java` | AGPL-3.0-or-later | 1 | 0 |
-| `pdf-manip` | AGPL-3.0-or-later | 35 | 3 |
-| `pdf-node` | AGPL-3.0-or-later | 9 | 0 |
-| `pdf-ocr` | AGPL-3.0-or-later | 13 | 1 |
-| `pdf-pptx` | AGPL-3.0-or-later | 3 | 0 |
-| `pdf-python` | AGPL-3.0-or-later | 2 | 0 |
-| `pdf-redact` | AGPL-3.0-or-later | 5 | 0 |
-| `pdf-sign` | AGPL-3.0-or-later | 16 | 0 |
-| `pdf-standard-fonts` | AGPL-3.0-or-later | 1 | 0 |
-| `pdf-text-format` | AGPL-3.0-or-later | 1 | 0 |
-| `pdf-xfa` | AGPL-3.0-or-later | 25 | 1 |
-| `pdf-xlsx` | AGPL-3.0-or-later | 3 | 0 |
-| `pdfluent` | AGPL-3.0-or-later | 23 | 0 |
-| `pdfluent-cli` | AGPL-3.0-or-later | 2 | 0 |
-| `xfa-api-server` | — | 4 | 0 |
-| `xfa-cli` | AGPL-3.0-or-later | 24 | 0 |
-| `xfa-dom-resolver` | AGPL-3.0-or-later | 6 | 0 |
-| `xfa-golden-tests` | — | 2 | 0 |
-| `xfa-js-sandboxed` | AGPL-3.0-or-later | 5 | 0 |
-| `xfa-json` | AGPL-3.0-or-later | 6 | 0 |
-| `xfa-layout-engine` | AGPL-3.0-or-later | 7 | 0 |
-| `xfa-license` | AGPL-3.0-or-later | 5 | 0 |
-| `xfa-license-gen` | — | 1 | 0 |
-| `xfa-pdfrest-compare` | AGPL-3.0-or-later | 1 | 0 |
-| `xfa-test-runner` | — | 65 | 0 |
-| `xfa-wasm` | AGPL-3.0-or-later | 7 | 0 |
+| `docx-extract` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 4 | 4 |
+| `epub-extract` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 8 | 8 |
+| `formcalc-interpreter` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 10 | 10 |
+| `markup-extract` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 5 | 5 |
+| `pdf-annot` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 16 | 16 |
+| `pdf-bench` | — | 7 | 7 |
+| `pdf-capi` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 13 | 13 |
+| `pdf-compliance` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 11 | 11 |
+| `pdf-content-stream` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 12 | 12 |
+| `pdf-desktop` | — | 5 | 5 |
+| `pdf-diff` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 4 | 4 |
+| `pdf-docx` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 4 | 4 |
+| `pdf-engine` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 111 | 111 |
+| `pdf-extract` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 6 | 6 |
+| `pdf-forms` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 15 | 15 |
+| `pdf-invoice` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 9 | 9 |
+| `pdf-java` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 1 | 1 |
+| `pdf-learned` | — | 6 | 6 |
+| `pdf-manip` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 39 | 39 |
+| `pdf-node` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 16 | 16 |
+| `pdf-ocr` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 15 | 15 |
+| `pdf-pptx` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 3 | 3 |
+| `pdf-python` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 20 | 20 |
+| `pdf-redact` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 5 | 5 |
+| `pdf-sign` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 18 | 18 |
+| `pdf-standard-fonts` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 1 | 1 |
+| `pdf-substitute-fonts` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 1 | 1 |
+| `pdf-text-format` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 1 | 1 |
+| `pdf-xfa` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 25 | 25 |
+| `pdf-xlsx` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 3 | 3 |
+| `pdfluent` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 31 | 31 |
+| `pdfluent-cli` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 20 | 20 |
+| `pptx-extract` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 3 | 3 |
+| `test-skip` | — | 1 | 1 |
+| `visual-regression` | — | 5 | 5 |
+| `xfa-api-server` | — | 4 | 4 |
+| `xfa-cli` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 23 | 23 |
+| `xfa-dom-resolver` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 6 | 6 |
+| `xfa-js-sandboxed` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 5 | 5 |
+| `xfa-json` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 6 | 6 |
+| `xfa-layout-engine` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 7 | 7 |
+| `xfa-pdfrest-compare` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 1 | 1 |
+| `xfa-test-runner` | — | 65 | 65 |
+| `xfa-wasm` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 7 | 7 |
+| `xlsx-extract` | AGPL-3.0-only OR LicenseRef-PDFluent-Commercial | 3 | 3 |
 
-## Andermans werk
+## Other people's work
 
-Allemaal permissief en geattribueerd in `NOTICE` en `THIRD_PARTY_LICENSES.txt`.
-**Deze crates horen onze header níét te krijgen** — een sweep die dat wel doet,
-claimt andermans werk.
+All permissive and attributed in `NOTICE` and `THIRD_PARTY_LICENSES.txt`.
+**These crates must not receive our header.** A sweep that adds it would
+claim other people's work.
 
-| crate | upstream | licentie | .rs | met header |
+| crate | upstream | licence | .rs | with header |
 |---|---|---|---:|---:|
 | `cff-parser` | ttf-parser / pdf.js (Reizner, Muizelaar) | MIT OR Apache-2.0 | 10 | 0 |
 | `hayro-ccitt` | hayro (Laurenz Stampfl) | Apache-2.0 OR MIT | 4 | 0 |
-| `hayro-jbig2` | hayro (Laurenz Stampfl) | Apache-2.0 OR MIT | 21 | 0 |
+| `hayro-jbig2` | hayro (Laurenz Stampfl) | Apache-2.0 OR MIT | 22 | 0 |
 | `hayro-jpeg2000` | hayro (Laurenz Stampfl) | Apache-2.0 OR MIT | 26 | 0 |
 | `lopdf` | lopdf | MIT | 38 | 0 |
 | `pdf-font` | hayro (Laurenz Stampfl) | Apache-2.0 OR MIT | 36 | 0 |
-| `pdf-interpret` | hayro (Laurenz Stampfl) | Apache-2.0 OR MIT | 42 | 0 |
-| `pdf-render` | hayro (Laurenz Stampfl) | Apache-2.0 OR MIT | 2 | 0 |
+| `pdf-interpret` | hayro (Laurenz Stampfl) | Apache-2.0 OR MIT | 44 | 2 (WARNING) |
+| `pdf-render` | hayro (Laurenz Stampfl) | Apache-2.0 OR MIT | 3 | 0 |
 | `pdf-syntax` | hayro (Laurenz Stampfl) | Apache-2.0 OR MIT | 47 | 0 |
 
-## Gekopieerde fragmenten, met naam
+## Copied fragments, by name
 
-| plek | bron | licentie |
+| location | source | licence |
 |---|---|---|
 | `pdfluent-jpeg2000/src/lib.rs` | OpenJPEG | BSD-2-Clause |
 | `pdf-interpret/src/color.rs:551` | [pdf.js `colorspace.js#L846`](https://github.com/mozilla/pdf.js/blob/06f44916/src/core/colorspace.js#L846) | Apache-2.0 |
 
-Die tweede stond in #213 als *"dat 'there' heeft geen naam"*. Hij heeft er wel
-een: de regel erbóven draagt de volledige pdf.js-permalink.
+The second one was once listed in #213 as having no name. It does have one:
+the line above it carries the full pdf.js permalink.
 
-## Eigen werk, geen fork
+## Own work, not a fork
 
-`pdf-content-stream` en `pdf-diff` stonden in #213 als *"eigen keuze of fork?"*.
-Nagetrokken in de historie: allebei beginnen met een commit die *"New crate"*
-zegt en een eigen ontwerp beschrijft. Geen fork.
+`pdf-content-stream` and `pdf-diff` were listed in #213 as "own choice or fork?".
+Checked in the history: both start with a commit that says "New crate" and
+describes an original design. Not forks.
+
+## Attention
+
+These forked crates carry our header: `pdf-interpret`.
+That is a claim on other people's work and must be reverted before LC10.

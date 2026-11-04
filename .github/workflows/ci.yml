@@ -685,6 +685,12 @@ jobs:
       - name: The attribution guard bites in both directions
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_no_ai_attribution.py
+      - name: The provenance table matches the tree
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/herkomsttabel.py --check
+      - name: The provenance check bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_herkomsttabel.py
       # A message cannot be excluded by a manifest the way a file can, so this
       # is the last point before the messages are published.
       # Master's, kept: my rebase resolution dropped it, and

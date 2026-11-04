@@ -2066,6 +2066,8 @@ run pinned300 python3 scripts/pdfa/the_300_are_the_pinned_300.py --self-test
 # lane and 23% of it on its own.
 zwaar seedtest  python3 scripts/ci/test_seed_public_repo.py
 run noaitest  python3 scripts/ci/test_no_ai_attribution.py
+run herkomst   python3 scripts/ci/herkomsttabel.py --check
+run herkomstt  python3 scripts/ci/test_herkomsttabel.py
 run msgclean  python3 scripts/ci/geen_interne_zaken.py --bereik github/master..HEAD
 # msgredact tests the redaction of msgclean's own report, not the commits of
 # this push (msgclean above judges those, and stays in the fast lane). At 20 s

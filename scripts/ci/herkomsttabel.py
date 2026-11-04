@@ -4,63 +4,61 @@
 # PDFluent is available under two licences, at your option: the GNU AGPLv3, or
 # the PDFluent Commercial Licence. See the LICENSE file in this repository --
 # that file travels with the copy you received, which a URL does not.
-"""Per crate: wie is de rechthebbende, en waaruit blijkt dat.
+"""Per crate: who holds the rights, and what shows it.
 
-LC1 (#213), blokkeert LC10. Herlicentiëren zonder deze tabel is weggeven wat
-misschien niet van jou is -- en dat merk je pas als iemand het aankaart.
+LC1 (#213), blocks LC10. Relicensing without this table gives away what may
+not be yours, and you only find out when someone raises it.
 
-DE TABEL WORDT GEGENEREERD, NIET GESCHREVEN
-Een tabel met de hand is op de dag van publicatie al oud. Deze leest de
-werkelijkheid: het licentieveld uit elke `Cargo.toml`, de aanwezigheid van een
-upstream-notice, de proprietary header in de broncode, en of de crate in
-`docs/release/canonical_licenses.toml` staat.
+THE TABLE IS GENERATED, NOT WRITTEN
+A hand-written table is out of date on the day of publication. This one reads
+the tree: the licence field of every `Cargo.toml`, the presence of an upstream
+notice, the proprietary header in the source, and the table of forked crates
+below.
 
-GEGENEREERD IS NIET GENOEG -- ER MOET IETS OP LETTEN
-Tot 30-08-2026 herschreef dit script het bestand en gaf altijd 0 terug. Niets in
-CI vergeleek het resultaat met wat er gecommit stond, dus de tabel dreef af en
-zei ondertussen 376 `.rs`-bestanden waar er 379 stonden. Hij veranderde pas als
-iemand toevallig de lokale poort draaide, en landde dan als een vreemde diff in
-een commit over iets heel anders. Een gegenereerd document zonder `--check` is
-een document met de hand, alleen trager.
+GENERATED IS NOT ENOUGH, SOMETHING MUST WATCH IT
+Until 30-08-2026 this script rewrote the file and always returned 0. Nothing in
+CI compared the result with what was committed, so the table drifted. A
+generated document without `--check` is a hand-written document, only slower.
+`scripts/ci/test_herkomsttabel.py` runs `--check` against the tree and proves
+that drift, a missing file and a broken tree walk each fail it.
 
-    herkomsttabel.py            # schrijf docs/HERKOMST.md
-    herkomsttabel.py --check    # faal als het gecommitte bestand is afgedreven
+    herkomsttabel.py            # write docs/HERKOMST.md
+    herkomsttabel.py --check    # fail if the committed file has drifted
 
-Afloopcodes:
-    0  geschreven, of bij de tijd
-    1  --check en het gecommitte bestand is afgedreven, of de ondergrens spreekt
+Exit codes:
+    0  written, or up to date
+    1  --check and the committed file has drifted, or the floor was not met
 
-WAT ER AL VASTSTAAT (#213)
-* Eigen code is schoon: 3.274 commits van één persoon plus een CI-bot, geen
-  externe menselijke bijdrager. Herlicentiëren vereist niemands toestemming.
-* De ~750 `Co-Authored-By`-trailers zijn geen auteursrechtclaim; er is geen
-  aparte rechthebbende. Ze zijn inmiddels uit de historie geschreven (#229).
-* De Foxit-fonts in `pdf-interpret/assets/*.pfb` dragen BSD-3-Clause van de
-  PDFium Authors en zijn volledig herdistribueerbaar.
+WHAT IS ESTABLISHED (#213)
+* No external human contributor appears in the history, so relicensing the
+  own code needs nobody's permission.
+* The Foxit fonts in `pdf-interpret/assets/*.pfb` carry BSD-3-Clause from the
+  PDFium Authors and are fully redistributable.
 """
 import argparse
 import difflib
+import os
 import pathlib
 import re
 import sys
 
-REPO = pathlib.Path(__file__).resolve().parents[2]
+# The root can be overridden so a test can measure a tree of its own; without
+# that the wiring (what is counted, what is flagged, what fails) goes untested.
+REPO = pathlib.Path(os.environ.get("PDFLUENT_HERKOMST_ROOT")
+                    or pathlib.Path(__file__).resolve().parents[2])
 CRATES = REPO / "crates"
 UIT = REPO / "docs" / "HERKOMST.md"
 
-# ONDERGRENS: crates >= 30 -- er zijn er achtenveertig. Vindt dit script er
-# minder, dan is de boomwandeling stuk en niet de workspace leeg; een lege tabel
-# zou lezen als "niets van een ander".
+# FLOOR: crates >= 30. If this script finds fewer, the tree walk is broken, not
+# the workspace empty; an empty table would read as "nothing from anyone else".
 MIN_CRATES = 30
 
-# Waar een geforkte crate vandaan komt. Handmatig, want dit is een feit over de
-# buitenwereld dat nergens in de code staat -- en het is het soort feit dat je
-# één keer opzoekt en daarna nooit meer.
-# LET OP: de mapnaam en de gepubliceerde naam verschillen. `crates/hayro-ccitt`
-# publiceert als `pdfluent-ccitt`, `crates/lopdf` als `pdfluent-lopdf`,
-# `crates/cff-parser` als `pdfluent-cff`. Matchen op alleen de map noemde vijf
-# geforkte crates "eigen werk" -- precies de fout die LC1 moet voorkomen, en hij
-# zat in het script dat hem moest opsporen.
+# Where a forked crate comes from. Maintained by hand: this is a fact about the
+# outside world that appears nowhere in the code.
+# NOTE: the directory name and the published name differ. `crates/hayro-ccitt`
+# publishes as `pdfluent-ccitt`, `crates/lopdf` as `pdfluent-lopdf`,
+# `crates/cff-parser` as `pdfluent-cff`. Matching on the directory alone
+# called five forked crates "own work", the exact mistake LC1 exists to prevent.
 UPSTREAM = {
     "hayro-ccitt": ("hayro (Laurenz Stampfl)", "Apache-2.0 OR MIT"),
     "hayro-jbig2": ("hayro (Laurenz Stampfl)", "Apache-2.0 OR MIT"),
@@ -96,13 +94,13 @@ def crate_info(crate: pathlib.Path) -> dict | None:
     licentiebestand = re.search(r'^\s*license-file\s*=\s*"([^"]+)"', toml, re.M)
 
     rs = [p for p in (crate / "src").rglob("*.rs")] if (crate / "src").is_dir() else []
-    # Zestig regels, niet 400 tekens: een lang crate-doccomment duwt de
-    # header voorbij dat venster en dan lijkt hij te ontbreken.
+    # Sixty lines, not 400 characters: a long crate doc comment pushes the
+    # header past that window and it would look missing.
     met_header = sum(
         1 for p in rs if HEADER in "".join(leest(p).splitlines(keepends=True)[:60])
     )
 
-    # Zoek op mapnaam én op gepubliceerde naam; ze verschillen bij vijf crates.
+    # Look up by directory name and by published name; they differ for five crates.
     upstream = UPSTREAM.get(crate.name) or UPSTREAM.get(naam.group(1))
     return {
         "map": crate.name,
@@ -118,14 +116,14 @@ def crate_info(crate: pathlib.Path) -> dict | None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true",
-                    help="schrijf niets; faal als het gecommitte bestand afwijkt")
+                    help="write nothing; fail if the committed file differs")
     args = ap.parse_args()
 
     crates = sorted(p for p in CRATES.iterdir() if p.is_dir() and (p / "Cargo.toml").is_file())
     if len(crates) < MIN_CRATES:
         print(
-            f"ONDERGRENS: {len(crates)} crates gevonden, verwacht >= {MIN_CRATES}. "
-            "De boomwandeling is stuk -- dit is geen groen.",
+            f"FLOOR: found {len(crates)} crates, expected >= {MIN_CRATES}. "
+            "The tree walk is broken; this is not a pass.",
             file=sys.stderr,
         )
         return 1
@@ -138,35 +136,29 @@ def main() -> int:
     tot_header = sum(r["met_header"] for r in eigen)
 
     uit = [
-        "# Herkomst per crate",
+        "# Provenance per crate",
         "",
-        "**Gegenereerd** door `scripts/ci/herkomsttabel.py`. Niet met de hand bewerken —",
-        "een tabel die je overschrijft is op de dag van publicatie al oud.",
+        "**Generated** by `scripts/ci/herkomsttabel.py`. Do not edit by hand:",
+        "a table you overwrite is out of date on the day of publication.",
         "",
-        "Dit beantwoordt één vraag: *wie is de rechthebbende, en waaruit blijkt dat?*",
-        "Zonder dat antwoord is herlicentiëren weggeven wat misschien niet van jou is.",
+        "This answers one question: *who holds the rights, and what shows it?*",
+        "Without that answer, relicensing gives away what may not be yours.",
         "",
-        "## Wat vaststaat",
+        "## What is established",
         "",
-        "**Eigen code is schoon.** 3.274 commits in deze repo, van één persoon plus een",
-        "CI-bot. Geen enkele externe menselijke bijdrager, dus herlicentiëren vereist",
-        "niemands toestemming.",
+        "**Own code is clean.** No external human contributor appears in the history of",
+        "this repository, so relicensing the own code needs nobody's permission.",
         "",
-        "De `Co-Authored-By`-trailers waren geen auteursrechtclaim — een assistent is geen",
-        "rechthebbende. Ze zijn uit de historie geschreven (#229) en kunnen er sinds",
-        "26-08-2026 niet meer in komen: `scripts/ci/no_ai_attribution.py` plus een",
-        "`commit-msg`-haak.",
+        "**The Foxit fonts are in order.** `crates/pdf-interpret/assets/*.pfb` carries",
+        "BSD-3-Clause from the PDFium Authors and is fully redistributable. That is the",
+        "classic stumbling block in open source; here it is already settled.",
         "",
-        "**De Foxit-fonts zijn in orde.** `crates/pdf-interpret/assets/*.pfb` draagt",
-        "BSD-3-Clause van de PDFium Authors, volledig herdistribueerbaar. Dat is het",
-        "klassieke struikelpunt bij open source; hier is het al geregeld.",
+        "## Own crates",
         "",
-        "## Eigen crates",
+        f"{len(eigen)} crates, {tot_bestanden} `.rs` files, of which **{tot_header}**",
+        "carry the PDFluent licence header.",
         "",
-        f"{len(eigen)} crates, {tot_bestanden} `.rs`-bestanden, waarvan **{tot_header}**",
-        "de proprietary header dragen.",
-        "",
-        "| crate | licentie | .rs | met header |",
+        "| crate | licence | .rs | with header |",
         "|---|---|---:|---:|",
     ]
     for r in sorted(eigen, key=lambda x: x["map"]):
@@ -174,84 +166,83 @@ def main() -> int:
 
     uit += [
         "",
-        "## Andermans werk",
+        "## Other people's work",
         "",
-        "Allemaal permissief en geattribueerd in `NOTICE` en `THIRD_PARTY_LICENSES.txt`.",
-        "**Deze crates horen onze header níét te krijgen** — een sweep die dat wel doet,",
-        "claimt andermans werk.",
+        "All permissive and attributed in `NOTICE` and `THIRD_PARTY_LICENSES.txt`.",
+        "**These crates must not receive our header.** A sweep that adds it would",
+        "claim other people's work.",
         "",
-        "| crate | upstream | licentie | .rs | met header |",
+        "| crate | upstream | licence | .rs | with header |",
         "|---|---|---|---:|---:|",
     ]
     for r in sorted(geforkt, key=lambda x: x["map"]):
         bron, lic = r["upstream"]
-        vlag = " ⚠️" if r["met_header"] else ""
+        vlag = " (WARNING)" if r["met_header"] else ""
         uit.append(f"| `{r['map']}` | {bron} | {lic} | {r['bestanden']} | {r['met_header']}{vlag} |")
 
     besmet = [r["map"] for r in geforkt if r["met_header"]]
     uit += [
         "",
-        "## Gekopieerde fragmenten, met naam",
+        "## Copied fragments, by name",
         "",
-        "| plek | bron | licentie |",
+        "| location | source | licence |",
         "|---|---|---|",
         "| `pdfluent-jpeg2000/src/lib.rs` | OpenJPEG | BSD-2-Clause |",
         "| `pdf-interpret/src/color.rs:551` | [pdf.js `colorspace.js#L846`]"
         "(https://github.com/mozilla/pdf.js/blob/06f44916/src/core/colorspace.js#L846) | Apache-2.0 |",
         "",
-        "Die tweede stond in #213 als *\"dat 'there' heeft geen naam\"*. Hij heeft er wel",
-        "een: de regel erbóven draagt de volledige pdf.js-permalink.",
+        "The second one was once listed in #213 as having no name. It does have one:",
+        "the line above it carries the full pdf.js permalink.",
         "",
-        "## Eigen werk, geen fork",
+        "## Own work, not a fork",
         "",
-        "`pdf-content-stream` en `pdf-diff` stonden in #213 als *\"eigen keuze of fork?\"*.",
-        "Nagetrokken in de historie: allebei beginnen met een commit die *\"New crate\"*",
-        "zegt en een eigen ontwerp beschrijft. Geen fork.",
+        "`pdf-content-stream` and `pdf-diff` were listed in #213 as \"own choice or fork?\".",
+        "Checked in the history: both start with a commit that says \"New crate\" and",
+        "describes an original design. Not forks.",
         "",
     ]
     if besmet:
         uit += [
-            "## ⚠️ Aandacht",
+            "## Attention",
             "",
-            f"Deze geforkte crates dragen onze header: {', '.join('`'+b+'`' for b in besmet)}.",
-            "Dat is een claim op andermans werk en hoort teruggedraaid vóór LC10.",
+            f"These forked crates carry our header: {', '.join('`'+b+'`' for b in besmet)}.",
+            "That is a claim on other people's work and must be reverted before LC10.",
             "",
         ]
 
     tekst = "\n".join(uit).rstrip() + "\n"
 
     if besmet:
-        print(f"LET OP: {len(besmet)} geforkte crate(s) dragen onze header: {', '.join(besmet)}",
+        print(f"WARNING: {len(besmet)} forked crate(s) carry our header: {', '.join(besmet)}",
               file=sys.stderr)
 
     if not args.check:
         UIT.write_text(tekst)
-        print(f"OK: {len(rijen)} crates ({len(eigen)} eigen, {len(geforkt)} geforkt) -> {UIT.relative_to(REPO)}")
+        print(f"OK: {len(rijen)} crates ({len(eigen)} own, {len(geforkt)} forked) -> {UIT.relative_to(REPO)}")
         return 0
 
     if not UIT.is_file():
-        print(f"{UIT.relative_to(REPO)} ontbreekt; draai dit script zonder --check "
-              "en commit het resultaat.", file=sys.stderr)
+        print(f"{UIT.relative_to(REPO)} is missing; run this script without --check "
+              "and commit the result.", file=sys.stderr)
         return 1
 
     gecommit = UIT.read_text()
     if gecommit != tekst:
-        print(f"{UIT.relative_to(REPO)} is afgedreven van de boom.", file=sys.stderr)
-        # Toon de diff hier. De eerste versie zei alleen "afgedreven" en liet de
-        # lezer hem zelf zoeken -- op een runner betekent dat de hele run lokaal
-        # overdoen.
+        print(f"{UIT.relative_to(REPO)} has drifted from the tree.", file=sys.stderr)
+        # Show the diff here. The first version only said "drifted" and left the
+        # reader to find it; on a runner that means redoing the whole run locally.
         regels = list(difflib.unified_diff(
             gecommit.splitlines(), tekst.splitlines(),
-            fromfile="gecommit", tofile="gegenereerd", lineterm="", n=1))
+            fromfile="committed", tofile="generated", lineterm="", n=1))
         for regel in regels[:80]:
             print(f"  {regel}", file=sys.stderr)
         if len(regels) > 80:
-            print(f"  ... en nog {len(regels) - 80} diffregels", file=sys.stderr)
-        print("Draai `python3 scripts/ci/herkomsttabel.py` en commit het resultaat "
-              "in dezelfde wijziging.", file=sys.stderr)
+            print(f"  ... and {len(regels) - 80} more diff lines", file=sys.stderr)
+        print("Run `python3 scripts/ci/herkomsttabel.py` and commit the result "
+              "in the same change.", file=sys.stderr)
         return 1
 
-    print(f"OK: {len(rijen)} crates ({len(eigen)} eigen, {len(geforkt)} geforkt), tabel klopt.")
+    print(f"OK: {len(rijen)} crates ({len(eigen)} own, {len(geforkt)} forked), table is current.")
     return 0
 
 
