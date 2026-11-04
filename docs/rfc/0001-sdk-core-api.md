@@ -610,5 +610,3 @@ These are documented here so a user who tries `PdfDocument::from_html` and gets 
 
 | 2026-04-21 | v1.4 | Epic 2 execution contract fixes (from PR #1248 Codex triage). Flipped `SaveOptions::default` back to `overwrite: false` to honour §1.2 "save writes to a new path or overwrites only when explicitly requested". Rustdoc on `OpenOptions::strict_memory_limit` rewritten to be honest: it is an **input-size cap** (refuses oversized files/buffers before parse), not a peak-memory guarantee; peak RSS during parse can reach ~3× input for pathological PDFs because `pdf-engine` + `lopdf` build parallel in-memory trees. Hard peak caps remain an OS-level (cgroup/ulimit) concern. Stricter in-process peak-memory limiter is tracked as a post-1.0 improvement. No method signatures changed. |
 
-
-🤖 Drafted 2026-04-21 as part of milestone #52 execution (SDK Core Facade & API Ergonomics).
