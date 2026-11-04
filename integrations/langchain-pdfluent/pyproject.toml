@@ -9,7 +9,7 @@ description = "LangChain document loader for PDFluent: PDF blocks and tables wit
 readme = "README.md"
 license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 license-files = ["LICENSE", "LICENSE-COMMERCIAL"]
-authors = [{ name = "Innovation Trigger B.V.", email = "team@pdfluent.com" }]
+authors = [{ name = "Innovation Trigger B.V.", email = "hello@pdfluent.com" }]
 requires-python = ">=3.9"
 # langchain-core is MIT. pdfluent 1.1.0 is the first release with
 # `pdfluent.chunks`, which this loader is a thin wrapper around.

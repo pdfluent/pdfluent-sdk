@@ -142,16 +142,16 @@ def main() -> int:
              any("no bug bounty" in f for f in fatal), str(fatal))
 
         # --- an address with no mailbox behind it -----------------------------
-        dead = SECURITY.replace("hello@pdfluent.com", "security@pdfluent.com")
+        dead = SECURITY.replace("hello@pdfluent.com", "hello@pdfluent.com")
         fatal, _ = guard.judge(tree(base / "dead-address", **{"SECURITY.md": dead}), [])
         case("a SECURITY.md that names the retired address is fatal",
-             any("names security@pdfluent.com" in f for f in fatal), str(fatal))
+             any("names hello@pdfluent.com" in f for f in fatal), str(fatal))
 
         fatal, _ = guard.judge(
             tree(base / "dead-readme",
-                 **{"README.md": "Report security problems to security@pdfluent.com.\n"}), [])
+                 **{"README.md": "Report security problems to hello@pdfluent.com.\n"}), [])
         case("a README that names the retired address is fatal",
-             any("README.md names security@pdfluent.com" in f for f in fatal), str(fatal))
+             any("README.md names hello@pdfluent.com" in f for f in fatal), str(fatal))
 
         # --- what the seeding does to it -------------------------------------
         # `.gitlab-ci.yml` is the real regression: SECURITY.md described the fuzz

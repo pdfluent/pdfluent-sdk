@@ -353,7 +353,7 @@ features. You are buying the right not to publish your own source. It is what
 [pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing) sells, yearly and
 self-service, in four options: Commercial (per organisation), OEM Startup and
 OEM (per product), and Priority support (an add-on). Enquiries go to
-<sales@pdfluent.com>.
+<hello@pdfluent.com>.
 
 **There is nothing to activate.** Since 6 September 2026 the compiled SDK
 carries no tier check and reads no key: every capability is present in every

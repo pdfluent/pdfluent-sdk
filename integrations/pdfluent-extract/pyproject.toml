@@ -9,7 +9,7 @@ description = "PDF to Markdown, JSON and RAG chunks — fast, local, no system d
 readme = "README.md"
 license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 license-files = ["LICENSE", "LICENSE-COMMERCIAL"]
-authors = [{ name = "Innovation Trigger B.V.", email = "team@pdfluent.com" }]
+authors = [{ name = "Innovation Trigger B.V.", email = "hello@pdfluent.com" }]
 requires-python = ">=3.8"
 dependencies = ["pdfluent>=1.1.0,<2"]
 keywords = ["pdf", "markdown", "rag", "llm", "chunking", "langchain", "llamaindex", "docling", "table-extraction", "pdf-to-text"]

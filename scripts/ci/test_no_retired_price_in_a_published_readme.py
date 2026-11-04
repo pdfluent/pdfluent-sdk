@@ -201,7 +201,7 @@ def main() -> int:
             run(base, "quote", rewrite(
                 "bindings/java/pom.xml",
                 "the prices are\n                published",
-                "contact sales@pdfluent.com for pricing; the prices are\n                published")),
+                "contact hello@pdfluent.com for pricing; the prices are\n                published")),
             "no quote",
         )
 

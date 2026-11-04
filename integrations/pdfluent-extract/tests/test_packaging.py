@@ -31,7 +31,7 @@ def test_metadata_names_the_package_and_a_short_summary():
     assert PROJECT["version"] == "0.1.0"
     assert PROJECT["readme"] == "README.md"
     assert PROJECT["authors"] == [
-        {"name": "Innovation Trigger B.V.", "email": "team@pdfluent.com"}
+        {"name": "Innovation Trigger B.V.", "email": "hello@pdfluent.com"}
     ]
     # The summary is the PyPI listing line: the first words count, ≤ 90 chars.
     assert PROJECT["description"] == (

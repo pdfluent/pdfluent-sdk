@@ -18,7 +18,7 @@ license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 # scripts/ci/notice_names_what_exists.py.
 license-files = ["LICENSE", "LICENSE-COMMERCIAL", "NOTICE", "THIRD_PARTY_LICENSES.txt"]
 authors = [
-    { name = "Innovation Trigger BV", email = "team@pdfluent.com" },
+    { name = "Innovation Trigger BV", email = "hello@pdfluent.com" },
 ]
 requires-python = ">=3.8"
 keywords = ["pdf-text-replace", "find-and-replace", "edit-pdf-text", "pdf", "xfa", "acroform", "render", "text-extraction", "forms", "pdf-a", "annotations", "redaction", "rust", "pdfluent"]

@@ -33,7 +33,7 @@ import sys
 import urllib.error
 import urllib.request
 
-USER_AGENT = "pdfluent-release (team@pdfluent.com)"
+USER_AGENT = "pdfluent-release (hello@pdfluent.com)"
 
 
 def workspace() -> dict[str, dict]:

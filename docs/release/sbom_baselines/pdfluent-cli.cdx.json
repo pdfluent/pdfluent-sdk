@@ -343,7 +343,7 @@
       "version": "1.1.0"
     },
     {
-      "author": "PDFluent Contributors <team@pdfluent.com>, Laurenz Stampfl <laurenz.stampfl@gmail.com>",
+      "author": "PDFluent Contributors <hello@pdfluent.com>, Laurenz Stampfl <laurenz.stampfl@gmail.com>",
       "bom-ref": "path://pdf-font#1.0.0-beta.6",
       "description": "PDF font handling: CFF/Type1 parsing, CMap parsing, and PostScript scanning.",
       "externalReferences": [
@@ -533,7 +533,7 @@
       "version": "1.1.0"
     },
     {
-      "author": "PDFluent Contributors <team@pdfluent.com>, Laurenz Stampfl <laurenz.stampfl@gmail.com>",
+      "author": "PDFluent Contributors <hello@pdfluent.com>, Laurenz Stampfl <laurenz.stampfl@gmail.com>",
       "bom-ref": "path://pdf-render#1.1.0",
       "description": "A PDF rasterizer in pure Rust.",
       "externalReferences": [
@@ -715,7 +715,7 @@
       "version": "1.1.0"
     },
     {
-      "author": "PDFluent Contributors <team@pdfluent.com>",
+      "author": "PDFluent Contributors <hello@pdfluent.com>",
       "bom-ref": "path://pdfluent#1.1.0",
       "description": "Pure-Rust PDF SDK with PDF/A, digital signatures, WASM, and experimental (feature-gated) XFA support.",
       "externalReferences": [

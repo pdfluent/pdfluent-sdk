@@ -31,7 +31,7 @@ Licence: PDFluent Commercial Licence, version 3.0 — 6 September 2026 (`LICENSE
 | Licensee's registered seat | _________________________________________ |
 | Licensee's registration no. | _________________________________________ |
 | Notices to licensee | _________________________________________ (address and e-mail) |
-| Notices to licensor | sales@pdfluent.com |
+| Notices to licensor | hello@pdfluent.com |
 
 The licensee is the legal entity named above. Affiliates are covered only where
 section 3 says so, and an affiliate that leaves the licensee's group leaves the

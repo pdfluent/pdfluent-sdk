@@ -9,7 +9,7 @@ description = "MCP server for PDFluent: a PDF as markdown or as blocks with page
 readme = "README.md"
 license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 license-files = ["LICENSE", "LICENSE-COMMERCIAL"]
-authors = [{ name = "Innovation Trigger BV", email = "team@pdfluent.com" }]
+authors = [{ name = "Innovation Trigger BV", email = "hello@pdfluent.com" }]
 # mcp 2.x needs 3.10.
 requires-python = ">=3.10"
 # mcp is MIT. pdfluent 1.1.0, the next release after 1.0.0, is the first with

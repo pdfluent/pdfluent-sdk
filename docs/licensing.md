@@ -65,7 +65,7 @@ later releases under this licence rather than under the AGPL
 A licensee whose procurement requires a signed order form can have one — the
 template is [`docs/licensing/order-form.md`](licensing/order-form.md) — but it
 is not the ordinary route and it changes none of the rights. Write to
-**sales@pdfluent.com**.
+**hello@pdfluent.com**.
 
 Licences bought before 6 September 2026 were perpetual for the versions they
 named and stay perpetual. Nothing in the current model withdraws or replaces

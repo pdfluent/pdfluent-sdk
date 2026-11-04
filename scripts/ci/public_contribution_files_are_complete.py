@@ -81,11 +81,11 @@ REQUIRED: dict[str, list[tuple[str, str]]] = {
     ],
 }
 
-# Addresses that do not exist. `security@pdfluent.com` was the reporting route
+# Addresses that do not exist. `hello@pdfluent.com` was the reporting route
 # in SECURITY.md and README.md until 17-10-2026, and no mailbox stands
 # behind it: a report sent there goes nowhere, and nothing says so. None of the
 # files a stranger meets may name one of these again.
-RETIRED_ADDRESSES = ("security@pdfluent.com",)
+RETIRED_ADDRESSES = ("hello@pdfluent.com",)
 # README.md is not in the register (it is guarded elsewhere), but it carries
 # the same contact line, so it is read for a retired address too.
 ALSO_READ_FOR_ADDRESSES = ("README.md",)

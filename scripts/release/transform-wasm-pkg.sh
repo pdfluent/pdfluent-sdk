@@ -50,7 +50,7 @@ d["version"] = version
 d["license"] = "SEE LICENSE IN LICENSE-OFFER"
 d["homepage"] = "https://pdfluent.com"
 d["description"] = "PDFluent browser SDK — find and replace PDF text programmatically while preserving fonts and layout, plus edit, annotate, redact, sign and validate PDFs (including XFA), entirely client-side via WASM."
-d["author"] = "Innovation Trigger BV <team@pdfluent.com>"
+d["author"] = "Innovation Trigger BV <hello@pdfluent.com>"
 
 # Reciprocal repository backlink — gated on WASM_REPO_PUBLIC=1 (see header).
 if os.environ.get("WASM_REPO_PUBLIC") == "1":

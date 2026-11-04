@@ -32,7 +32,7 @@ def test_metadata_names_the_package_and_its_readme():
     assert PROJECT["description"].strip()
     assert PROJECT["readme"] == "README.md"
     assert PROJECT["authors"] == [
-        {"name": "Innovation Trigger B.V.", "email": "team@pdfluent.com"}
+        {"name": "Innovation Trigger B.V.", "email": "hello@pdfluent.com"}
     ]
 
 
