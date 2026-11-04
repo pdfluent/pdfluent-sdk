@@ -121,6 +121,53 @@ class HerkomstTable(unittest.TestCase):
             self.assertIn("## Attention", text)
             self.assertIn("`hayro-ccitt`", text.split("## Attention")[1])
 
+    def _interpret_tree(self, root, extra=None):
+        make_tree(root)
+        gen = root / "crates" / "pdf-interpret" / "src" / "font" / "generated"
+        gen.mkdir(parents=True)
+        (root / "crates" / "pdf-interpret" / "Cargo.toml").write_text(
+            '[package]\nname = "pdf-interpret"\nlicense = "MIT"\n')
+        (gen / "glyph_names.rs").write_text(HEADER + "pub fn n() {}\n")
+        if extra:
+            (root / "crates" / "pdf-interpret" / "src" / extra).write_text(
+                HEADER + "pub fn x() {}\n")
+
+    def test_allowlisted_generated_file_does_not_warn(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            self._interpret_tree(root)
+            done = run(root)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertNotIn("WARNING", done.stderr)
+            text = (root / "docs" / "HERKOMST.md").read_text()
+            self.assertNotIn("## Attention", text)
+            self.assertIn("src/font/generated/glyph_names.rs", text)
+            self.assertIn("build_glyph_names.py", text)
+
+    def test_other_file_with_our_header_in_same_crate_still_warns(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            self._interpret_tree(root, extra="new_module.rs")
+            done = run(root)
+            self.assertIn("WARNING", done.stderr)
+            text = (root / "docs" / "HERKOMST.md").read_text()
+            self.assertIn("`pdf-interpret`", text.split("## Attention")[1])
+
+    def test_generated_file_in_another_crate_still_warns(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            make_tree(root)
+            gen = root / "crates" / "hayro-ccitt" / "src" / "font" / "generated"
+            gen.mkdir(parents=True)
+            (gen / "glyph_names.rs").write_text(HEADER)
+            self.assertIn("WARNING", run(root).stderr)
+
+    def test_table_states_the_author_identities(self):
+        text = (REPO / "docs" / "HERKOMST.md").read_text()
+        for needle in ("`jasperdew`", "`Jasper de Winter`", "`t <noreply@github.com>`",
+                       "`PDFluent <noreply@pdfluent.com>`", "`GATE CI <gate-ci@pdfluent.com>`"):
+            self.assertIn(needle, text)
+
 
 if __name__ == "__main__":
     unittest.main()
