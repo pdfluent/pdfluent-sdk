@@ -62,7 +62,7 @@ name: CI
 # rules in orchestration_stays_hosted.py deciding where they run.
 on:
   push:
-    branches: [master]
+    branches: [main]
 
 concurrency:
   # ONE RUN PER REF, AND THE NEWEST COMMIT WINS (#350).
@@ -2459,7 +2459,7 @@ jobs:
           BASE="$PR_BASE"
           if [ -z "$BASE" ]; then BASE="$PUSH_BEFORE"; fi
           case "$BASE" in ""|0000000000000000000000000000000000000000)
-              git fetch -q origin master
+              git fetch -q origin main
               git update-ref refs/remotes/origin/master "$(git rev-parse FETCH_HEAD)" ;;
             *)
               git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin "$BASE"
