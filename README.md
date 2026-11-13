@@ -63,6 +63,10 @@ PDFluent 1.3.0 ranks above every engine on the published opendataloader-bench le
 
 <sub>*Overall score 0.9168 (quality="auto", keep_furniture=True, Linux) against the engines listed in the benchmark README on 3 November 2026; submitted as pull request #37. Other engines have submissions open that are not yet on the leaderboard.</sub>
 
+PDFluent 1.4.0 `quality="auto"` scores 0.9282 overall on opendataloader-bench, against 0.9154 for 1.3.0 in the same setup on the same machine (Apple M1 Pro, macOS)*.
+
+<sub>*All 200 documents, `keep_furniture=True`, measured with the benchmark's own harness and evaluator on the 1.4.0 macOS release wheel with the layout, table and formula models installed. The benchmark was one of our development targets. One run each, no confidence interval. Both runs keep page headers and footers because the benchmark counts them as content. Table scores differ between platforms, so compare Mac with Mac. Measured 11 November 2026.</sub>
+
 [Full tables, all four measures and how to reproduce](https://pdfluent.com/benchmarks/opendataloader-bench)
 
 ---
@@ -107,9 +111,9 @@ npm install @pdfluent/sdk-wasm      # Browser (WebAssembly)
 dotnet add package PDFluent         # .NET
 ```
 
-Java 1.1.0 is served from the PDFluent Maven repository at
+Java 1.4.0 is served from the PDFluent Maven repository at
 <https://maven.pdfluent.com>, so add it next to the dependency. Maven Central
-carries 1.0.0; 1.1.x follows there later.
+carries 1.0.0; later releases are not there yet.
 
 ```xml
 <!-- Java (Maven) -->
@@ -124,7 +128,7 @@ carries 1.0.0; 1.1.x follows there later.
   <dependency>
     <groupId>com.pdfluent</groupId>
     <artifactId>pdfluent</artifactId>
-    <version>1.1.0</version>
+    <version>1.4.0</version>
   </dependency>
 </dependencies>
 ```
@@ -137,7 +141,7 @@ repositories {
 }
 
 dependencies {
-    implementation("com.pdfluent:pdfluent:1.1.0")
+    implementation("com.pdfluent:pdfluent:1.4.0")
 }
 ```
 
@@ -153,7 +157,7 @@ features. `npm install @pdfluent/node` does not install the command. No Python
 or Node function installs models. Install the models once:
 
 ```sh
-pdfluent models install layout tables
+pdfluent models install layout tables formula
 ```
 
 
@@ -161,15 +165,22 @@ pdfluent models install layout tables
 
 `pdfluent-cli` is an alias for the standalone binary.
 
-PDF/A conversion is a preview in 1.3.0. Conversion success means the file was
-written, not that it conforms to PDF/A. We make no conformance, fidelity or size
-claim for this release. Validate the output separately and inspect its appearance.
+PDF/A conversion is a full feature in 1.4.0; it was a preview in 1.3.0. We
+measured it once on a sealed holdout of 1,000 documents from Zenodo, Wikimedia
+Commons and arXiv, published between 2007 and 2026. Checked with veraPDF 1.28.2,
+993 of the 1,000 converted files conform to PDF/A (99.3%) and one conversion was
+refused. Real-word text retention at the 5th percentile is 98.4%. Our own target
+was 99.5% for both and we did not reach it. The output is 96.6% of the input
+size in total and 99.1% for the median document. The converter was measured as
+it stood on 7 November 2026; later changes were not measured again. Conversion
+success means the file was written, so validate the output and inspect its
+appearance.
 
 ## How it compares
 
 Every figure in this README carries a claim ID. The figures, their method and
-their limits are in the [1.1.0 release
-notes](https://github.com/pdfluent/pdfluent-sdk/releases/tag/v1.1.0).
+their limits are in the [1.4.0 release
+notes](https://github.com/pdfluent/pdfluent-sdk/releases/tag/v1.4.0).
 
 ## What is in here
 
@@ -223,17 +234,10 @@ Extraction runs in one of two tiers:
   Balanced/tables: glibc Linux, macOS, Windows; not on musl Linux
   (loading returns a typed ModelError).
 
-On the held-out test set (claim A41, measured 2026-10-17), `balanced` with the
-table model has the highest average of the three tools across 19 extraction
-measures: 0.721, against 0.693 for pymupdf4llm 1.28.2 and 0.672 for Docling
-2.126.0 (claim A41). It scores higher than Docling on 16 of the 19 measures and
-higher than pymupdf4llm on 13 (claim A41). On table structure (TEDS) it is ahead
-of both on FinTabNet and PubTables-1M, with every 95% confidence interval above
-zero (claim A42, measured 2026-10-17). The held-out half was not used while
-building the table work. The table-structure model we ship is Microsoft's Table
-Transformer v1.1-all, trained on PubTables-1M and FinTabNet.c; we have not
-checked whether our sample pages fall inside that training data. Per-measure
-numbers, sample sizes and intervals: <https://pdfluent.com/benchmarks/>.
+The table-structure model we ship is Microsoft's Table
+Transformer v1.1-all, unmodified, under its MIT licence. The layout and formula
+models are licensed under the same terms as the SDK. Benchmarks:
+<https://pdfluent.com/benchmarks/>.
 
 The Python wheel, the Node addon and the CLI archives ship with the model
 features (`ort-layout`, `ort-tables`) already built in. The `pdfluent` command
@@ -246,7 +250,7 @@ install it.
 | `balanced` | The `ort-layout` build (`ort-tables` for table structure) plus installed models | Native only | Preview |
 
 ```sh
-pdfluent models install layout tables   # explicit, once; SHA-256 verified, never automatic
+pdfluent models install layout tables formula   # explicit, once; SHA-256 verified, never automatic
 pdfluent models status
 ```
 
