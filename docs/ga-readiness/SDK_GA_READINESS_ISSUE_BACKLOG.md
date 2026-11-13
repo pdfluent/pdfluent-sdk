@@ -1,5 +1,7 @@
 # SDK GA Readiness — Issue Backlog (Milestones A/B/C)
 
+> **Historical document.** GA-DX-006 (licence activation docs) is obsolete. The SDK has no licence key, no activation call and no trial; see `docs/licensing.md`.
+
 - **Date:** 2026-05-20 · Machine-readable: [`sdk_ga_readiness_issue_backlog.json`](sdk_ga_readiness_issue_backlog.json)
 - Concrete issues for the first three milestones. **Planning artifact only — no issue is executed in this milestone.**
 - Counts: DX 12 · Quality 15 · Performance 15 · total 42

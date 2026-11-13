@@ -10,7 +10,7 @@ repository = "https://github.com/pdfluent/pdfluent-sdk"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 readme = "README.md"
-description = "Pure-Rust PDF SDK with PDF/A, digital signatures, WASM, and experimental (feature-gated) XFA support."
+description = "Rust PDF SDK with PDF/A, digital signatures, WASM, and experimental (feature-gated) XFA support."
 keywords = ["pdf", "xfa", "acroform", "pdf-forms", "pades"]
 categories = ["rendering", "text-processing", "parser-implementations", "encoding"]
 

@@ -1,5 +1,7 @@
 # PDFluent SDK — Developer Experience GA Model
 
+> **Historical document.** The licence activation item (DX-6) is obsolete. The SDK has no licence key, no activation call and no trial; see `docs/licensing.md`.
+
 Defines what **DX 100%** means for the non-XFA SDK. "DX 100%" = a
 developer in any supported language can install, run a first example, and
 recover from errors within minutes, using docs that are provably accurate

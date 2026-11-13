@@ -1,5 +1,7 @@
 # RFC 0001 — SDK Core API
 
+> **Historical document.** The `Trial` tier and the tier/capability table below are historical. The SDK has no trial, no licence key and no tiers; see `docs/licensing.md`.
+
 **Status:** DRAFT — under review for API Design Freeze (#1239)
 **Milestone:** #52 — SDK Core Facade & API Ergonomics (1.0 GA Blocker)
 **Covers issues:** #1214, #1215, #1216, #1217, #1218

@@ -355,13 +355,10 @@ self-service, in four options: Commercial (per organisation), OEM Startup and
 OEM (per product), and Priority support (an add-on). Enquiries go to
 <hello@pdfluent.com>.
 
-**There is nothing to activate.** Since 6 September 2026 the compiled SDK
-carries no tier check and reads no key: every capability is present in every
-build, and nothing in the output marks whether a licence was bought. Earlier
-builds still contained checks left over from the proprietary model while the
-licence file of that time said there were none; this paragraph replaced the
-sentence that was wrong, and it will be updated again the day it stops being
-true.
+**There is no trial, no licence key and nothing to activate.** The compiled SDK
+carries no tier check, reads no key and never switches into a limited mode.
+Nothing expires. Every capability is present in every build, and nothing in the output
+marks whether a licence was bought.
 
 ### Not everything here is ours to license
 
@@ -390,9 +387,8 @@ licences above.
 
 ### History
 
-Until 1 September 2026 `LICENSE` held the PDFluent Commercial License v1.0 of
-2 May 2026, and that was the only licence offered. It described licence keys,
-tiers and an expiring evaluation, none of which exist. It is kept, unaltered, at
+Until 1 September 2026 `LICENSE` held an earlier proprietary licence, the
+PDFluent Commercial License v1.0 of 2 May 2026. It is withdrawn and kept, unaltered, at
 [`docs/licensing/archive/LICENSE-COMMERCIAL-v1.0-2026-05-02.txt`](docs/licensing/archive/LICENSE-COMMERCIAL-v1.0-2026-05-02.txt),
 because versions published under it are still out there and a licensee is
 entitled to read the terms they agreed to.

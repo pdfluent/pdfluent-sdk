@@ -1,5 +1,7 @@
 # Layout-Aware Text Replacement Engine — Phase 1A Design
 
+> **Historical document.** Trial tier, `require_capability` and the trial notice described below no longer exist. The SDK has no trial, no licence key and no tiers; every build behaves the same.
+
 Status: Phase 1A reviewed & decided (§10); Phase 1B implemented as
 `pdf_manip::text_edit`; **Phase 1C COMPLETE** (2026-08-13):
 - `CommitPolicy::BestEffort` (deterministic subset, earlier-staged wins,
