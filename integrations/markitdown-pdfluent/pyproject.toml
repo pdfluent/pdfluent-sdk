@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "markitdown-pdfluent"
+version = "0.1.0"
+description = "A MarkItDown plugin that converts PDFs to Markdown with the PDFluent engine: reading order, headings, lists and tables, locally and offline."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Innovation Trigger B.V.", email = "team@pdfluent.com" }]
+requires-python = ">=3.10"
+# markitdown is MIT. pdfluent is the engine and is licensed separately (AGPL-3.0 or commercial).
+dependencies = ["markitdown>=0.1.0", "pdfluent>=1.1.0"]
+keywords = ["markitdown", "plugin", "pdf", "markdown", "rag", "pdfluent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Text Processing",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://pdfluent.com"
+Documentation = "https://pdfluent.com/docs"
+Repository = "https://github.com/pdfluent/pdfluent-sdk"
+"Bug Tracker" = "https://github.com/pdfluent/pdfluent-sdk/issues"
+
+[project.entry-points."markitdown.plugin"]
+pdfluent = "markitdown_pdfluent"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/markitdown_pdfluent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

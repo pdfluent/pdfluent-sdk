@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pdfluent-haystack"
+version = "0.1.0"
+description = "Haystack converter for PDFluent: PDFs to structure-aware Document chunks with page, box and kind, with the local engine or the hosted API."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Innovation Trigger B.V.", email = "team@pdfluent.com" }]
+requires-python = ">=3.9"
+# haystack-ai is Apache-2.0. Local mode needs pdfluent 1.2.0 or later (pdfluent.chunks), tested
+# against 1.4.0; API mode needs no engine, only the key.
+dependencies = ["haystack-ai>=2.0"]
+keywords = ["haystack", "converter", "pdf", "rag", "pdfluent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing",
+]
+
+[project.optional-dependencies]
+local = ["pdfluent>=1.2.0"]
+
+[project.urls]
+Homepage = "https://pdfluent.com"
+Documentation = "https://pdfluent.com/docs"
+Pricing = "https://pdfluent.com/sdk/pricing"
+Repository = "https://github.com/pdfluent/pdfluent-sdk"
+"Bug Tracker" = "https://github.com/pdfluent/pdfluent-sdk/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pdfluent_haystack"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
