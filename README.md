@@ -8,18 +8,20 @@
 
 <p align="center"><strong>A PDF SDK written in Rust: render, extract, edit, sign, redact, and validate PDF/A, from Rust, Python, Node.js, .NET, Java, C, or the browser.</strong></p>
 
-<p align="center">
-  <a href="https://crates.io/crates/pdfluent"><img src="https://img.shields.io/crates/v/pdfluent?label=crates.io&color=111111" alt="crates.io"/></a>
-  <a href="https://pypi.org/project/pdfluent/"><img src="https://img.shields.io/pypi/v/pdfluent?label=PyPI&color=111111" alt="PyPI"/></a>
-  <a href="https://www.npmjs.com/package/@pdfluent/node"><img src="https://img.shields.io/npm/v/%40pdfluent%2Fnode?label=npm&color=111111" alt="npm"/></a>
-  <a href="https://www.nuget.org/packages/PDFluent"><img src="https://img.shields.io/nuget/v/PDFluent?label=NuGet&color=111111" alt="NuGet"/></a>
-  <a href="https://central.sonatype.com/artifact/com.pdfluent/pdfluent"><img src="https://img.shields.io/maven-central/v/com.pdfluent/pdfluent?label=Maven&color=111111" alt="Maven Central"/></a>
-  <br/>
-  <a href="https://pdfluent.com/docs/"><img src="https://img.shields.io/badge/docs-pdfluent.com-111111" alt="Documentation"/></a>
-  <a href="https://github.com/pdfluent/pdfluent-sdk/discussions"><img src="https://img.shields.io/badge/discussions-ask%20a%20question-111111?logo=github" alt="GitHub Discussions"/></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0--only%20OR%20Commercial-111111" alt="Licence: AGPL-3.0-only or commercial"/></a>
-  <a href="https://github.com/pdfluent/pdfluent-sdk/actions/workflows/public-pull-request.yml"><img src="https://img.shields.io/github/actions/workflow/status/pdfluent/pdfluent-sdk/public-pull-request.yml?branch=main&label=checks&color=111111" alt="Public pull request checks"/></a>
-</p>
+<div align="center">
+
+[![crates.io](https://img.shields.io/crates/v/pdfluent?label=crates.io&color=111111)](https://crates.io/crates/pdfluent)
+[![PyPI](https://img.shields.io/pypi/v/pdfluent?label=PyPI&color=111111)](https://pypi.org/project/pdfluent/)
+[![npm](https://img.shields.io/npm/v/%40pdfluent%2Fnode?label=npm&color=111111)](https://www.npmjs.com/package/@pdfluent/node)
+[![NuGet](https://img.shields.io/nuget/v/PDFluent?label=NuGet&color=111111)](https://www.nuget.org/packages/PDFluent)
+[![Maven Central](https://img.shields.io/maven-central/v/com.pdfluent/pdfluent?label=Maven&color=111111)](https://central.sonatype.com/artifact/com.pdfluent/pdfluent)
+[![Licence](https://img.shields.io/badge/licence-AGPL--3.0--only%20OR%20Commercial-111111)](LICENSE)
+[![Discussions](https://img.shields.io/badge/discussions-ask%20a%20question-111111?logo=github)](https://github.com/pdfluent/pdfluent-sdk/discussions)
+[![Public pull request](https://img.shields.io/github/actions/workflow/status/pdfluent/pdfluent-sdk/public-pull-request.yml?branch=main&label=checks&color=111111)](https://github.com/pdfluent/pdfluent-sdk/actions/workflows/public-pull-request.yml)
+
+![A statement printed to PDF, and the same statement after PDFluent redacted the bank line, watermarked it and converted it to PDF/A-1B](docs/readme-hero.png)
+
+</div>
 
 ```bash
 cargo add pdfluent                  # Rust
