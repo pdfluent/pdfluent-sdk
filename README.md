@@ -31,9 +31,9 @@ npm install @pdfluent/node          # Node.js
 
 <table>
 <tr>
-<td width="33%" valign="top"><b>Extraction (Preview)</b><br/>Markdown, blocks and Docling JSON from every binding, with words, boxes and chunks where listed below.</td>
-<td width="33%" valign="top"><b>Rendering</b><br/>A pure-Rust rasterizer (vello_cpu) to PNG, JPEG or a rasterized PDF.</td>
-<td width="33%" valign="top"><b>Text and data</b><br/>Extraction with position information, find-and-replace in content streams, OCR over scanned pages.</td>
+<td valign="top"><b>Extraction (Preview)</b><br/>Markdown, blocks and Docling JSON from every binding, with words, boxes and chunks where listed below.</td>
+<td valign="top"><b>Rendering</b><br/>A pure-Rust rasterizer (vello_cpu) to PNG, JPEG or a rasterized PDF.</td>
+<td valign="top"><b>Text and data</b><br/>Extraction with position information, find-and-replace in content streams, OCR over scanned pages.</td>
 </tr>
 <tr>
 <td valign="top"><b>Forms</b><br/>AcroForm fill, flatten and read-back across every binding. XFA is experimental.</td>
@@ -59,13 +59,13 @@ text is still extractable or `validate_pdfa()` disagrees.</sup>
   </picture>
 </p>
 
-PDFluent 1.3.0 ranks above every engine on the published opendataloader-bench leaderboard (as of 3 November 2026)*.
+PDFluent 1.3.0 ranks above every engine on the published opendataloader-bench leaderboard (as of 3 November 2026)* (claim A70).
 
 <sub>*Overall score 0.9168 (quality="auto", keep_furniture=True, Linux) against the engines listed in the benchmark README on 3 November 2026; submitted as pull request #37. Other engines have submissions open that are not yet on the leaderboard.</sub>
 
-PDFluent 1.4.0 `quality="auto"` scores 0.9282 overall on opendataloader-bench, against 0.9154 for 1.3.0 in the same setup on the same machine (Apple M1 Pro, macOS)*.
+PDFluent 1.4.0 `quality="auto"` scores 0.9282 overall on opendataloader-bench, against 0.9154 for 1.3.0 in the same setup on the same machine (Apple M1 Pro, macOS)* (claim A77, claim A66).
 
-<sub>*All 200 documents, `keep_furniture=True`, measured with the benchmark's own harness and evaluator on the 1.4.0 macOS release wheel with the layout, table and formula models installed. The benchmark was one of our development targets. One run each, no confidence interval. Both runs keep page headers and footers because the benchmark counts them as content. Table scores differ between platforms, so compare Mac with Mac. Measured 11 November 2026.</sub>
+<sub>*All 200 documents, `keep_furniture=True`, measured with the benchmark's own harness and evaluator on the 1.4.0 macOS release wheel with the layout, table and formula models installed. The benchmark was one of our development targets. One run each, no confidence interval. Both runs keep page headers and footers because the benchmark counts them as content. Table scores differ between platforms, so compare Mac with Mac. Measured 11 November 2026 (claim A77).</sub>
 
 [Full tables, all four measures and how to reproduce](https://pdfluent.com/benchmarks/opendataloader-bench)
 
@@ -172,7 +172,7 @@ Commons and arXiv, published between 2007 and 2026. Checked with veraPDF 1.28.2,
 refused. Real-word text retention at the 5th percentile is 98.4%. Our own target
 was 99.5% for both and we did not reach it. The output is 96.6% of the input
 size in total and 99.1% for the median document. The converter was measured as
-it stood on 7 November 2026; later changes were not measured again. Conversion
+it stood on 7 November 2026; later changes were not measured again (claim A76). Conversion
 success means the file was written, so validate the output and inspect its
 appearance.
 
