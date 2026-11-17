@@ -137,3 +137,18 @@ jobs:
             [ -n "$sha" ] || continue
             python3 scripts/ci/licence_signoff.py "${sha}~1..${sha}"
           done
+
+  readme-claims:
+    name: Every README figure carries a claim ID
+    # The README is also written on this side (a pull request, a direct commit), where the engine's own
+    # pre-commit check does not run. The 1.4.0 README went out with nine figures that had no claim ID and
+    # held every engine landing until it was repaired (16-11-2026). Same script, same rule.
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: No figure in a README is published without a claim ID
+        run: python3 scripts/ci/a_readme_figure_carries_a_claim_id.py
