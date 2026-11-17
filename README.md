@@ -34,7 +34,7 @@ npm install @pdfluent/node          # Node.js
 <table>
 <tr>
 <td valign="top"><b>Extraction (Preview)</b><br/>Markdown, blocks and Docling JSON from every binding, with words, boxes and chunks where listed below.</td>
-<td valign="top"><b>Rendering</b><br/>A pure-Rust rasterizer (vello_cpu) to PNG, JPEG or a rasterized PDF.</td>
+<td valign="top"><b>Rendering</b><br/>A rasterizer written in Rust (vello_cpu) to PNG, JPEG or a rasterized PDF.</td>
 <td valign="top"><b>Text and data</b><br/>Extraction with position information, find-and-replace in content streams, OCR over scanned pages.</td>
 </tr>
 <tr>
@@ -198,7 +198,7 @@ heads, each with page and box. Output quality is still improving and the API
 may change in a minor release. The `fast` tier runs everywhere. The optional
 `balanced` tier runs the layout and table-structure models locally.
 
-**Rendering.** A pure-Rust rasterizer (vello_cpu) to PNG, JPEG or a rasterized
+**Rendering.** A rasterizer written in Rust (vello_cpu) to PNG, JPEG or a rasterized
 PDF, with SSIM comparison against a reference renderer.
 
 **Text and data.** Extraction with position information, find-and-replace in
@@ -382,7 +382,7 @@ relicense and need no licence from PDFluent.
 the side of that boundary it is recorded on.
 
 The rendering path is built on [`hayro`](https://github.com/pdfluent/hayro),
-Laurenz Stampfl's pure-Rust PDF interpreter, mirrored under the PDFluent
+Laurenz Stampfl's PDF interpreter, written in Rust, mirrored under the PDFluent
 org, unmodified license terms as recorded in NOTICE above.
 
 **Is the SDK covered by the free PDFluent editor licence?** No. The PDFluent
