@@ -100,6 +100,10 @@ them. Every block on that page is a `// site:<name>` marker in
 which CI compiles: an example that stops building breaks the build rather than
 a reader's first attempt.
 
+Want to see the output before you install anything? The
+[PDF to Markdown demo](https://huggingface.co/spaces/PDFluent/pdf-to-markdown)
+runs the engine in your browser, and the file stays on your machine.
+
 ## Install
 
 <details>
